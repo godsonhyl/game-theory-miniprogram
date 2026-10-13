@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>博弈论 · 横屏牌桌布局预览（750×345rpx 视口 1:1 还原）</title>
+<style>
+  body { margin:0; background:#05100d; font-family:-apple-system,"PingFang SC",sans-serif;
+         display:flex; flex-direction:column; align-items:center; padding:24px; }
+  .note { color:#7b8f88; font-size:13px; margin-bottom:12px; }
+  /* 1rpx = 1px，视口 750×345（19.5:9 横屏） */
+  .table-page { width:750px; height:345px; position:relative; overflow:hidden;
+    background:radial-gradient(ellipse at 50% 30%, #16302a 0%, #0d1a17 70%);
+    padding:12px 14px; box-sizing:border-box; display:flex; }
+  .main-col { flex:1; min-width:0; display:flex; flex-direction:column; }
+  .side-col { width:250px; flex-shrink:0; margin-left:14px; display:flex; flex-direction:column; min-height:0; }
+  .table-area { flex:1; min-height:0; }
+  .felt { position:relative; width:100%; height:100%;
+    background:radial-gradient(ellipse at 50% 42%, #24685a 0%, #1b4d40 42%, #0f2f27 100%);
+    border:10px solid #2a1a10; border-radius:50%/42%; box-shadow:0 10px 30px rgba(0,0,0,.5); box-sizing:border-box; }
+  .hud { position:absolute; top:10px; display:flex; align-items:center; z-index:5; }
+  .hud-left { left:22px; } .hud-right { right:22px; }
+  .hud-title { font-size:24px; font-weight:700; color:#eaf2ee; }
+  .hud-room { font-size:17px; color:#8fa8a0; margin-left:10px; background:rgba(255,255,255,.07);
+    padding:2px 12px; border-radius:999px; }
+  .hud-invite { font-size:17px; line-height:34px; color:#d9a441; background:rgba(217,164,65,.14);
+    border:1px solid rgba(217,164,65,.35); border-radius:999px; padding:0 16px; margin-right:12px; }
+  .hud-street { font-size:17px; padding:2px 14px; border-radius:999px; background:#1b4d40;
+    border:1px solid rgba(217,164,65,.3); color:#d9a441; }
+  .hud-hand { font-size:17px; color:#8fa8a0; margin-left:10px; }
+  .board-row { position:absolute; top:53%; left:50%; transform:translate(-50%,-50%);
+    display:flex; align-items:center; }
+  .pot-pill { display:flex; align-items:baseline; background:rgba(6,18,15,.85);
+    border:1px solid rgba(217,164,65,.35); border-radius:999px; padding:4px 16px; margin-right:14px; flex-shrink:0; }
+  .pot-label { font-size:16px; color:#8fa8a0; margin-right:8px; }
+  .pot-amount { font-size:28px; font-weight:800; color:#d9a441; }
+  .board { display:flex; align-items:center; }
+  .card { width:62px; height:88px; border-radius:10px; background:linear-gradient(160deg,#fffdf7,#ece5d4);
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    border:1px solid rgba(0,0,0,.14); box-shadow:0 3px 10px rgba(0,0,0,.42); flex-shrink:0; margin-right:8px; }
+  .card .r { font-size:26px; font-weight:800; line-height:1; color:#1a1a1a; }
+  .card .s { font-size:22px; line-height:1; color:#1a1a1a; }
+  .card.red .r, .card.red .s { color:#d0342c; }
+  .card-sm { width:46px; height:64px; border-radius:8px; margin-right:4px; }
+  .card-sm .r { font-size:19px; } .card-sm .s { font-size:16px; }
+  .card.back { background:repeating-linear-gradient(45deg,#2a4a7a 0 8px,#1e3a63 8px 16px);
+    border:2px solid #e8eef5; margin:0 4px 0 0; }
+  .card-ph { width:62px; height:88px; border-radius:10px; border:2px dashed rgba(255,255,255,.14);
+    background:rgba(0,0,0,.14); margin-left:8px; flex-shrink:0; }
+  .board .card + .card-ph { margin-left:0; }
+  .seat { position:absolute; transform:translate(-50%,-50%); width:136px;
+    display:flex; flex-direction:column; align-items:center; }
+  .seat.folded { opacity:.42; }
+  .seat-bet { position:absolute; top:-12px; left:50%; transform:translateX(-50%);
+    font-size:15px; color:#d9a441; background:rgba(6,18,15,.9); padding:1px 10px;
+    border-radius:999px; border:1px solid rgba(217,164,65,.3); white-space:nowrap; z-index:3; }
+  .avatar { position:relative; width:46px; height:46px; border-radius:50%;
+    display:flex; align-items:center; justify-content:center; font-size:19px; font-weight:800; color:#fff;
+    background:linear-gradient(145deg,#4a6fa5,#2f4d78); border:2px solid rgba(255,255,255,.22); flex-shrink:0; }
+  .seat.active .avatar { box-shadow:0 0 0 3px #d9a441, 0 0 20px rgba(217,164,65,.6); }
+  .dealer { position:absolute; top:-8px; right:-10px; width:26px; height:26px; border-radius:50%;
+    background:#d9a441; color:#1a1a1a; border:2px solid #fff; font-size:14px; font-weight:800;
+    display:flex; align-items:center; justify-content:center; }
+  .timer { position:absolute; bottom:-5px; right:-7px; width:24px; height:24px; border-radius:50%;
+    background:#e05c4b; color:#fff; border:2px solid #0f2f27; font-size:13px; font-weight:700;
+    display:flex; align-items:center; justify-content:center; }
+  .seat-meta { display:flex; align-items:center; margin-top:4px; max-width:136px; overflow:hidden; }
+  .seat-name { font-size:16px; color:#eaf2ee; max-width:78px; overflow:hidden;
+    text-overflow:ellipsis; white-space:nowrap; }
+  .seat-stack { font-size:15px; color:#cfe0d9; background:rgba(0,0,0,.42); padding:0 8px;
+    border-radius:999px; margin-left:4px; white-space:nowrap; }
+  .seat-cards { display:flex; height:66px; align-items:center; margin-top:4px; }
+  .act-bubble { position:absolute; top:-8px; right:-14px; font-size:15px; padding:2px 10px;
+    border-radius:8px; font-weight:700; color:#fff; white-space:nowrap; background:#2f7d5c; z-index:3; }
+  .act-r-b { background:#b8791f; }
+  .side-pots { position:absolute; top:66%; left:50%; transform:translateX(-50%);
+    display:flex; align-items:center; }
+  .side-pot { font-size:15px; color:#ffd98a; background:rgba(217,164,65,.14);
+    border:1px solid rgba(217,164,65,.3); padding:2px 12px; border-radius:999px; margin:0 4px; }
+  .action-bar { flex-shrink:0; }
+  .action-inner { background:rgba(255,255,255,.045); border:1px solid rgba(255,255,255,.09);
+    border-radius:16px; padding:14px 16px; box-sizing:border-box; }
+  .raise-panel { margin-bottom:12px; }
+  .raise-head { display:flex; align-items:center; justify-content:space-between; margin-bottom:8px; }
+  .raise-head .text-muted { font-size:19px; color:#8fa8a0; }
+  .raise-val { font-size:24px; font-weight:800; color:#d9a441; }
+  .quick-raises { display:flex; margin-bottom:6px; }
+  .qr { flex:1; text-align:center; font-size:17px; padding:6px 0; margin-right:8px;
+    background:rgba(255,255,255,.07); border:1px solid rgba(255,255,255,.12);
+    border-radius:8px; color:#eaf2ee; box-sizing:border-box; }
+  .qr:last-child { margin-right:0; }
+  .qr.on { background:rgba(217,164,65,.2); border-color:#d9a441; color:#d9a441; }
+  .slider { margin:0 4px; height:24px; background:rgba(255,255,255,.1); border-radius:99px; position:relative; }
+  .slider .fill { position:absolute; left:0; top:0; bottom:0; width:38%; background:rgba(217,164,65,.4); border-radius:99px; }
+  .slider .knob { position:absolute; left:38%; top:50%; transform:translate(-50%,-50%);
+    width:18px; height:18px; border-radius:50%; background:#d9a441; }
+  .actions { display:flex; margin-top:10px; }
+  .act-btn { flex:1; margin-right:10px; border-radius:12px; line-height:66px; font-size:23px;
+    font-weight:700; color:#fff; text-align:center; }
+  .act-btn:last-child { margin-right:0; }
+  .btn-fold { background:linear-gradient(160deg,#6b7280,#4b5563); }
+  .btn-call { background:linear-gradient(160deg,#2f9e6e,#1d7a52); }
+  .btn-raise { background:linear-gradient(160deg,#d9a441,#b8791f); color:#1a1a1a; }
+  .advice-panel { flex:1; min-height:0; margin-top:12px; overflow:hidden;
+    background:rgba(255,255,255,.045); border:1px solid rgba(255,255,255,.09);
+    border-radius:16px; padding:14px 16px; box-sizing:border-box; display:flex; flex-direction:column; }
+  .advice-head { display:flex; align-items:center; justify-content:space-between; margin-bottom:8px; flex-shrink:0; }
+  .advice-cap { font-size:19px; color:#8fa8a0; }
+  .practice-tag { font-size:15px; color:#e8a33d; }
+  .advice-body { border-left:4px solid #4caf7d; padding-left:12px; }
+  .advice-metrics { font-size:17px; color:#cfe0d9; margin-bottom:4px; }
+  .metric-val { color:#d9a441; font-weight:800; margin:0 4px; }
+  .advice-text { font-size:17px; color:#cfe0d9; line-height:1.45; }
+  .disclaimer { font-size:13px; color:#7b8f88; margin-top:auto; padding-top:8px; line-height:1.4; }
+</style>
+</head>
+<body>
+<div class="note">博弈论 · 横屏牌桌新布局预览（1rpx = 1px，视口 750×345，等同 19.5:9 手机横屏）— 修复前：底池/公共牌/座位互相重叠、两侧座位被裁切</div>
+<div class="table-page">
+  <div class="main-col">
+    <div class="table-area">
+      <div class="felt">
+        <div class="hud hud-left"><span class="hud-title">好友房</span><span class="hud-room">房间 884201</span></div>
+        <div class="hud hud-right"><span class="hud-invite">邀请好友</span><span class="hud-street">翻牌前</span><span class="hud-hand">第 1 手</span></div>
+
+        <div class="board-row">
+          <div class="pot-pill"><span class="pot-label">底池</span><span class="pot-amount">980</span></div>
+          <div class="board">
+            <div class="card"><span class="r">A</span><span class="s">♠</span></div>
+            <div class="card red"><span class="r">Q</span><span class="s">♥</span></div>
+            <div class="card-ph"></div><div class="card-ph"></div><div class="card-ph"></div>
+          </div>
+        </div>
+
+        <!-- seat 0 我（底部中央） -->
+        <div class="seat" style="left:50%;top:84%">
+          <div class="seat-bet">◆20</div>
+          <div class="avatar">你<span class="dealer">D</span></div>
+          <div class="seat-meta"><span class="seat-name">你</span><span class="seat-stack">980</span></div>
+          <div class="seat-cards">
+            <div class="card card-sm"><span class="r">K</span><span class="s">♠</span></div>
+            <div class="card card-sm red"><span class="r">J</span><span class="s">♥</span></div>
+          </div>
+        </div>
+        <!-- seat 1 左下 -->
+        <div class="seat" style="left:15%;top:68%">
+          <div class="avatar">陈</div>
+          <div class="seat-meta"><span class="seat-name">陈默</span><span class="seat-stack">1000</span></div>
+          <div class="seat-cards"><div class="card card-sm back"></div><div class="card card-sm back"></div></div>
+        </div>
+        <!-- seat 2 左上 -->
+        <div class="seat" style="left:15%;top:30%">
+          <div class="seat-bet">◆20</div>
+          <div class="avatar">林</div>
+          <div class="seat-meta"><span class="seat-name">林小满</span><span class="seat-stack">1000</span></div>
+          <div class="seat-cards"><div class="card card-sm back"></div><div class="card card-sm back"></div></div>
+        </div>
+        <!-- seat 3 顶部中央 -->
+        <div class="seat" style="left:50%;top:21%">
+          <div class="seat-bet">◆20</div>
+          <div class="avatar">苏</div>
+          <div class="seat-meta"><span class="seat-name">苏晴</span><span class="seat-stack">980</span></div>
+          <div class="seat-cards"><div class="card card-sm back"></div><div class="card card-sm back"></div></div>
+        </div>
+        <!-- seat 4 右上 -->
+        <div class="seat" style="left:85%;top:30%">
+          <div class="avatar">赵</div>
+          <div class="seat-meta"><span class="seat-name">赵岩</span><span class="seat-stack">1000</span></div>
+          <div class="seat-cards"><div class="card card-sm back"></div><div class="card card-sm back"></div></div>
+        </div>
+        <!-- seat 5 右下 -->
+        <div class="seat" style="left:85%;top:68%">
+          <div class="seat-bet">◆20</div>
+          <div class="avatar">周</div>
+          <div class="seat-meta"><span class="seat-name">周叙</span><span class="seat-stack">960</span></div>
+          <div class="seat-cards"><div class="card card-sm back"></div><div class="card card-sm back"></div></div>
+          <div class="act-bubble act-r-b">加注 60</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="side-col">
+    <div class="action-bar">
+      <div class="action-inner">
+        <div class="raise-panel">
+          <div class="raise-head"><span class="text-muted">加注至</span><span class="raise-val">120</span></div>
+          <div class="quick-raises"><div class="qr">最小</div><div class="qr on">½池</div><div class="qr">底池</div><div class="qr">全下</div></div>
+          <div class="slider"><div class="fill"></div><div class="knob"></div></div>
+        </div>
+        <div class="actions">
+          <div class="act-btn btn-fold">弃牌</div>
+          <div class="act-btn btn-call">跟注 20</div>
+          <div class="act-btn btn-raise">加注</div>
+        </div>
+      </div>
+    </div>
+    <div class="advice-panel">
+      <div class="advice-head"><span class="advice-cap">牌力分析</span><span class="practice-tag">练习模式</span></div>
+      <div class="advice-body">
+        <div class="advice-metrics">胜率 <span class="metric-val">62%</span> 赔率 <span class="metric-val">4.8 : 1</span></div>
+        <div class="advice-text">你的胜率显著高于所需赔率，建议跟注或适度加注施压。</div>
+      </div>
+      <div class="disclaimer">⚠️ 仅用于教学复盘，正式上线前需合规确认</div>
+    </div>
+  </div>
+</div>
+</body>
+</html>

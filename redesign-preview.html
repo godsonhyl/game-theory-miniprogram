@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>牌桌重设计预览 · 图标缩小精致化 + 霓虹光效</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { background:#0a0f0d; color:#cfe0d9; font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif; min-height:100vh; display:flex; flex-direction:column; align-items:center; padding:24px; }
+  h1 { font-size:16px; color:#d9a441; margin-bottom:6px; }
+  .desc { font-size:12px; color:#6d837b; margin-bottom:14px; text-align:center; line-height:1.6; }
+  .bar { display:flex; gap:10px; margin-bottom:16px; }
+  .bar button { background:rgba(255,255,255,.07); border:1px solid rgba(255,255,255,.16); color:#cfe0d9; border-radius:999px; padding:6px 16px; font-size:12px; cursor:pointer; }
+  .bar button.on { background:rgba(217,164,65,.18); border-color:#d9a441; color:#ffd98a; }
+  /* 手机外框：vh 体系模拟 —— 容器高度固定 640px，1vh=6.4px；宽度随比例 */
+  .phone { height:640px; border-radius:28px; border:8px solid #1c2622; overflow:hidden; position:relative; box-shadow:0 20px 60px rgba(0,0,0,.6); }
+  .r195 { width:295px; } .r20 { width:278px; } .r169 { width:355px; }
+  /* ===== 以下与 table.wxss 同源（px = vh数 * 6.4） ===== */
+  .page { height:100%; padding:11.5px 10px; display:flex; background:
+    radial-gradient(ellipse at 20% 0%, rgba(217,164,65,.06) 0%, transparent 55%),
+    radial-gradient(ellipse at 80% 100%, rgba(47,158,110,.07) 0%, transparent 55%),
+    radial-gradient(ellipse at 50% 30%, #142a25 0%, #0b1613 75%); }
+  .main { flex:1; min-width:0; display:flex; flex-direction:column; }
+  .side { width:160px; flex-shrink:0; margin-left:10px; display:flex; flex-direction:column; min-height:0; }
+  .topbar { height:41.6px; flex-shrink:0; display:flex; align-items:center; justify-content:space-between; margin-bottom:9px; }
+  .tbl, .tbr { display:flex; align-items:center; }
+  .icon-btn { width:39.7px; height:39.7px; border-radius:50%; display:flex; align-items:center; justify-content:center; background:rgba(255,255,255,.07); border:1px solid rgba(255,255,255,.16); }
+  .icon-btn.gold { background:rgba(217,164,65,.13); border:1px solid rgba(217,164,65,.4); }
+  .icon-btn svg { width:19px; height:19px; }
+  .title { font-size:25px; font-weight:700; margin-left:14px; background:linear-gradient(120deg,#f4d78a,#d9a441 60%,#b8791f); -webkit-background-clip:text; color:transparent; }
+  .roomno { font-size:19.2px; color:#cbb27a; margin-left:15px; background:rgba(217,164,65,.1); border:1px solid rgba(217,164,65,.28); padding:2px 15px; border-radius:999px; }
+  .chip { font-size:18.6px; padding:3px 19px; border-radius:999px; background:rgba(47,158,110,.16); border:1px solid rgba(78,200,146,.4); color:#6fd3a4; font-weight:600; }
+  .hand { font-size:18.6px; color:#8fa8a0; margin:0 15px; }
+  .area { flex:1; min-height:0; position:relative; }
+  .felt { position:absolute; inset:0; background:
+    radial-gradient(ellipse at 50% 38%, rgba(255,255,255,.05) 0%, transparent 55%),
+    radial-gradient(ellipse at 50% 42%, #256b5c 0%, #1b4d40 45%, #0e2c25 100%);
+    border:5.8px solid #241610; border-radius:50%/42%;
+    box-shadow:0 0 0 1px rgba(217,164,65,.35), 0 0 26px rgba(217,164,65,.14), inset 0 0 38px rgba(0,0,0,.45), 0 16px 45px rgba(0,0,0,.55);
+    animation:glow 5s ease-in-out infinite; }
+  @keyframes glow { 0%,100%{ box-shadow:0 0 0 1px rgba(217,164,65,.35), 0 0 18px rgba(217,164,65,.1), inset 0 0 38px rgba(0,0,0,.45);} 50%{ box-shadow:0 0 0 1px rgba(217,164,65,.55), 0 0 34px rgba(217,164,65,.25), inset 0 0 38px rgba(0,0,0,.45);} }
+  .potrow { position:absolute; top:22%; left:50%; transform:translate(-50%,-50%); z-index:2; }
+  .potpill { display:flex; align-items:baseline; background:rgba(5,16,13,.88); border:1px solid rgba(217,164,65,.45); box-shadow:0 0 15px rgba(217,164,65,.2); border-radius:999px; padding:4px 26px; }
+  .potlbl { font-size:19.8px; color:#8fa8a0; margin-right:13px; }
+  .potval { font-size:33.3px; font-weight:800; background:linear-gradient(120deg,#ffe4a8,#d9a441); -webkit-background-clip:text; color:transparent; }
+  .boardrow { position:absolute; top:55%; left:50%; transform:translate(-50%,-50%); display:flex; z-index:2; }
+  .card { width:92.8px; height:131px; border-radius:15px; background:linear-gradient(160deg,#fffdf7,#ece5d4); display:flex; flex-direction:column; align-items:center; justify-content:center; margin-right:8px; box-shadow:0 6px 17px rgba(0,0,0,.42); animation:deal .38s cubic-bezier(.2,.9,.3,1.2) both; }
+  @keyframes deal { from{ transform:translateY(-32px) rotate(-6deg) scale(.82); opacity:0;} to{ transform:none; opacity:1;} }
+  .card .r { font-size:38.4px; font-weight:800; line-height:1; color:#1a1a1a; }
+  .card .s { font-size:32px; line-height:1.1; color:#1a1a1a; }
+  .red .r, .red .s { color:#d0342c !important; }
+  .ph { width:92.8px; height:131px; border-radius:15px; border:1.5px dashed rgba(255,255,255,.13); background:rgba(0,0,0,.14); margin-right:8px; }
+  .seat { position:absolute; transform:translate(-50%,-50%); width:77px; display:flex; flex-direction:column; align-items:center; z-index:3; }
+  .bet { position:absolute; top:-17px; left:50%; transform:translateX(-50%); font-size:19.2px; color:#ffd98a; background:rgba(5,16,13,.92); padding:2px 14px; border-radius:999px; border:1px solid rgba(217,164,65,.4); white-space:nowrap; z-index:4; }
+  .ava { position:relative; width:67px; height:67px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:28px; font-weight:800; color:#fff; background:linear-gradient(145deg,#4a6fa5,#2f4d78); border:1.5px solid rgba(255,255,255,.25); }
+  .ava.act { animation:ring 1.6s ease-in-out infinite; }
+  @keyframes ring { 0%,100%{ box-shadow:0 0 0 3px rgba(217,164,65,.95), 0 0 19px rgba(217,164,65,.55);} 50%{ box-shadow:0 0 0 6px rgba(217,164,65,.55), 0 0 45px rgba(217,164,65,.85);} }
+  .d { position:absolute; top:-10px; right:-13px; width:36px; height:36px; border-radius:50%; background:linear-gradient(160deg,#f4d78a,#d9a441); color:#1a1a1a; border:1.5px solid #fff; font-size:19px; font-weight:800; display:flex; align-items:center; justify-content:center; }
+  .meta { display:flex; align-items:center; margin-top:5px; max-width:77px; overflow:hidden; }
+  .nm { font-size:22.4px; color:#eaf2ee; max-width:46px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .stk { font-size:20.5px; color:#cfe0d9; background:rgba(0,0,0,.45); padding:0 11.5px; border-radius:999px; margin-left:6px; white-space:nowrap; }
+  .bub { position:absolute; bottom:-8px; left:50%; transform:translateX(-50%); font-size:19.2px; padding:2px 15px; border-radius:999px; font-weight:700; color:#fff; background:linear-gradient(160deg,#c98a2a,#a76d15); border:1px solid rgba(255,255,255,.18); white-space:nowrap; z-index:4; }
+  .ainner { background:linear-gradient(170deg,rgba(255,255,255,.06),rgba(255,255,255,.03)); border:1px solid rgba(255,255,255,.1); border-radius:23px; padding:18px 24px; }
+  .rhead { display:flex; align-items:center; justify-content:space-between; margin-bottom:11px; }
+  .rhead .m { font-size:24.3px; color:#8fa8a0; }
+  .rhead .v { font-size:33.3px; font-weight:800; background:linear-gradient(120deg,#ffe4a8,#d9a441); -webkit-background-clip:text; color:transparent; }
+  .qrs { display:flex; margin-bottom:9px; }
+  .qr { flex:1; text-align:center; font-size:20.5px; padding:9px 0; margin-right:11.5px; background:rgba(255,255,255,.07); border:1px solid rgba(255,255,255,.13); border-radius:11.5px; color:#eaf2ee; white-space:nowrap; }
+  .qr:last-child { margin-right:0; }
+  .qr.on { background:rgba(217,164,65,.18); border-color:rgba(217,164,65,.75); color:#ffd98a; box-shadow:0 0 13px rgba(217,164,65,.25); }
+  .slider { height:4px; background:rgba(255,255,255,.15); border-radius:2px; margin:10px 6px; position:relative; }
+  .slider i { position:absolute; left:30%; top:50%; transform:translate(-50%,-50%); width:12px; height:12px; border-radius:50%; background:#d9a441; }
+  .slider b { position:absolute; left:0; top:0; bottom:0; width:30%; background:#d9a441; border-radius:2px; }
+  .acts { display:flex; margin-top:6px; }
+  .abtn { flex:1; margin-right:14px; border-radius:18px; line-height:55px; font-size:30.7px; font-weight:700; color:#fff; text-align:center; }
+  .abtn:last-child { margin-right:0; }
+  .fold { background:linear-gradient(160deg,#6b7280,#454f5c); }
+  .call { background:linear-gradient(160deg,#35b27b,#1d7a52); box-shadow:0 6px 19px rgba(47,158,110,.35); }
+  .raise { background:linear-gradient(160deg,#f4d78a,#d9a441 60%,#b8791f); color:#1a1a1a; box-shadow:0 6px 19px rgba(217,164,65,.4); }
+  .advice { flex:1; min-height:0; margin-top:17px; background:linear-gradient(170deg,rgba(255,255,255,.06),rgba(255,255,255,.03)); border:1px solid rgba(255,255,255,.1); border-radius:23px; padding:18px 24px; display:flex; flex-direction:column; overflow:hidden; }
+  .ahead { display:flex; align-items:center; justify-content:space-between; margin-bottom:10px; }
+  .acap { font-size:25px; font-weight:600; color:#cfe0d9; }
+  .ptag { font-size:18px; color:#e8a33d; background:rgba(232,163,61,.12); border:1px solid rgba(232,163,61,.35); padding:1px 13px; border-radius:999px; }
+  .abody { border-left:6px solid #4caf7d; padding-left:18px; font-size:23px; }
+  .am { color:#cfe0d9; margin-bottom:6px; display:flex; gap:22px; }
+  .mv { color:#ffd98a; font-weight:800; }
+  .at { color:#cfe0d9; line-height:1.4; }
+</style>
+</head>
+<body>
+<h1>牌桌重设计预览 · 顶部独立信息条 + 小圆钮图标 + 霓虹光效</h1>
+<p class="desc">修复：① 顶栏元素互相压盖（HUD 移出毡布）② 底池压住侧位座位（移到公共牌上方）③ 快捷加注文字折行、牌力分析被裁（字号全面下调）<br>炫感：金边发光毡布（呼吸光晕）、发牌入场动画、行动玩家呼吸金环、金色渐变文字。尺寸体系与 table.wxss 同源（1vh≈6.4px）。</p>
+<div class="bar">
+  <button class="on" onclick="setR('r195',this)">19.5:9 全面屏</button>
+  <button onclick="setR('r20',this)">20:9</button>
+  <button onclick="setR('r169',this)">16:9</button>
+</div>
+<div class="phone r195" id="ph">
+<div class="page">
+  <div class="main">
+    <div class="topbar">
+      <div class="tbl">
+        <div class="icon-btn"><svg viewBox="0 0 24 24" fill="none" stroke="#eaf2ee" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"/></svg></div>
+        <span class="title">AI 对战</span>
+      </div>
+      <div class="tbr">
+        <span class="chip">翻牌圈</span>
+        <span class="hand">第 1 手</span>
+      </div>
+    </div>
+    <div class="area">
+      <div class="felt"></div>
+      <div class="potrow"><div class="potpill"><span class="potlbl">底池</span><span class="potval">50</span></div></div>
+      <div class="boardrow">
+        <div class="card red"><span class="r">8</span><span class="s">♥</span></div>
+        <div class="card"><span class="r">2</span><span class="s">♠</span></div>
+        <div class="card red"><span class="r">5</span><span class="s">♥</span></div>
+        <div class="ph"></div><div class="ph"></div>
+      </div>
+      <div class="seat" style="left:18%;top:32%"><span class="bet">◆20</span><div class="ava">陈</div><div class="meta"><span class="nm">陈默</span><span class="stk">980</span></div><div style="display:flex;margin-top:5px"><div style="width:68px;height:95px;border-radius:12px;background:linear-gradient(160deg,#2e5290,#1c3763);border:1.5px solid rgba(232,238,245,.85);margin-right:6px"></div><div style="width:68px;height:95px;border-radius:12px;background:linear-gradient(160deg,#2e5290,#1c3763);border:1.5px solid rgba(232,238,245,.85)"></div></div></div>
+      <div class="seat" style="left:50%;top:20%"><div class="ava">苏</div><div class="meta"><span class="nm">苏晴</span><span class="stk">980</span></div><div style="display:flex;margin-top:5px"><div style="width:68px;height:95px;border-radius:12px;background:linear-gradient(160deg,#2e5290,#1c3763);border:1.5px solid rgba(232,238,245,.85);margin-right:6px"></div><div style="width:68px;height:95px;border-radius:12px;background:linear-gradient(160deg,#2e5290,#1c3763);border:1.5px solid rgba(232,238,245,.85)"></div></div></div>
+      <div class="seat" style="left:82%;top:32%"><div class="ava">赵</div><div class="meta"><span class="nm">赵岩</span><span class="stk">1000</span></div><div style="display:flex;margin-top:5px"><div style="width:68px;height:95px;border-radius:12px;background:linear-gradient(160deg,#2e5290,#1c3763);border:1.5px solid rgba(232,238,245,.85);margin-right:6px"></div><div style="width:68px;height:95px;border-radius:12px;background:linear-gradient(160deg,#2e5290,#1c3763);border:1.5px solid rgba(232,238,245,.85)"></div></div></div>
+      <div class="seat" style="left:50%;top:88%"><div class="ava act" style="width:56px;height:56px;font-size:23px">你<div class="d" style="width:31px;height:31px;font-size:17px">D</div></div><div class="meta"><span class="nm">你</span><span class="stk">1000</span></div><div style="display:flex;margin-top:5px"><div class="card" style="width:60px;height:85px;margin-right:5px"><span class="r" style="font-size:25px">3</span><span class="s" style="font-size:21px">♦</span></div><div class="card" style="width:60px;height:85px"><span class="r" style="font-size:25px">7</span><span class="s" style="font-size:21px">♥</span></div></div></div>
+      <div class="seat" style="left:14%;top:76%"><div class="ava">林</div><div class="meta"><span class="nm">林小满</span><span class="stk">990</span></div></div>
+      <div class="seat" style="left:86%;top:76%"><div class="ava act">周</div><div class="meta"><span class="nm">周叙</span><span class="stk">1000</span></div><span class="bub">跟注 20</span></div>
+    </div>
+  </div>
+  <div class="side">
+    <div class="ainner">
+      <div class="rhead"><span class="m">加注至</span><span class="v">40</span></div>
+      <div class="qrs"><span class="qr on">最小</span><span class="qr">½池</span><span class="qr">底池</span><span class="qr">全下</span></div>
+      <div class="slider"><b></b><i></i></div>
+      <div class="acts"><span class="abtn fold">弃牌</span><span class="abtn call">跟注</span><span class="abtn raise">加注</span></div>
+    </div>
+    <div class="advice">
+      <div class="ahead"><span class="acap">牌力分析</span><span class="ptag">练习模式</span></div>
+      <div class="abody">
+        <div class="am"><span>胜率 <span class="mv">66.1%</span></span><span>赔率 <span class="mv">0.0%</span></span></div>
+        <div class="at">你的高对胜率占优，可加注施压</div>
+      </div>
+    </div>
+  </div>
+</div>
+</div>
+<script>
+function setR(cls, btn){
+  document.getElementById('ph').className = 'phone ' + cls;
+  document.querySelectorAll('.bar button').forEach(b=>b.classList.remove('on'));
+  btn.classList.add('on');
+}
+</script>
+</body>
+</html>

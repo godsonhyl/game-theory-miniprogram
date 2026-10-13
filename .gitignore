@@ -1,0 +1,25 @@
+# ⚠️ 敏感文件与密钥不得提交到版本库
+
+# 微信小程序上传密钥（等同密码）
+private.*.key
+*.key
+
+# 本地配置（含 AppID 等本机特定配置，可按需保留）
+# project.private.config.json
+
+# 依赖
+node_modules/
+
+# 打包产物
+dist/
+preview/
+
+# 编辑器
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# 日志
+*.log
+npm-debug.log*

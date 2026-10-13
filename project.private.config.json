@@ -1,0 +1,20 @@
+{
+  "projectname": "game-theory-demo",
+  "setting": {
+    "compileHotReLoad": true,
+    "urlCheck": false,
+    "coverView": true,
+    "lazyloadPlaceholderEnable": false,
+    "skylineRenderEnable": false,
+    "useCompilerPlugins": false
+  },
+  "condition": {
+    "miniprogram": {
+      "list": [
+        { "name": "首页", "pathName": "pages/index/index", "query": "", "scene": null },
+        { "name": "牌桌（AI 对战）", "pathName": "pages/table/table", "query": "mode=ai", "scene": null },
+        { "name": "我的战绩", "pathName": "pages/profile/profile", "query": "", "scene": null }
+      ]
+    }
+  }
+}

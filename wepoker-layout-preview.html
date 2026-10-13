@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>微扑克式分区 · 牌桌布局预览</title>
+<style>
+  :root{
+    --uh: 3.75px;   /* 横屏 812×375：1uh = 375/100 */
+    --uw: 8.12px;   /* 1uw = 812/100 */
+    --rpx: calc(var(--uw) * 0.13333);
+    --ink: #e8eef0;
+    --mut: #93a5a0;
+    --gold: #e8a33d;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;}
+  body{
+    background:#0a1210;color:var(--ink);
+    font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;
+    padding:24px;min-height:100vh;
+  }
+  h1{font-size:20px;font-weight:700;color:var(--gold);margin-bottom:6px;}
+  .lead{font-size:13px;color:var(--mut);margin-bottom:18px;line-height:1.6;}
+  .ctrl{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:18px;}
+  .grp{display:flex;gap:6px;align-items:center;}
+  .grp>span{font-size:12px;color:var(--mut);}
+  .btn{
+    font-size:12px;padding:6px 14px;border-radius:999px;cursor:pointer;
+    background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.14);color:var(--ink);
+  }
+  .btn.on{background:rgba(232,163,61,.22);border-color:rgba(232,163,61,.7);color:#ffd98a;}
+  .phone{
+    width:812px;height:375px;border-radius:22px;background:#000;
+    border:8px solid #1b2420;box-shadow:0 12px 40px rgba(0,0,0,.6);overflow:hidden;position:relative;
+  }
+  .screen{
+    width:812px;height:375px;position:relative;overflow:hidden;
+    background:
+      radial-gradient(ellipse at 22% 0%, rgba(232,163,61,.05) 0%, transparent 55%),
+      radial-gradient(ellipse at 78% 100%, rgba(47,158,110,.05) 0%, transparent 55%),
+      linear-gradient(180deg, #101c19 0%, #0b1412 100%);
+    padding: calc(1.2 * var(--uh)) calc(1.4 * var(--uw));
+    display:flex;flex-direction:column;
+  }
+
+  /* 顶栏 */
+  .topbar{height:calc(6.4 * var(--uh));flex-shrink:0;display:flex;align-items:center;justify-content:space-between;padding:0 calc(0.6 * var(--uw));}
+  .tb-l,.tb-r{display:flex;align-items:center;}
+  .tb-title{font-size:calc(3.8*var(--uh));font-weight:700;color:var(--ink);margin-left:calc(2*var(--uw));}
+  .tb-room{font-size:calc(2.8*var(--uh));color:var(--mut);margin-left:calc(1.8*var(--uw));padding:calc(0.2*var(--uh)) calc(2*var(--uw));border:1px solid rgba(255,255,255,.12);border-radius:999px;}
+  .tb-street{font-size:calc(2.8*var(--uh));font-weight:600;color:#6fd3a4;background:rgba(47,158,110,.14);border:1px solid rgba(78,200,146,.32);padding:calc(0.4*var(--uh)) calc(2.6*var(--uw));border-radius:999px;}
+  .tb-hand{font-size:calc(2.8*var(--uh));color:var(--mut);margin:0 calc(2*var(--uw));}
+  .tb-clock{font-size:calc(2.9*var(--uh));font-weight:700;color:#ffd98a;padding:calc(0.4*var(--uh)) calc(2.4*var(--uw));border-radius:999px;background:rgba(232,163,61,.14);border:1px solid rgba(232,163,61,.38);}
+  .ibtn{width:calc(5.6*var(--uh));height:calc(5.6*var(--uh));border-radius:50%;display:flex;align-items:center;justify-content:center;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.14);margin-left:calc(1.4*var(--uw));cursor:pointer;font-size:calc(3*var(--uh));}
+  .ibtn.on{background:rgba(232,163,61,.2);border-color:rgba(232,163,61,.55);}
+  .iback{width:calc(2.8*var(--uh));height:calc(2.8*var(--uh));}
+
+  /* 菜单 */
+  .menu-pop{position:absolute;right:calc(2*var(--uw));top:calc(8*var(--uh));background:#16251f;border:1px solid rgba(255,255,255,.14);border-radius:calc(2.4*var(--uh));overflow:hidden;z-index:40;box-shadow:0 calc(1.5*var(--uh)) calc(5*var(--uh)) rgba(0,0,0,.6);}
+  .mi{display:block;width:calc(220*var(--rpx));text-align:left;font-size:calc(3.2*var(--uh));color:var(--ink);line-height:1.2;padding:calc(2*var(--uh)) calc(3*var(--uw));background:none;border:none;cursor:pointer;}
+  .mi.danger{color:#e08a7d;border-top:1px solid rgba(255,255,255,.08);}
+
+  /* 牌桌 */
+  .felt{flex:1;min-height:0;position:relative;width:100%;margin-top:calc(0.8*var(--uh));
+    background:radial-gradient(ellipse at 50% 40%, rgba(255,255,255,.05) 0%, transparent 55%),
+               radial-gradient(ellipse at 50% 44%, #25604f 0%, #1a4438 45%, #0d2822 100%);
+    border:calc(0.8*var(--uh)) solid #241610;border-radius:50%/42%;
+    box-shadow:0 0 0 1px rgba(232,163,61,.28),0 0 calc(3.4*var(--uh)) rgba(232,163,61,.1),inset 0 0 calc(5*var(--uh)) rgba(0,0,0,.45);
+  }
+  .felt-glow{position:absolute;left:14%;right:14%;top:18%;bottom:18%;border-radius:50%/46%;background:radial-gradient(ellipse at 50% 46%, rgba(111,211,164,.08) 0%, transparent 65%);animation:gb 5s ease-in-out infinite;pointer-events:none;}
+  @keyframes gb{0%,100%{opacity:.45;}50%{opacity:.9;}}
+  .pot-row{position:absolute;top:24%;left:50%;transform:translate(-50%,-50%);display:flex;flex-direction:column;align-items:center;z-index:2;}
+  .pot-pill{background:rgba(5,16,13,.86);border:1px solid rgba(232,163,61,.42);border-radius:999px;padding:calc(0.5*var(--uh)) calc(3.6*var(--uw));}
+  .pot-amount{font-size:calc(4.8*var(--uh));font-weight:800;color:var(--gold);}
+  .board-row{position:absolute;top:48%;left:50%;transform:translate(-50%,-50%);display:flex;align-items:center;z-index:2;}
+  .board{display:flex;align-items:center;}
+  .board .card{margin-right:calc(1.1*var(--uw));}
+  .card{width:calc(13*var(--uh));height:calc(18.5*var(--uh));border-radius:calc(2.2*var(--uh));background:linear-gradient(160deg,#fffdf7,#ece5d4);display:flex;flex-direction:column;align-items:center;justify-content:center;border:1px solid rgba(0,0,0,.14);box-shadow:0 calc(0.9*var(--uh)) calc(2.4*var(--uh)) rgba(0,0,0,.42);flex-shrink:0;}
+  .card .r{font-size:calc(5.6*var(--uh));font-weight:800;line-height:1;color:#1a1a1a;}
+  .card .s{font-size:calc(4.6*var(--uh));line-height:1.1;color:#1a1a1a;}
+  .card.s-heart .r,.card.s-heart .s{color:#d0342c;}
+  .card.s-club .r,.card.s-club .s{color:#1f9d55;}
+  .card.s-diamond .r,.card.s-diamond .s{color:#2f6fd6;}
+  .card-ph{width:calc(13*var(--uh));height:calc(18.5*var(--uh));border-radius:calc(2.2*var(--uh));border:2px dashed rgba(255,255,255,.12);background:rgba(0,0,0,.14);margin-right:calc(1.1*var(--uw));flex-shrink:0;}
+  .card.hi{box-shadow:0 0 0 calc(0.5*var(--uh)) var(--gold),0 0 calc(3.4*var(--uh)) rgba(232,163,61,.6);}
+  .card-xs{width:calc(8.4*var(--uh));height:calc(11.8*var(--uh));border-radius:calc(1.6*var(--uh));}
+  .card-xs .r{font-size:calc(3.6*var(--uh));}
+  .card-xs .s{font-size:calc(3*var(--uh));}
+
+  /* 座位 */
+  .seat{position:absolute;transform:translate(-50%,-50%);width:calc(104*var(--rpx));display:flex;flex-direction:column;align-items:center;z-index:3;}
+  .seat.folded{opacity:.38;}
+  .seat-bet{font-size:calc(2.8*var(--uh));color:#ffd98a;background:rgba(5,16,13,.9);padding:calc(0.2*var(--uh)) calc(2*var(--uw));border-radius:999px;border:1px solid rgba(232,163,61,.38);white-space:nowrap;margin-bottom:calc(0.4*var(--uh));}
+  .avatar{position:relative;width:calc(8.6*var(--uh));height:calc(8.6*var(--uh));border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:calc(3.8*var(--uh));font-weight:800;color:#fff;background:linear-gradient(145deg,#48688f,#2c4667);border:2px solid rgba(255,255,255,.22);flex-shrink:0;}
+  .seat.active .avatar{animation:rp 1.6s ease-in-out infinite;}
+  @keyframes rp{0%,100%{box-shadow:0 0 0 calc(0.4*var(--uh)) rgba(232,163,61,.9),0 0 calc(2.6*var(--uh)) rgba(232,163,61,.5);}50%{box-shadow:0 0 0 calc(0.8*var(--uh)) rgba(232,163,61,.5),0 0 calc(6*var(--uh)) rgba(232,163,61,.8);}}
+  .dealer{position:absolute;top:calc(-1.4*var(--uh));right:calc(-1.6*var(--uh));width:calc(4.8*var(--uh));height:calc(4.8*var(--uh));border-radius:50%;background:linear-gradient(160deg,#f4d78a,#d9a441);color:#1a1a1a;border:2px solid #fff;font-size:calc(2.6*var(--uh));font-weight:800;display:flex;align-items:center;justify-content:center;}
+  .timer{position:absolute;bottom:calc(-0.8*var(--uh));right:calc(-1.4*var(--uh));width:calc(5.2*var(--uh));height:calc(5.2*var(--uh));border-radius:50%;border:2px solid rgba(15,47,39,.9);display:flex;align-items:center;justify-content:center;overflow:hidden;}
+  .timer-num{width:76%;height:76%;border-radius:50%;background:#e05c4b;color:#fff;font-size:calc(2.5*var(--uh));font-weight:700;display:flex;align-items:center;justify-content:center;}
+  .seat-meta{display:flex;align-items:center;margin-top:calc(0.6*var(--uh));max-width:calc(104*var(--rpx));overflow:hidden;}
+  .seat-name{font-size:calc(3*var(--uh));color:var(--ink);max-width:calc(62*var(--rpx));overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .seat-stack{font-size:calc(2.8*var(--uh));color:var(--mut);flex:none;}
+  .act-bubble{position:absolute;bottom:calc(-1*var(--uh));left:50%;transform:translateX(-50%);font-size:calc(2.6*var(--uh));padding:calc(0.25*var(--uh)) calc(2*var(--uw));border-radius:999px;font-weight:700;color:#fff;white-space:nowrap;background:#2f7d5c;border:1px solid rgba(255,255,255,.16);z-index:4;}
+  .act-f{background:#5b6470;}
+
+  /* 我的区域 */
+  .myzone{flex-shrink:0;margin-top:calc(1.2*var(--uh));display:flex;flex-direction:column;}
+  .mybar{display:flex;align-items:center;height:calc(16*var(--uh));background:linear-gradient(170deg,rgba(255,255,255,.05),rgba(255,255,255,.02));border:1px solid rgba(255,255,255,.09);border-radius:calc(2.8*var(--uh));padding:0 calc(2.4*var(--uw));}
+  .mycards{display:flex;align-items:center;flex:none;}
+  .mycards .card{margin-right:calc(1.2*var(--uw));}
+  .card.back{background:repeating-linear-gradient(45deg,rgba(255,255,255,.06) 0 calc(1.5*var(--uh)),transparent calc(1.5*var(--uh)) calc(3*var(--uh))),linear-gradient(160deg,#2e5290,#1c3763);border:2px solid rgba(232,238,245,.85);}
+  .mymid{flex:1;min-width:0;display:flex;align-items:center;justify-content:center;padding:0 calc(2*var(--uw));}
+  .presets{display:flex;align-items:center;}
+  .pr{font-size:calc(3*var(--uh));color:var(--ink);background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.13);border-radius:calc(1.6*var(--uh));padding:calc(0.9*var(--uh)) calc(2.6*var(--uw));margin-right:calc(1.6*var(--uw));white-space:nowrap;}
+  .pr:last-child{margin-right:0;}
+  .pr.on{background:rgba(232,163,61,.2);border-color:rgba(232,163,61,.75);color:#ffd98a;}
+  .mytip{font-size:calc(3*var(--uh));color:var(--mut);line-height:1.35;text-align:center;}
+  .mystk{flex:none;display:flex;flex-direction:column;align-items:flex-end;}
+  .ms-v{font-size:calc(4.4*var(--uh));font-weight:800;color:var(--gold);line-height:1.1;}
+  .ms-l{font-size:calc(2.4*var(--uh));color:var(--mut);}
+  .actbar{display:flex;margin-top:calc(1.2*var(--uh));}
+  .ab{flex:1;margin-right:calc(3.4*var(--uw));line-height:calc(14*var(--uh));font-size:calc(5*var(--uh));font-weight:700;color:#fff;border:none;padding:0;border-radius:calc(3*var(--uh));text-align:center;}
+  .ab:last-child{margin-right:0;}
+  .ab-fold{background:linear-gradient(160deg,#5f6874,#3f4854);}
+  .ab-call{background:linear-gradient(160deg,#35b27b,#1d7a52);}
+  .ab-raise{background:linear-gradient(160deg,#f4d78a,#d9a441 60%,#b8791f);color:#1a1a1a;}
+  .ab[disabled]{opacity:.3;}
+
+  /* 聊天浮层 */
+  .chat-pop{position:absolute;right:calc(1.6*var(--uw));top:calc(8.4*var(--uh));width:calc(260*var(--rpx));max-height:calc(58*var(--uh));display:flex;flex-direction:column;overflow:hidden;background:#16251f;border:1px solid rgba(255,255,255,.14);border-radius:calc(2.6*var(--uh));padding:calc(1.6*var(--uh)) calc(2*var(--uw));z-index:40;}
+  .chat-log{flex:1 1 0;min-height:0;display:flex;flex-direction:column;gap:calc(0.5*var(--uh));overflow-y:auto;}
+  .chat-line{flex:none;display:block;line-height:1.4;font-size:calc(2.7*var(--uh));color:#cfe0d9;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .chat-bar{display:flex;flex-wrap:wrap;margin-top:calc(1*var(--uh));flex-shrink:0;}
+  .chat-quick{font-size:calc(2.5*var(--uh));color:var(--ink);background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.13);border-radius:calc(1.2*var(--uh));padding:calc(0.4*var(--uh)) calc(1.4*var(--uw));margin:calc(0.4*var(--uh)) calc(0.8*var(--uw)) 0 0;}
+  .chat-emoji{font-size:calc(3.2*var(--uh));line-height:1.2;margin-right:calc(1.2*var(--uw));}
+
+  .hint{margin-top:18px;font-size:12px;color:#6d837b;line-height:1.7;}
+  .hint b{color:var(--gold);}
+</style>
+</head>
+<body>
+  <h1>微扑克式分区布局 · 真机横屏预览（812×375，19.5:9）</h1>
+  <p class="lead">上半区只放对手与公共牌，下半区放我的手牌与操作；聊天、菜单默认折叠。切换人数直接对比拥挤程度。</p>
+
+  <div class="ctrl">
+    <div class="grp"><span>人数</span>
+      <button class="btn" data-n="2">2 人</button>
+      <button class="btn on" data-n="6">6 人</button>
+      <button class="btn" data-n="9">9 人</button>
+    </div>
+    <div class="grp"><span>状态</span>
+      <button class="btn on" data-s="me">轮到我</button>
+      <button class="btn" data-s="wait">等待他人</button>
+    </div>
+    <div class="grp">
+      <button class="btn" id="tChat">💬 聊天</button>
+      <button class="btn" id="tMenu">⋯ 菜单</button>
+    </div>
+  </div>
+
+  <div class="phone"><div class="screen" id="screen"></div></div>
+
+  <p class="hint">
+    <b>关键改动：</b>① 删除右栏（原占用 1/3 屏宽、纵向堆 4 个面板）→ 牌桌宽度 +50%；
+    ② 我的座位从椭圆移到底部独立区，9 人时椭圆底部中央自然留空；
+    ③ 对手底牌平时不渲染（德扑常识：对手牌是暗的），仅摊牌亮出；
+    ④ 加注滑杆改为 4 档 sizing chips；⑤ 聊天/菜单折叠进顶栏。
+  </p>
+
+<script>
+/* 与 table.js 保持一致的对手座位布局（键 = 对手人数） */
+const OPP_LAYOUT = {
+  1: [{x:50,y:12}],
+  2: [{x:28,y:16},{x:72,y:16}],
+  3: [{x:16,y:30},{x:50,y:9},{x:84,y:30}],
+  4: [{x:14,y:30},{x:34,y:9},{x:66,y:9},{x:86,y:30}],
+  5: [{x:11,y:36},{x:24,y:12},{x:50,y:6},{x:76,y:12},{x:89,y:36}],
+  6: [{x:9,y:40},{x:16,y:18},{x:36,y:7},{x:64,y:7},{x:84,y:18},{x:91,y:40}],
+  7: [{x:8,y:46},{x:14,y:22},{x:34,y:8},{x:50,y:6},{x:66,y:8},{x:86,y:22},{x:92,y:46}],
+  8: [{x:20,y:74},{x:6,y:48},{x:12,y:24},{x:32,y:8},{x:68,y:8},{x:88,y:24},{x:94,y:48},{x:80,y:74}]
+};
+const oppPos = (i,n)=>{const L=OPP_LAYOUT[n]||OPP_LAYOUT[8];const p=L[i]||L[L.length-1];return {x:p.x,y:19+p.y*0.58};};
+
+const NAMES = ['林小满','陈默','苏晴','赵岩','周叙','沈迟','韩野','许温'];
+/* hi = 摊牌时属于「最佳成手 5 张」的牌，描金边高亮 */
+const BOARD = [
+  {r:'A',s:'♠',c:'s-spade',hi:true},
+  {r:'K',s:'♥',c:'s-heart',hi:true},
+  {r:'9',s:'♦',c:'s-diamond',hi:false},
+  {r:'2',s:'♣',c:'s-club',hi:false},
+  {r:'7',s:'♠',c:'s-spade',hi:true}
+];
+
+let state = { n:6, s:'me', chat:false, menu:false };
+
+function render(){
+  const oppN = state.n - 1;
+  const seats = [];
+  for(let i=0;i<oppN;i++){
+    const p = oppPos(i, oppN);
+    const active = state.s === 'wait' && i === 0;
+    seats.push(`
+      <div class="seat ${i===2?'folded':''} ${active?'active':''}" style="left:${p.x}%;top:${p.y}%">
+        ${i%2===0 ? '<div class="seat-bet">40</div>' : ''}
+        <div class="avatar">${NAMES[i][0]}
+          ${i===oppN-1?'<div class="dealer">D</div>':''}
+          ${active?'<div class="timer" style="background:conic-gradient(#e8a33d 62%, rgba(255,255,255,.16) 0)"><div class="timer-num">12</div></div>':''}
+        </div>
+        <div class="seat-meta"><span class="seat-name">${NAMES[i]}</span><span class="seat-stack">${980-i*40}</span></div>
+        ${i===2?'<div class="act-bubble act-f">弃牌</div>':''}
+      </div>`);
+  }
+
+  const myMid = state.s === 'me'
+    ? `<div class="presets">
+         <div class="pr on">最小</div><div class="pr">½池</div><div class="pr">底池</div><div class="pr">全下</div>
+       </div>`
+    : `<div class="mytip">胜率 62% · 赔率 3:1 · 建议跟注</div>`;
+
+  const chatPop = state.chat ? `
+    <div class="chat-pop">
+      <div class="chat-log">
+        <div class="chat-line">陈默：打得不错</div>
+        <div class="chat-line">苏晴：🔥</div>
+        <div class="chat-line">赵岩：跟一手</div>
+      </div>
+      <div class="chat-bar"><span class="chat-quick">打得不错</span><span class="chat-quick">好牌！</span><span class="chat-quick">谢谢</span></div>
+      <div class="chat-bar"><span class="chat-emoji">👍</span><span class="chat-emoji">🔥</span><span class="chat-emoji">😮</span><span class="chat-emoji">💰</span></div>
+    </div>` : '';
+
+  const menuPop = state.menu ? `
+    <div class="menu-pop">
+      <div class="mi">规则说明</div>
+      <div class="mi">邀请好友</div>
+      <div class="mi">站起退出本局</div>
+      <div class="mi danger">退出房间</div>
+    </div>` : '';
+
+  document.getElementById('screen').innerHTML = `
+    <div class="topbar">
+      <div class="tb-l">
+        <div class="ibtn"><svg class="iback" viewBox="0 0 24 24" fill="none" stroke="#e8eef0" stroke-width="2"><path d="M15 5l-7 7 7 7"/></svg></div>
+        <span class="tb-title">好友房</span>
+        <span class="tb-room">482913</span>
+      </div>
+      <div class="tb-r">
+        <span class="tb-street">翻牌</span>
+        <span class="tb-hand">7 手</span>
+        <span class="tb-clock">29:41</span>
+        <div class="ibtn ${state.chat?'on':''}" id="bChat">💬</div>
+        <div class="ibtn ${state.menu?'on':''}" id="bMenu">⋯</div>
+      </div>
+    </div>
+    ${menuPop}
+    <div class="felt" id="felt">
+      <div class="felt-glow"></div>
+      <div class="pot-row"><div class="pot-pill"><span class="pot-amount">240</span></div></div>
+      <div class="board-row"><div class="board">
+        ${BOARD.map(c=>`<div class="card ${c.c} ${c.hi?'hi':''}"><span class="r">${c.r}</span><span class="s">${c.s}</span></div>`).join('')}
+      </div></div>
+      ${seats.join('')}
+    </div>
+    <div class="myzone">
+      <div class="mybar">
+        <div class="mycards">
+          <div class="card s-heart hi"><span class="r">A</span><span class="s">♥</span></div>
+          <div class="card s-spade hi"><span class="r">Q</span><span class="s">♠</span></div>
+        </div>
+        <div class="mymid">${myMid}</div>
+        <div class="mystk"><span class="ms-v">980</span><span class="ms-l">筹码</span></div>
+      </div>
+      <div class="actbar">
+        <div class="ab ab-fold">弃牌</div>
+        <div class="ab ab-call">跟注 40</div>
+        <div class="ab ab-raise">加注 80</div>
+      </div>
+    </div>
+    ${chatPop}
+  `;
+
+  document.getElementById('bChat').onclick = ()=>{ state.chat=!state.chat; state.menu=false; render(); };
+  document.getElementById('bMenu').onclick = ()=>{ state.menu=!state.menu; state.chat=false; render(); };
+  document.getElementById('felt').onclick = ()=>{ if(state.chat||state.menu){state.chat=false;state.menu=false;render();} };
+}
+
+document.querySelectorAll('[data-n]').forEach(b=>b.onclick=()=>{
+  document.querySelectorAll('[data-n]').forEach(x=>x.classList.remove('on'));
+  b.classList.add('on'); state.n=+b.dataset.n; render();
+});
+document.querySelectorAll('[data-s]').forEach(b=>b.onclick=()=>{
+  document.querySelectorAll('[data-s]').forEach(x=>x.classList.remove('on'));
+  b.classList.add('on'); state.s=b.dataset.s; render();
+});
+document.getElementById('tChat').onclick=()=>{state.chat=!state.chat;state.menu=false;render();};
+document.getElementById('tMenu').onclick=()=>{state.menu=!state.menu;state.chat=false;render();};
+
+render();
+</script>
+</body>
+</html>

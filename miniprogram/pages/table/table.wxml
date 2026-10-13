@@ -1,0 +1,280 @@
+<view class="table-page {{fourColor ? 'four-color' : ''}} {{animOn ? '' : 'no-anim'}}" style="{{rootStyle}}">
+  <!-- 等待室（好友房：空房间 → 好友进入 → 房主开始才发牌） -->
+  <block wx:if="{{phase === 'waiting'}}">
+    <view class="wait-room">
+      <view class="wait-hud">
+        <view class="hud-left-group">
+          <view class="back-btn" bindtap="onBack"><view class="ic ic-back back-ico"></view><text>返回</text></view>
+          <text class="wait-title">好友房</text>
+        </view>
+        <view class="wait-roomno" bindtap="copyRoom">
+          <text class="rn-num">房间号 {{roomNo}}</text>
+          <text class="rn-copy">点击复制</text>
+        </view>
+      </view>
+      <view class="wait-set">{{maxSeats}} 人桌 · {{durationMin > 0 ? ('时长 ' + durationMin + ' 分钟') : '不限时'}}</view>
+      <view class="wait-note">{{isOwner ? '把房间号发给好友，坐下后由你点「开始游戏」发牌' : '已入座，等待房主开始游戏…'}}</view>
+      <view class="wait-tip-expire" wx:if="{{isOwner}}">⏱ 房间创建后 30 分钟内无人加入将自动解散</view>
+      <view class="wait-seats">
+        <view wx:for="{{waitSeats}}" wx:key="seat" class="wseat {{item.occupied ? 'on' : 'off'}}">
+          <block wx:if="{{item.occupied}}">
+            <view class="wavatar">{{item.name[0]}}</view>
+            <text class="wname">{{item.name}}</text>
+            <text class="wtag owner" wx:if="{{item.isOwner}}">房主</text>
+            <text class="wtag kick" wx:elif="{{item.isBot}}" bindtap="kickBot" data-seat="{{item.seat}}">请出</text>
+          </block>
+          <block wx:else>
+            <view class="wavatar empty">＋</view>
+            <text class="wname empty">空位</text>
+          </block>
+        </view>
+      </view>
+      <block wx:if="{{isOwner}}">
+        <view class="wait-actions">
+          <button class="wbtn ghost" open-type="share"><view class="ic ic-share inv-ico"></view><text>邀请</text></button>
+          <button class="wbtn ghost" bindtap="addBot">添加电脑玩家</button>
+          <button class="wbtn primary" bindtap="startGame" disabled="{{!canStart}}">开始游戏{{canStart ? '' : '（至少 2 人）'}}</button>
+        </view>
+      </block>
+      <block wx:else>
+        <view class="wait-actions">
+          <button class="wbtn ghost" open-type="share"><view class="ic ic-share inv-ico"></view><text>邀请好友</text></button>
+        </view>
+        <view class="guest-wait">你是访客，等待房主开始游戏</view>
+      </block>
+    </view>
+  </block>
+
+  <!-- 牌桌（playing）
+       分区参考微扑克：上半区只放对手信息与公共牌，下半区放我的手牌与操作按钮，
+       次要功能（聊天、菜单）默认折叠，主视觉不被抢占。 -->
+  <block wx:elif="{{phase === 'playing'}}">
+    <!-- 顶栏：返回 / 标题 / 街次 / 手数 / 倒计时 / 折叠入口 -->
+    <view class="topbar">
+      <view class="tb-l">
+        <view class="ibtn" bindtap="onBack"><view class="ic ic-back ib-ico"></view></view>
+        <text class="tb-title">{{pageTitle}}</text>
+        <text class="tb-room" wx:if="{{mode === 'friend' && roomNo}}">{{roomNo}}</text>
+      </view>
+      <view class="tb-r">
+        <text class="tb-street">{{streetCn}}</text>
+        <text class="tb-hand">{{handNo}} 手</text>
+        <text class="tb-clock {{remainSec <= 60 ? 'urgent' : ''}}" wx:if="{{durationMin > 0 && !timeUp}}">{{remainText}}</text>
+        <view class="ibtn {{chatOpen ? 'on' : ''}}" bindtap="toggleChat"><text class="ib-txt">💬</text></view>
+        <view class="ibtn {{menuOpen ? 'on' : ''}}" bindtap="toggleMenu"><text class="ib-txt">⋯</text></view>
+      </view>
+    </view>
+
+    <!-- 折叠菜单：次要操作收纳于此 -->
+    <view class="menu-pop" wx:if="{{menuOpen}}">
+      <view class="mi" bindtap="onMenuHelp">规则说明</view>
+      <button class="mi" open-type="share" wx:if="{{mode === 'friend'}}">邀请好友</button>
+      <view class="mi" wx:if="{{myStanding && !mySeated}}" bindtap="onMenuSit">坐下加入游戏</view>
+      <view class="mi" wx:elif="{{canStand}}" bindtap="onMenuStand">站起退出本局</view>
+      <view class="mi danger" bindtap="onMenuBack">退出房间</view>
+    </view>
+
+    <!-- 牌桌：上半区（对手） -->
+    <view class="felt" bindtap="closePanels">
+      <view class="felt-glow"></view>
+
+      <!-- 底池 + 边池 -->
+      <view class="pot-row">
+        <view class="pot-pill {{pot > 0 ? 'live' : ''}}">
+          <text class="pot-amount">{{pot}}</text>
+        </view>
+        <view class="side-pots" wx:if="{{sidePots.length}}">
+          <text class="side-pot" wx:for="{{sidePots}}" wx:key="index">边池{{index + 1}} {{item}}</text>
+        </view>
+      </view>
+
+      <!-- 公共牌 -->
+      <view class="board-row">
+        <view class="board">
+          <block wx:for="{{board}}" wx:key="idx">
+            <view class="card {{item.cls}} {{item.hi ? 'hi' : ''}}" style="animation-delay:{{index * 60}}ms">
+              <text class="r">{{item.rank}}</text>
+              <text class="s">{{item.suit}}</text>
+            </view>
+          </block>
+          <view class="card-ph" wx:for="{{boardPlaceholders}}" wx:key="phkey"></view>
+        </view>
+      </view>
+
+      <!-- 对手座位（我已在下方 myzone，不参与椭圆排布） -->
+      <block wx:for="{{seats}}" wx:key="seat">
+        <view class="seat {{item.folded ? 'folded' : ''}} {{item.active ? 'active' : ''}} {{item.win ? 'win' : ''}} {{item.standing ? 'standing' : ''}}"
+              style="left:{{item.x}}%;top:{{item.y}}%">
+          <view class="seat-bet" wx:if="{{item.bet > 0}}">{{item.bet}}</view>
+
+          <view class="avatar">
+            <text>{{item.initial}}</text>
+            <view class="dealer" wx:if="{{item.isDealer}}">D</view>
+            <view class="timer" wx:if="{{item.active}}"
+                  style="background:conic-gradient(#e8a33d {{item.timerPct}}%, rgba(255,255,255,.16) 0)">
+              <view class="timer-num">{{item.timer}}</view>
+            </view>
+          </view>
+
+          <view class="seat-meta">
+            <text class="seat-name">{{item.name}}</text>
+            <text class="seat-stack">{{item.stack}}</text>
+            <text class="seat-standing" wx:if="{{item.standing}}">观战</text>
+          </view>
+
+          <!-- 对手底牌仅在摊牌时亮出，平时不渲染，减少视觉噪音 -->
+          <view class="seat-cards" wx:if="{{item.showCards}}">
+            <view class="card card-xs {{c.cls}} {{c.hi ? 'hi' : ''}}" wx:for="{{item.hole}}" wx:for-item="c" wx:key="idx">
+              <text class="r">{{c.rank}}</text>
+              <text class="s">{{c.suit}}</text>
+            </view>
+          </view>
+
+          <view class="act-bubble {{item.actCls}}" wx:if="{{item.actText}}">{{item.actText}}</view>
+        </view>
+      </block>
+
+      <!-- 结算弹窗 -->
+      <view class="result-banner" wx:if="{{result}}">
+        <text class="result-title">{{result.title}}</text>
+        <view class="result-rows">
+          <view class="result-row {{item.win ? 'is-win' : ''}}" wx:for="{{result.rows}}" wx:key="seat">
+            <text class="rr-name">{{item.icon}}{{item.name}}</text>
+            <text class="rr-hand">{{item.hand}}</text>
+            <text class="rr-gain" wx:if="{{item.win}}">+{{item.gain}}</text>
+          </view>
+        </view>
+        <text class="result-net">{{result.netText}}</text>
+
+        <!-- 就绪阶段：等所有坐下的人点「准备就绪」后才发下一手 -->
+        <block wx:if="{{readyPhase}}">
+          <view class="ready-list">
+            <view class="ready-row {{item.ready ? 'on' : ''}}" wx:for="{{readyList}}" wx:key="seat">
+              <text class="rd-dot"></text>
+              <text class="rd-name">{{item.name}}</text>
+              <text class="rd-state">{{item.ready ? '已准备' : '准备中…'}}</text>
+            </view>
+          </view>
+          <text class="ready-hint">{{readyHint}}</text>
+          <button class="btn-primary result-btn" wx:if="{{mySeated && !myReady}}" bindtap="onReadyTap">
+            准备就绪{{readyLeft > 0 ? '（' + readyLeft + 's）' : ''}}
+          </button>
+          <view class="ready-wait" wx:elif="{{myReady}}">已准备 · 等待其他人…<text class="stand-inline" bindtap="onMenuStand">站起退出本局</text></view>
+          <view class="ready-wait" wx:else>观战中 · <text class="stand-inline" bindtap="onMenuSit">坐下加入游戏</text></view>
+        </block>
+        <block wx:else>
+          <button class="btn-primary result-btn" bindtap="onNextHand">下一手</button>
+          <button class="result-btn ghost" wx:if="{{canStand}}" bindtap="onMenuStand">站起退出本局</button>
+        </block>
+      </view>
+    </view>
+
+    <!-- 我的区域：下半区（手牌 + 状态 + 筹码 + 操作） -->
+    <view class="myzone">
+      <view class="mybar">
+        <view class="mycards {{myFolded ? 'folded' : ''}}">
+          <view class="card {{c.cls}} {{c.hi ? 'hi' : ''}}" wx:for="{{myCards}}" wx:for-item="c" wx:key="idx" style="animation-delay:{{index * 80}}ms">
+            <text class="r">{{c.rank}}</text>
+            <text class="s">{{c.suit}}</text>
+          </view>
+          <block wx:if="{{!myCards.length}}">
+            <view class="card back"></view>
+            <view class="card back"></view>
+          </block>
+        </view>
+
+        <view class="mymid">
+          <!-- 轮到我：加注档位（微扑克式 sizing chips，替代占位大的滑杆） -->
+          <view class="presets" wx:if="{{isMyTurn}}">
+            <view class="pr {{raisePreset === item.k ? 'on' : ''}}" wx:for="{{raisePresets}}" wx:key="k"
+                  data-v="{{item.k}}" bindtap="onPresetTap">{{item.t}}</view>
+          </view>
+          <view class="mytip" wx:elif="{{timeUp}}">本局已结束 · 可在菜单退出房间</view>
+          <view class="mytip" wx:elif="{{myStanding && !mySeated}}">观战中</view>
+          <view class="mytip" wx:elif="{{myStanding && mySeated}}">已坐下 · 下一手开始入局</view>
+          <view class="mytip" wx:elif="{{readyPhase}}">{{myReady ? '已准备 · 等待其他人就绪…' : '上一手已结束 · 点「准备就绪」继续'}}</view>
+          <view class="mytip" wx:elif="{{myActText}}">{{myActText}}</view>
+          <view class="mytip coach" wx:elif="{{coachShow}}">💡 {{coachTip}}</view>
+          <view class="mytip" wx:elif="{{advice.text}}">胜率 {{advice.equityPct}} · 赔率 {{advice.potOdds}} · {{advice.text}}</view>
+          <view class="mytip" wx:else>等待 {{currentPlayerName}} 行动…</view>
+          <!-- 弃牌后/本手结束后（未结算面板时）：显眼的「站起退出本局」入口 -->
+          <view class="stand-link" wx:if="{{canStand && !result && !readyPhase}}" bindtap="onMenuStand">站起退出本局</view>
+          <!-- 站起观战中：显眼的「坐下加入游戏」入口（不进 ⋯ 菜单也能找到） -->
+          <view class="stand-link" wx:if="{{myStanding && !mySeated && !readyPhase}}" bindtap="onMenuSit">坐下加入游戏</view>
+        </view>
+
+        <view class="mystk">
+          <text class="ms-v">{{myStack}}</text>
+          <text class="ms-l">筹码</text>
+        </view>
+      </view>
+
+      <!-- 行动条：三个大按钮，间距拉大避免误触 -->
+      <view class="actbar">
+        <button class="ab ab-fold" bindtap="onFold" disabled="{{!isMyTurn}}">弃牌</button>
+        <button class="ab ab-call" bindtap="onCheckOrCall" disabled="{{!isMyTurn}}">
+          {{legal.toCall > 0 ? ('跟注 ' + legal.toCall) : '过牌'}}
+        </button>
+        <button class="ab ab-raise" bindtap="onRaise" disabled="{{!isMyTurn || !legal.canRaise}}">
+          {{raiseTo ? ('加注 ' + raiseTo) : '加注'}}
+        </button>
+      </view>
+    </view>
+
+    <!-- 聊天浮层：默认折叠，点击顶栏 💬 展开 -->
+    <view class="chat-pop" wx:if="{{chatOpen}}">
+      <view class="chat-log">
+        <view class="chat-line" wx:for="{{chatLog}}" wx:key="id">{{item.name}}：{{item.text}}</view>
+        <view class="chat-empty" wx:if="{{!chatLog.length}}">发个表情活跃一下牌桌气氛</view>
+      </view>
+      <view class="chat-bar">
+        <text class="chat-quick" wx:for="{{quickChat}}" wx:key="*this" data-t="{{item}}" bindtap="onQuickChat">{{item}}</text>
+      </view>
+      <view class="chat-bar emoji">
+        <text class="chat-emoji" wx:for="{{chatEmojis}}" wx:key="*this" data-e="{{item}}" bindtap="onEmoji">{{item}}</text>
+      </view>
+    </view>
+  </block>
+
+  <!-- 本局结束：时长到点后的全员盈亏结算 -->
+  <view class="help-mask" wx:if="{{summary}}">
+    <view class="summary-dialog" catchtap>
+      <text class="summary-title">{{summary.title}}</text>
+      <text class="summary-sub">{{summary.sub}}</text>
+
+      <view class="summary-rows">
+        <view class="summary-row {{item.isMe ? 'me' : ''}}" wx:for="{{summary.rows}}" wx:key="seat">
+          <text class="sr-rank">{{index + 1}}</text>
+          <text class="sr-name">{{item.name}}</text>
+          <text class="sr-stack">{{item.stack}}</text>
+          <text class="sr-net {{item.net > 0 ? 'up' : (item.net < 0 ? 'down' : '')}}">
+            {{item.net > 0 ? '+' : ''}}{{item.net}}
+          </text>
+        </view>
+      </view>
+
+      <view class="summary-my">
+        <text class="sm-label">我的盈亏</text>
+        <text class="sm-val {{summary.myNet > 0 ? 'up' : (summary.myNet < 0 ? 'down' : '')}}">{{summary.myNetText}}</text>
+      </view>
+
+      <view class="summary-btns">
+        <button class="btn-ghost sbtn" bindtap="onBack">返回房间</button>
+        <button class="btn-primary sbtn" bindtap="restartGame">再来一局</button>
+      </view>
+    </view>
+  </view>
+
+  <!-- 新手引导：下注轮次与规则（等待室/牌桌通用） -->
+  <view class="help-mask" wx:if="{{helpShow}}" bindtap="onHelpClose">
+    <view class="help-dialog" catchtap>
+      <text class="help-title">怎么打完一手牌</text>
+      <view class="help-row" wx:for="{{helpRows}}" wx:key="name">
+        <text class="help-name">{{item.name}}</text>
+        <text class="help-desc">{{item.desc}}</text>
+      </view>
+      <text class="help-tip">提示：牌力越强、赔率越合适越值得加注；不确定时先过牌或弃牌。</text>
+      <button class="help-btn" bindtap="onHelpClose">知道了</button>
+    </view>
+  </view>
+</view>

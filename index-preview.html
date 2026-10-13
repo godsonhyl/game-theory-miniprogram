@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>博弈论 · 首页预览（含我的房间）</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: #07120f; font-family: -apple-system, "PingFang SC", sans-serif;
+    display: flex; justify-content: center; padding: 24px;
+  }
+  .phone {
+    width: 390px; background: radial-gradient(ellipse at 50% 0%, #16302a 0%, #0d1a17 60%);
+    border-radius: 36px; padding: 28px 22px; color: #eaf2ee;
+    box-shadow: 0 20px 60px rgba(0,0,0,.5); min-height: 760px;
+  }
+  .ic { display: inline-block; background-repeat: no-repeat; background-position: center; background-size: contain; }
+  .hero { display: flex; align-items: center; justify-content: space-between;
+    background: rgba(255,255,255,.05); border: 1px solid rgba(255,255,255,.09);
+    border-radius: 22px; padding: 18px; margin-bottom: 18px; }
+  .hero-l { display: flex; align-items: center; }
+  .avatar { width: 52px; height: 52px; border-radius: 50%;
+    background: linear-gradient(145deg,#2f9e6e,#1d6b4a); color:#fff; font-weight:800;
+    display:flex; align-items:center; justify-content:center; font-size:22px; margin-right:12px; }
+  .h-name { font-size:17px; font-weight:700; }
+  .h-sub { font-size:12px; color:#8fa8a0; margin-top:3px; }
+  .cards { display:flex; flex-direction:column; align-items:center;
+    background: rgba(217,164,65,.12); border:1px solid rgba(217,164,65,.3);
+    border-radius:16px; padding:8px 16px; }
+  .cards-n { font-size:22px; font-weight:800; color:#d9a441; }
+  .cards-l { font-size:11px; color:#d9a441; }
+
+  .myrooms { margin-bottom: 18px; }
+  .sec-head { display:flex; align-items:baseline; justify-content:space-between; margin-bottom:10px; }
+  .sec-title { font-size:15px; font-weight:700; }
+  .sec-count { font-size:11px; color:#8fa8a0; }
+  .room-card { display:flex; align-items:center; background: rgba(255,255,255,.05);
+    border:1px solid rgba(217,164,65,.22); border-radius:16px; padding:14px 16px; margin-bottom:10px; }
+  .room-ico { width:38px; height:38px; border-radius:12px; background-color: rgba(217,164,65,.12);
+    margin-right:12px; flex:none; }
+  .room-info { flex:1; }
+  .room-no { font-size:15px; font-weight:700; }
+  .room-meta { font-size:11px; color:#8fa8a0; margin-top:3px; }
+  .room-enter { font-size:13px; color:#d9a441; font-weight:700; display:flex; align-items:center; }
+
+  .mode { display:flex; align-items:center; background: rgba(255,255,255,.05);
+    border:1px solid rgba(255,255,255,.09); border-radius:18px; padding:16px; margin-bottom:12px; }
+  .mode-icon { width:48px; height:48px; border-radius:14px; background-color: rgba(255,255,255,.08);
+    margin-right:14px; flex:none; }
+  .mode-body { flex:1; }
+  .mode-title { font-size:16px; font-weight:700; }
+  .mode-desc { font-size:12px; color:#8fa8a0; margin-top:3px; }
+  .mode-arrow { font-size:22px; color:#8fa8a0; }
+
+  .stats { display:flex; background: rgba(255,255,255,.05); border:1px solid rgba(255,255,255,.09);
+    border-radius:18px; padding:16px 0; margin-bottom:18px; }
+  .stat-item { flex:1; display:flex; flex-direction:column; align-items:center; }
+  .stat-n { font-size:17px; font-weight:800; color:#d9a441; }
+  .stat-l { font-size:11px; color:#8fa8a0; margin-top:3px; }
+  .rules { background: rgba(255,255,255,.045); border:1px solid rgba(255,255,255,.09);
+    border-radius:18px; padding:16px; }
+  .rules-title { font-size:14px; font-weight:700; color:#cfe0d9; margin-bottom:10px; display:block; }
+  .rule-row { display:flex; justify-content:space-between; padding:7px 0; border-bottom:1px solid rgba(255,255,255,.05); }
+  .rule-row:last-child { border-bottom:none; }
+  .rule-name { font-size:13px; color:#d9a441; width:90px; }
+  .rule-desc { font-size:12px; color:#8fa8a0; flex:1; text-align:right; }
+  .footer { text-align:center; font-size:11px; color:#6b7f78; margin-top:18px; }
+</style>
+</head>
+<body>
+<div class="phone">
+  <div class="hero">
+    <div class="hero-l">
+      <div class="avatar">玩</div>
+      <div>
+        <div class="h-name">玩家</div>
+        <div class="h-sub">欢迎回来，继续牌局</div>
+      </div>
+    </div>
+    <div class="cards">
+      <div class="cards-n">12</div>
+      <div class="cards-l">房卡</div>
+    </div>
+  </div>
+
+  <div class="myrooms">
+    <div class="sec-head">
+      <span class="sec-title">我的房间</span>
+      <span class="sec-count">2 个进行中</span>
+    </div>
+    <div class="room-card">
+      <span class="ic room-ico" style="background-image:url('data:image/svg+xml;utf8,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 24 24%22 fill=%22none%22 stroke=%22%23d9a441%22 stroke-width=%221.8%22 stroke-linecap=%22round%22 stroke-linejoin=%22round%22><circle cx=%229%22 cy=%228%22 r=%223%22/><path d=%22M3.5 19c0-3 2.6-5.5 5.5-5.5S14.5 16 14.5 19%22/><circle cx=%2217%22 cy=%229%22 r=%222.3%22/><path d=%22M15.6 14.4c2.5.5 4.4 2.3 4.4 5.6%22/></svg>')"></span>
+      <div class="room-info">
+        <div class="room-no">房间 123456</div>
+        <div class="room-meta">好友房 · 最多 6 人</div>
+      </div>
+      <div class="room-enter">进入 ›</div>
+    </div>
+    <div class="room-card">
+      <span class="ic room-ico" style="background-image:url('data:image/svg+xml;utf8,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 24 24%22 fill=%22none%22 stroke=%22%23d9a441%22 stroke-width=%221.8%22 stroke-linecap=%22round%22 stroke-linejoin=%22round%22><circle cx=%229%22 cy=%228%22 r=%223%22/><path d=%22M3.5 19c0-3 2.6-5.5 5.5-5.5S14.5 16 14.5 19%22/><circle cx=%2217%22 cy=%229%22 r=%222.3%22/><path d=%22M15.6 14.4c2.5.5 4.4 2.3 4.4 5.6%22/></svg>')"></span>
+      <div class="room-info">
+        <div class="room-no">房间 654321</div>
+        <div class="room-meta">好友房 · 最多 6 人</div>
+      </div>
+      <div class="room-enter">进入 ›</div>
+    </div>
+  </div>
+
+  <div class="mode">
+    <span class="ic mode-icon" style="background-image:url('data:image/svg+xml;utf8,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 24 24%22 fill=%22none%22 stroke=%22%23d9a441%22 stroke-width=%221.8%22 stroke-linecap=%22round%22 stroke-linejoin=%22round%22><circle cx=%229%22 cy=%228%22 r=%223%22/><path d=%22M3.5 19c0-3 2.6-5.5 5.5-5.5S14.5 16 14.5 19%22/><circle cx=%2217%22 cy=%229%22 r=%222.3%22/><path d=%22M15.6 14.4c2.5.5 4.4 2.3 4.4 5.6%22/></svg>')"></span>
+    <div class="mode-body">
+      <div class="mode-title">好友房</div>
+      <div class="mode-desc">创建房间邀请好友，或输入房号加入</div>
+    </div>
+    <div class="mode-arrow">›</div>
+  </div>
+  <div class="mode">
+    <span class="ic mode-icon" style="background-image:url('data:image/svg+xml;utf8,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 24 24%22 fill=%22none%22 stroke=%22%23d9a441%22 stroke-width=%221.8%22 stroke-linecap=%22round%22 stroke-linejoin=%22round%22><rect x=%225%22 y=%228%22 width=%2214%22 height=%2211%22 rx=%222.5%22/><path d=%22M12 8V4.6%22/><circle cx=%2212%22 cy=%223.6%22 r=%221.1%22 fill=%22%23d9a441%22 stroke=%22none%22/><circle cx=%229.3%22 cy=%2213.2%22 r=%221.2%22/><circle cx=%2214.7%22 cy=%2213.2%22 r=%221.2%22/><path d=%22M9.3 16.6h5.4%22/></svg>')"></span>
+    <div class="mode-body">
+      <div class="mode-title">AI 对战</div>
+      <div class="mode-desc">与 AI 玩家练习，适合新手熟悉规则</div>
+    </div>
+    <div class="mode-arrow">›</div>
+  </div>
+  <div class="mode">
+    <span class="ic mode-icon" style="background-image:url('data:image/svg+xml;utf8,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 24 24%22 fill=%22none%22 stroke=%22%23d9a441%22 stroke-width=%221.8%22 stroke-linecap=%22round%22 stroke-linejoin=%22round%22><path d=%22M13 2.5 4.5 13.8H10l-1 7.7 9-12.2h-5.5z%22/></svg>')"></span>
+    <div class="mode-body">
+      <div class="mode-title">快速匹配</div>
+      <div class="mode-desc">随机匹配对手（需确认平台合规政策）</div>
+    </div>
+    <div class="mode-arrow">›</div>
+  </div>
+
+  <div class="stats">
+    <div class="stat-item"><div class="stat-n">10</div><div class="stat-l">总手数</div></div>
+    <div class="stat-item"><div class="stat-n">4</div><div class="stat-l">胜场</div></div>
+    <div class="stat-item"><div class="stat-n">+30</div><div class="stat-l">盈亏</div></div>
+    <div class="stat-item"><div class="stat-n">40%</div><div class="stat-l">胜率</div></div>
+  </div>
+
+  <div class="rules">
+    <span class="rules-title">新手上路 · 牌型速览</span>
+    <div class="rule-row"><span class="rule-name">皇家同花顺</span><span class="rule-desc">A K Q J 10 同花色</span></div>
+    <div class="rule-row"><span class="rule-name">同花顺</span><span class="rule-desc">同花色的连续 5 张</span></div>
+    <div class="rule-row"><span class="rule-name">四条</span><span class="rule-desc">四张同点数 + 1 张</span></div>
+  </div>
+
+  <div class="footer">体验版 · 功能演示中，正式版需完成版号与备案</div>
+</div>
+</body>
+</html>

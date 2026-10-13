@@ -1,0 +1,246 @@
+<view class="home">
+  <!-- 加载中 -->
+  <view class="state-box" wx:if="{{loading}}">
+    <text class="state-title">正在登录…</text>
+    <text class="state-sub">首次进入需完成微信静默授权</text>
+  </view>
+
+  <!-- 登录失败 -->
+  <view class="state-box state-err" wx:elif="{{loginError}}">
+    <text class="state-title">登录未完成</text>
+    <text class="state-sub">{{loginError}}</text>
+    <button class="btn-primary state-btn" bindtap="onRetryLogin">重试</button>
+  </view>
+
+  <block wx:else>
+  <!-- 顶部卡片 -->
+  <view class="hero">
+    <view class="hero-user">
+      <view class="hero-avatar">{{initial}}</view>
+      <view class="hero-info">
+        <text class="hero-name">{{nickname}}</text>
+        <text class="hero-sub">欢迎回来，继续牌局</text>
+      </view>
+    </view>
+    <view class="hero-right">
+      <view class="hero-cards" bindtap="onCardsTap">
+        <text class="cards-num">{{roomCards}}</text>
+        <text class="cards-label">房卡</text>
+        <text class="cards-add">+</text>
+      </view>
+      <view class="hero-set" bindtap="onSettingsTap"><view class="ic ic-gear set-ico"></view></view>
+    </view>
+  </view>
+
+  <!-- 游戏模式 -->
+  <view class="modes">
+    <!-- 好友房 -->
+    <view class="mode mode-friend" bindtap="onFriendTap">
+      <view class="mode-icon ic ic-friend"></view>
+      <view class="mode-body">
+        <text class="mode-title">好友房</text>
+        <text class="mode-desc">创建房间邀请好友，或输入房号加入</text>
+      </view>
+      <text class="mode-arrow">›</text>
+    </view>
+
+    <!-- AI 对战 -->
+    <view class="mode mode-ai" bindtap="onAIMode">
+      <view class="mode-icon ic ic-ai"></view>
+      <view class="mode-body">
+        <text class="mode-title">AI 对战</text>
+        <text class="mode-desc">与 AI 玩家练习，适合新手熟悉规则</text>
+      </view>
+      <text class="mode-arrow">›</text>
+    </view>
+
+    <!-- 快速匹配 -->
+    <view class="mode mode-rank" bindtap="onRankMode">
+      <view class="mode-icon ic ic-rank"></view>
+      <view class="mode-body">
+        <text class="mode-title">快速匹配</text>
+        <text class="mode-desc">随机匹配对手（需确认平台合规政策）</text>
+      </view>
+      <text class="mode-tag" wx:if="{{!rankEnabled}}">暂未开放</text>
+      <text class="mode-arrow" wx:else>›</text>
+    </view>
+  </view>
+
+  <!-- 我的房间 -->
+  <view class="myrooms" wx:if="{{myRooms.length}}">
+    <view class="sec-head">
+      <text class="sec-title">我的房间</text>
+      <text class="sec-count">{{myRooms.length}} 个进行中</text>
+    </view>
+    <view class="room-card" wx:for="{{myRooms}}" wx:key="roomNo"
+          bindtap="onEnterRoom" data-room="{{item.roomNo}}"
+          data-max="{{item.maxPlayers}}" data-dur="{{item.durationMin}}">
+      <view class="room-ico ic ic-friend"></view>
+      <view class="room-info">
+        <text class="room-no">房间 {{item.roomNo}}</text>
+        <text class="room-meta">{{item.maxPlayers}} 人桌 · {{item.durText}} · {{item.liveText}}</text>
+      </view>
+      <view class="room-enter">{{item.live ? '继续' : '进入'}} <text class="chev">›</text></view>
+    </view>
+  </view>
+
+  <!-- 我的战绩 -->
+  <view class="stats" bindtap="onGoProfile">
+    <view class="stat-item">
+      <text class="stat-n">{{stats.hands}}</text>
+      <text class="stat-l">总手数</text>
+    </view>
+    <view class="stat-item">
+      <text class="stat-n">{{stats.wins}}</text>
+      <text class="stat-l">胜场</text>
+    </view>
+    <view class="stat-item">
+      <text class="stat-n {{stats.net >= 0 ? 'up' : 'down'}}">{{stats.netText}}</text>
+      <text class="stat-l">盈亏</text>
+    </view>
+    <view class="stat-item">
+      <text class="stat-n">{{stats.rate}}</text>
+      <text class="stat-l">胜率</text>
+    </view>
+    <text class="stats-arrow">›</text>
+  </view>
+
+  <!-- 规则速览 -->
+  <view class="rules">
+    <text class="rules-title">新手上路 · 牌型速览</text>
+    <view class="rule-row" wx:for="{{handRanks}}" wx:key="name">
+      <text class="rule-name">{{item.name}}</text>
+      <text class="rule-desc">{{item.desc}}</text>
+    </view>
+  </view>
+
+  <view class="footer-note">
+    体验版 · 功能演示中，正式版需完成版号与备案
+  </view>
+  </block>
+
+  <!-- 加入房间弹窗 -->
+  <view class="join-mask" wx:if="{{joinShow}}" bindtap="onJoinCancel">
+    <view class="join-dialog" catchtap>
+      <text class="join-title">加入房间</text>
+      <text class="join-sub">输入好友告诉你的 6 位房间号</text>
+      <input class="join-input" type="number" maxlength="6" placeholder="房间号"
+             value="{{joinNo}}" bindinput="onJoinInput" />
+      <view class="join-btns">
+        <button class="btn-ghost join-btn" bindtap="onJoinCancel">取消</button>
+        <button class="btn-primary join-btn" bindtap="onJoinConfirm">加入</button>
+      </view>
+    </view>
+  </view>
+
+  <!-- 创建好友房：限定人数 + 游戏时长 -->
+  <view class="join-mask" wx:if="{{createShow}}" bindtap="onCreateClose">
+    <view class="join-dialog" catchtap>
+      <text class="join-title">创建好友房</text>
+      <text class="join-sub">消耗 1 张房卡 · 创建后规则不可修改</text>
+
+      <text class="opt-label">限定人数</text>
+      <view class="opt-row">
+        <view class="opt {{cMax === 2 ? 'on' : ''}}" data-max="2" bindtap="onPickMax">2 人</view>
+        <view class="opt {{cMax === 4 ? 'on' : ''}}" data-max="4" bindtap="onPickMax">4 人</view>
+        <view class="opt {{cMax === 6 ? 'on' : ''}}" data-max="6" bindtap="onPickMax">6 人</view>
+        <view class="opt {{cMax === 9 ? 'on' : ''}}" data-max="9" bindtap="onPickMax">9 人</view>
+      </view>
+
+      <text class="opt-label">游戏时长</text>
+      <view class="opt-row">
+        <view class="opt {{cDur === 30 ? 'on' : ''}}" data-d="30" bindtap="onPickDur">30 分钟</view>
+        <view class="opt {{cDur === 60 ? 'on' : ''}}" data-d="60" bindtap="onPickDur">1 小时</view>
+        <view class="opt {{cDur === 120 ? 'on' : ''}}" data-d="120" bindtap="onPickDur">2 小时</view>
+        <view class="opt {{cDur === 0 ? 'on' : ''}}" data-d="0" bindtap="onPickDur">不限时</view>
+      </view>
+      <text class="opt-note">倒计时结束时自动结束本局，并统计所有参与人的盈亏</text>
+
+      <view class="join-btns">
+        <button class="btn-ghost join-btn" bindtap="onCreateClose">取消</button>
+        <button class="btn-primary join-btn" bindtap="onCreateConfirm">创建（1 房卡）</button>
+      </view>
+    </view>
+  </view>
+
+  <!-- 房卡：免费获取途径（体验版不做任何货币化） -->
+  <view class="join-mask" wx:if="{{cardsShow}}" bindtap="onCardsClose">
+    <view class="join-dialog" catchtap>
+      <text class="join-title">获取房卡</text>
+      <text class="join-sub">当前 {{roomCards}} 张 · 创建好友房消耗 1 张，AI 对战不消耗</text>
+
+      <view class="card-row">
+        <view class="card-gain">
+          <text class="cg-name">每日领取</text>
+          <text class="cg-desc">每天 {{claim.dailyCount}} 张，次日刷新</text>
+        </view>
+        <button class="btn-primary cg-btn {{claim.dailyReady ? '' : 'off'}}"
+                disabled="{{!claim.dailyReady}}" bindtap="onClaimDaily">
+          {{claim.dailyReady ? '领取 +' + claim.dailyCount : '今日已领'}}
+        </button>
+      </view>
+
+      <view class="card-row">
+        <view class="card-gain">
+          <text class="cg-name">对局奖励</text>
+          <text class="cg-desc">每累计 {{claim.handsPerCard}} 手领 1 张（单次最多 5）</text>
+        </view>
+        <button class="btn-primary cg-btn {{claim.handCards > 0 ? '' : 'off'}}"
+                disabled="{{claim.handCards === 0}}" bindtap="onClaimHands">
+          {{claim.handCards > 0 ? '领取 +' + claim.handCards : '再打 ' + claim.handsToNext + ' 手'}}
+        </button>
+      </view>
+
+      <view class="card-row">
+        <view class="card-gain">
+          <text class="cg-name">加入好友的房间</text>
+          <text class="cg-desc">不消耗房卡，输入 6 位房号即可</text>
+        </view>
+        <button class="btn-ghost cg-btn" bindtap="onJoinFromCards">去加入</button>
+      </view>
+
+      <text class="opt-note">体验版不提供任何付费充值；正式版若做房卡售卖，需企业主体 + 支付资质 + 版号备案</text>
+
+      <view class="join-btns">
+        <button class="btn-ghost join-btn" bindtap="onCardsClose">关闭</button>
+        <button class="btn-primary join-btn" bindtap="onAIMode">先玩 AI 桌（0 房卡）</button>
+      </view>
+    </view>
+  </view>
+
+  <!-- 牌桌设置（参考主流扑克 App 的 Table Appearance） -->
+  <view class="join-mask" wx:if="{{setShow}}" bindtap="onSettingsClose">
+    <view class="join-dialog" catchtap>
+      <text class="join-title">牌桌设置</text>
+      <text class="join-sub">四色牌与反馈效果，下次进入牌桌生效</text>
+
+      <view class="set-row" data-k="fourColor" bindtap="onToggle">
+        <view class="set-info">
+          <text class="set-name">四色牌</text>
+          <text class="set-desc">♠黑 / ♣绿 / ♦蓝 / ♥红，更易分辨花色</text>
+        </view>
+        <view class="switch {{sFourColor ? 'on' : ''}}"><view class="knob"></view></view>
+      </view>
+
+      <view class="set-row" data-k="sound" bindtap="onToggle">
+        <view class="set-info">
+          <text class="set-name">操作反馈</text>
+          <text class="set-desc">行动时给出震动反馈</text>
+        </view>
+        <view class="switch {{sSound ? 'on' : ''}}"><view class="knob"></view></view>
+      </view>
+
+      <view class="set-row" data-k="animation" bindtap="onToggle">
+        <view class="set-info">
+          <text class="set-name">牌桌动画</text>
+          <text class="set-desc">发牌、下注与光效动画</text>
+        </view>
+        <view class="switch {{sAnim ? 'on' : ''}}"><view class="knob"></view></view>
+      </view>
+
+      <view class="join-btns">
+        <button class="btn-primary join-btn" bindtap="onSettingsClose">完成</button>
+      </view>
+    </view>
+  </view>
+</view>

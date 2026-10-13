@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>「站起退出本局」入口找回 · 位置示意</title>
+<style>
+  :root{ --uh:1vh; --uw:1vw; --ink:#e8eef0; --mut:#93a5a0; --gold:#e8a33d; }
+  *{ box-sizing:border-box; }
+  body{ margin:0; background:#0e1512; color:var(--ink);
+        font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif; }
+  .wrap{ padding:2vh 2vw; }
+  h1{ font-size:2.6vh; margin:0 0 .6vh; }
+  p.sub{ font-size:1.9vh; color:var(--mut); margin:0 0 1.8vh; line-height:1.6; }
+  .grid{ display:flex; gap:1.6vw; }
+  .col{ flex:1; }
+  .cap{ font-size:2vh; margin-bottom:.8vh; color:var(--gold); }
+  .phone{ width:100%; aspect-ratio:812/375; background:#0f1a16; border:1px solid rgba(255,255,255,.12);
+          border-radius:2.2vh; padding:1.2vh 1.2vw; display:flex; flex-direction:column; overflow:hidden;
+          position:relative; }
+  .felt{ flex:1; min-height:0; position:relative; border-radius:2vh;
+         background:radial-gradient(ellipse at 50% 44%, #25604f 0%, #1a4438 45%, #0d2822 100%);
+         border:.8vh solid #241610; }
+  .card{ width:8.6vh; height:12.2vh; border-radius:1.5vh; margin-right:.8vw;
+         background:linear-gradient(160deg,#fffdf7,#ece5d4); border:1px solid rgba(0,0,0,.14);
+         display:flex; flex-direction:column; align-items:center; justify-content:center;
+         box-shadow:0 .7vh 1.8vh rgba(0,0,0,.42); }
+  .card .r{ font-size:3.6vh; font-weight:800; color:#1a1a1a; line-height:1; }
+  .card .s{ font-size:2.9vh; color:#1a1a1a; line-height:1.1; }
+  .card.s-heart .r,.card.s-heart .s{ color:#d0342c; }
+  .board{ position:absolute; top:48%; left:50%; transform:translate(-50%,-50%); display:flex; }
+  .myzone{ flex:none; margin-top:1vh; }
+  .mybar{ display:flex; align-items:center; height:12vh; padding:0 1.6vw; border-radius:2.2vh;
+          background:linear-gradient(170deg,rgba(255,255,255,.05),rgba(255,255,255,.02));
+          border:1px solid rgba(255,255,255,.09); }
+  .mycards{ display:flex; align-items:center; }
+  .mycards .card{ margin-right:1vw; }
+  .mymid{ flex:1; display:flex; align-items:center; justify-content:center; font-size:2vh; color:var(--mut); }
+  .mystk{ text-align:center; }
+  .ms-v{ display:block; font-size:2.8vh; color:var(--gold); font-weight:700; }
+  .ms-l{ display:block; font-size:1.5vh; color:var(--mut); }
+  .actbar{ display:flex; margin-top:1vh; }
+  .ab{ flex:1; margin-right:2.6vw; line-height:7.6vh; text-align:center; border-radius:2.2vh;
+       font-size:2.4vh; font-weight:700; color:rgba(255,255,255,.45); background:#24352f; }
+  .ab:last-child{ margin-right:0; }
+  /* 新入口样式 */
+  .stand-link{ flex:none; margin-left:1.2vw; font-size:1.9vh; color:var(--gold);
+               border:1px solid rgba(232,163,61,.45); border-radius:1.4vh;
+               padding:.5vh 1.2vw; white-space:nowrap; }
+  .stand-inline{ color:var(--gold); margin-left:.8vw; border-bottom:1px solid rgba(232,163,61,.6); }
+  /* 结算面板 */
+  .result-banner{ position:absolute; top:50%; left:50%; transform:translate(-50%,-50%);
+                  width:34%; min-width:30vh; background:#101f1a; border:1px solid rgba(255,255,255,.14);
+                  border-radius:2vh; padding:1.6vh 1.4vw; text-align:center; z-index:5;
+                  box-shadow:0 1.6vh 4vh rgba(0,0,0,.55); }
+  .rb-t{ font-size:2.4vh; font-weight:700; margin-bottom:1vh; }
+  .rb-row{ display:flex; justify-content:center; font-size:1.9vh; color:var(--mut); margin-bottom:.5vh; }
+  .rb-row b{ color:var(--gold); margin-left:.6vw; }
+  .rb-btns{ display:flex; flex-direction:column; gap:1vh; margin-top:1.2vh; align-items:center; }
+  .rbtn{ width:60%; line-height:5.4vh; border-radius:1.6vh; font-size:2.1vh; font-weight:700;
+         color:#1a1a1a; background:linear-gradient(160deg,#f4d78a,#d9a441 60%,#b8791f); }
+  .rbtn.ghost{ background:transparent; color:var(--gold); border:1px solid rgba(232,163,61,.55); font-weight:600; }
+  .note{ margin-top:1.8vh; font-size:1.9vh; color:var(--mut); line-height:1.7; }
+  code{ background:rgba(255,255,255,.08); padding:.2vh .6vw; border-radius:.6vh; color:#ffd9a0; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>「站起退出本局」入口找回 · 三处显眼位置</h1>
+  <p class="sub">之前唯一入口收在 ⋯ 菜单里，且退出弹窗文案还指向早已删除的右栏。现改为：<b style="color:var(--gold)">摊牌结算面板</b>、<b style="color:var(--gold)">就绪面板</b>、<b style="color:var(--gold)">局内弃牌后</b>三处都可直接点，⋯ 菜单里的入口保留。</p>
+
+  <div class="grid">
+    <div class="col">
+      <div class="cap">① 摊牌结算面板：「下一手」下方新增金边按钮</div>
+      <div class="phone">
+        <div class="felt">
+          <div class="board">
+            <div class="card"><span class="r">K</span><span class="s">♠</span></div>
+            <div class="card s-heart"><span class="r">9</span><span class="s">♥</span></div>
+            <div class="card"><span class="r">4</span><span class="s">♦</span></div>
+          </div>
+          <div class="result-banner">
+            <div class="rb-t">🏆 好友1 赢得底池</div>
+            <div class="rb-row">好友1 · 一对<b>+60</b></div>
+            <div class="rb-row">你 · 高牌 K<b>-20</b></div>
+            <div class="rb-btns">
+              <div class="rbtn">下一手</div>
+              <div class="rbtn ghost">站起退出本局</div>
+            </div>
+          </div>
+        </div>
+        <div class="myzone">
+          <div class="mybar">
+            <div class="mycards">
+              <div class="card s-heart"><span class="r">A</span><span class="s">♥</span></div>
+              <div class="card"><span class="r">Q</span><span class="s">♠</span></div>
+            </div>
+            <div class="mymid">本局已结束</div>
+            <div class="mystk"><span class="ms-v">980</span><span class="ms-l">筹码</span></div>
+          </div>
+          <div class="actbar"><div class="ab">弃牌</div><div class="ab">跟注</div><div class="ab">加注</div></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="col">
+      <div class="cap">② 局内弃牌后：行动提示旁的金边入口（③ 就绪面板为同款内联链接）</div>
+      <div class="phone">
+        <div class="felt">
+          <div class="board">
+            <div class="card"><span class="r">K</span><span class="s">♠</span></div>
+            <div class="card s-heart"><span class="r">9</span><span class="s">♥</span></div>
+            <div class="card"><span class="r">4</span><span class="s">♦</span></div>
+          </div>
+        </div>
+        <div class="myzone">
+          <div class="mybar">
+            <div class="mycards">
+              <div class="card s-heart" style="opacity:.4"><span class="r">A</span><span class="s">♥</span></div>
+              <div class="card" style="opacity:.4"><span class="r">Q</span><span class="s">♠</span></div>
+            </div>
+            <div class="mymid">你已弃牌<span class="stand-link">站起退出本局</span></div>
+            <div class="mystk"><span class="ms-v">980</span><span class="ms-l">筹码</span></div>
+          </div>
+          <div class="actbar"><div class="ab">弃牌</div><div class="ab">跟注</div><div class="ab">加注</div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="note">
+    就绪面板：点「准备就绪」后提示变为「已准备 · 等待其他人… <b style="color:var(--gold)">站起退出本局</b>」（下划线内联链接），反悔可直接退出计票。<br>
+    测试：table 164→168 项（入口数量 ≥3、样式类存在、文案不再指向右栏），全套通过。
+  </div>
+</div>
+</body>
+</html>

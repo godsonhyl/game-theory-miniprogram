@@ -1,0 +1,79 @@
+.profile {
+  min-height: 100vh;
+  background: radial-gradient(ellipse at 50% 0%, #16302a 0%, #0d1a17 60%);
+  padding: 40rpx 32rpx;
+}
+
+/* 头部 */
+.head { display: flex; flex-direction: column; align-items: center; margin-bottom: 40rpx; }
+.head-badge { width: 56rpx; height: 56rpx; margin-bottom: 12rpx; opacity: .9; }
+.head-avatar {
+  width: 120rpx; height: 120rpx; border-radius: 50%;
+  background: linear-gradient(145deg, #2f9e6e, #1d6b4a);
+  color: #fff; font-size: 48rpx; font-weight: 800;
+  display: flex; align-items: center; justify-content: center;
+  margin-bottom: 16rpx;
+}
+.head-name { font-size: 34rpx; font-weight: 700; color: #eaf2ee; }
+.head-sub { font-size: 22rpx; color: #8fa8a0; margin-top: 6rpx; }
+
+/* 汇总 */
+.summary {
+  display: flex; background: rgba(255,255,255,.05);
+  border: 1rpx solid rgba(255,255,255,.09); border-radius: 24rpx;
+  padding: 28rpx 0; margin-bottom: 40rpx;
+}
+.sum-item { flex: 1; display: flex; flex-direction: column; align-items: center; }
+.sum-n { font-size: 36rpx; font-weight: 800; color: #d9a441; }
+.sum-n.up { color: #4caf7d; }
+.sum-n.down { color: #e05c4b; }
+.sum-l { font-size: 20rpx; color: #8fa8a0; margin-top: 6rpx; }
+
+/* 区块 */
+.section { margin-bottom: 40rpx; }
+.sec-title {
+  display: block; font-size: 28rpx; font-weight: 700; color: #cfe0d9;
+  margin-bottom: 20rpx;
+}
+.sec-head { display: flex; align-items: center; margin-bottom: 20rpx; }
+.sec-head .sec-title { margin-bottom: 0; }
+.sec-ico { width: 36rpx; height: 36rpx; margin-right: 12rpx; flex: none; }
+
+.style-card {
+  background: rgba(255,255,255,.045); border: 1rpx solid rgba(255,255,255,.09);
+  border-radius: 24rpx; padding: 24rpx 26rpx;
+}
+.style-row {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 14rpx 0; border-bottom: 1rpx solid rgba(255,255,255,.05);
+}
+.style-row:last-child { border-bottom: none; }
+.style-k { font-size: 24rpx; color: #8fa8a0; }
+.style-v { font-size: 24rpx; color: #eaf2ee; }
+
+/* 空状态 */
+.empty { padding: 80rpx 0; text-align: center; display: flex; flex-direction: column; align-items: center; }
+.empty-icon { font-size: 80rpx; color: #2a4a42; }
+.empty-text { font-size: 26rpx; color: #8fa8a0; margin-top: 20rpx; }
+.empty-sub { font-size: 22rpx; color: #6b7f78; margin-top: 8rpx; }
+
+/* 战绩列表 */
+.record {
+  background: rgba(255,255,255,.045); border: 1rpx solid rgba(255,255,255,.09);
+  border-radius: 20rpx; padding: 22rpx 24rpx; margin-bottom: 18rpx;
+}
+.rec-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding-bottom: 14rpx; border-bottom: 1rpx solid rgba(255,255,255,.05);
+  margin-bottom: 14rpx;
+}
+.rec-hand { font-size: 24rpx; color: #cfe0d9; font-weight: 600; }
+.rec-net { font-size: 26rpx; font-weight: 700; }
+.rec-net.up { color: #4caf7d; }
+.rec-net.down { color: #e05c4b; }
+
+.rec-body { display: flex; flex-direction: column; }
+.rec-cards { display: flex; align-items: center; margin-bottom: 8rpx; }
+.rec-label { font-size: 22rpx; color: #8fa8a0; width: 90rpx; }
+.rec-val { font-size: 24rpx; color: #eaf2ee; }
+.rec-val.gold { color: #d9a441; }

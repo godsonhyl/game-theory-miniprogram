@@ -1,0 +1,24 @@
+{
+  "name": "game-theory-miniprogram",
+  "version": "0.1.0",
+  "description": "博弈论小程序 — 好友房 + AI 对战，含边池结算与牌力分析",
+  "private": true,
+  "scripts": {
+    "pack": "node pack.js",
+    "upload": "node upload.js",
+    "preview": "node upload.js --preview",
+    "test": "node test-core.js && node miniprogram/test-miniprogram-logic.js && node miniprogram/test-cards.js && node miniprogram/test-cloud-integration.js && node test-sdk-load.js && node scripts/check-wxml.js",
+    "test:engine": "node test-core.js",
+    "test:cards": "node miniprogram/test-cards.js",
+    "test:wxml": "node scripts/check-wxml.js",
+    "test:mp": "node miniprogram/test-miniprogram-logic.js",
+    "test:cloud": "node miniprogram/test-cloud-integration.js",
+    "test:sdk": "node test-sdk-load.js"
+  },
+  "devDependencies": {
+    "miniprogram-ci": "^2.1.0"
+  },
+  "dependencies": {
+    "@tencent-ai/workbuddy-cloud-sdk": "^0.1.3-dev.c090db7.202610050023"
+  }
+}

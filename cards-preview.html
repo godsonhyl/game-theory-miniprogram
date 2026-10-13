@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>房卡获取途径 · 首页与弹窗示意</title>
+<style>
+  :root{ --uh:1vh; --uw:1vw; --gold:#d9a441; --ink:#eaf2ee; --mut:#8fa8a0; }
+  *{ box-sizing:border-box; }
+  body{ margin:0; background:#0e1512; color:var(--ink);
+        font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif; }
+  .wrap{ padding:2vh 2vw; }
+  h1{ font-size:2.6vh; margin:0 0 .6vh; }
+  p.sub{ font-size:1.9vh; color:var(--mut); margin:0 0 1.8vh; line-height:1.7; }
+  .grid{ display:flex; gap:1.6vw; align-items:flex-start; }
+  .col{ flex:1; }
+  .cap{ font-size:2vh; color:var(--gold); margin-bottom:.8vh; }
+  .phone{ width:100%; max-width:52vh; aspect-ratio:375/812; background:#0f1a16;
+          border:1px solid rgba(255,255,255,.12); border-radius:2.4vh;
+          padding:1.2vh 1.2vw; position:relative; overflow:hidden; }
+  /* 首页顶部 */
+  .hero{ display:flex; align-items:center; justify-content:space-between; margin-bottom:2vh; }
+  .hero-l{ display:flex; align-items:center; }
+  .av{ width:8vh; height:8vh; border-radius:1.6vh; background:rgba(255,255,255,.08);
+       display:flex; align-items:center; justify-content:center; font-size:3vh; }
+  .nm{ font-size:2.2vh; margin-left:1vw; }
+  .sub2{ display:block; font-size:1.5vh; color:var(--mut); }
+  .hero-r{ position:relative; }
+  .hc{ position:relative; display:flex; flex-direction:column; align-items:center;
+       background:rgba(217,164,65,.12); border:1px solid rgba(217,164,65,.3);
+       border-radius:1.6vh; padding:1vh 2vw; cursor:pointer; }
+  .hc-n{ font-size:3.2vh; font-weight:800; color:var(--gold); line-height:1.1; }
+  .hc-l{ font-size:1.6vh; color:var(--gold); }
+  .hc-plus{ position:absolute; top:-.8vh; right:-.8vh; width:3vh; height:3vh; line-height:3vh;
+            text-align:center; font-size:2vh; font-weight:800; color:#1a1a1a;
+            background:var(--gold); border-radius:50%; }
+  .mode{ display:flex; align-items:center; background:rgba(255,255,255,.05);
+         border:1px solid rgba(255,255,255,.09); border-radius:1.8vh;
+         padding:2vh 2vw; margin-bottom:1.4vh; }
+  .mi{ width:6vh; height:6vh; border-radius:1.4vh; background:rgba(255,255,255,.08); }
+  .mb{ margin-left:2vw; }
+  .mt{ font-size:2.2vh; }
+  .md{ display:block; font-size:1.6vh; color:var(--mut); }
+  /* 弹窗 */
+  .mask{ position:absolute; inset:0; background:rgba(0,0,0,.55); display:flex;
+         align-items:center; justify-content:center; padding:2vh 2vw; }
+  .dlg{ width:100%; background:#14201c; border:1px solid rgba(255,255,255,.12);
+        border-radius:2vh; padding:2.4vh 2.2vw; }
+  .dt{ font-size:2.6vh; font-weight:700; }
+  .ds{ display:block; font-size:1.8vh; color:var(--mut); margin-top:.8vh; line-height:1.5; }
+  .row{ display:flex; align-items:center; justify-content:space-between; margin-top:1.8vh;
+        padding:1.6vh 1.8vw; background:rgba(255,255,255,.05);
+        border:1px solid rgba(255,255,255,.09); border-radius:1.4vh; }
+  .rn{ font-size:2.1vh; font-weight:600; }
+  .rd{ display:block; font-size:1.6vh; color:var(--mut); margin-top:.4vh; }
+  .btn{ flex:none; width:16vh; height:5.2vh; line-height:5.2vh; text-align:center;
+        border-radius:1.2vh; font-size:1.9vh; font-weight:700; margin-left:1.4vw; }
+  .btn.on{ color:#1a1a1a; background:linear-gradient(160deg,#f4d78a,#d9a441 60%,#b8791f); }
+  .btn.off{ opacity:.45; color:#1a1a1a; background:linear-gradient(160deg,#f4d78a,#d9a441 60%,#b8791f); }
+  .btn.gh{ color:var(--gold); border:1px solid rgba(217,164,65,.55); }
+  .note{ display:block; font-size:1.6vh; color:var(--mut); line-height:1.6; margin-top:1.8vh; }
+  .btns{ display:flex; margin-top:2vh; }
+  .btns .btn{ flex:1; margin:0; }
+  .btns .btn:first-child{ margin-right:1.4vw; }
+  /* 系统弹窗 */
+  .sys{ width:56%; background:#1c2a25; border-radius:1.6vh; padding:2vh 2vw; text-align:center; }
+  .sys-t{ font-size:2.2vh; font-weight:700; }
+  .sys-c{ display:block; font-size:1.8vh; color:var(--mut); margin:1.2vh 0 2vh; line-height:1.6; }
+  .sys-b{ display:flex; }
+  .sys-b div{ flex:1; height:5vh; line-height:5vh; font-size:1.9vh; }
+  .sys-b .c{ color:var(--gold); }
+  .sys-b .k{ color:#1a1a1a; background:linear-gradient(160deg,#f4d78a,#d9a441 60%,#b8791f); border-radius:1vh; }
+  ul{ font-size:1.9vh; color:var(--mut); line-height:1.8; margin:1.8vh 0 0; padding-left:2.4vh; }
+  code{ background:rgba(255,255,255,.08); padding:.2vh .6vw; border-radius:.6vh; color:#ffd9a0; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>房卡不足怎么办 · 三条免费出路</h1>
+  <p class="sub">体验版不做任何付费充值（个人主体也开不了微信支付）。现在房卡有<b style="color:var(--gold)">免费获取途径</b>：每日领取、对局奖励、加入别人的房间不耗卡。</p>
+
+  <div class="grid">
+    <div class="col">
+      <div class="cap">① 首页房卡右上角「+」→ 获取房卡</div>
+      <div class="phone">
+        <div class="hero">
+          <div class="hero-l">
+            <div class="av">玩</div>
+            <div class="nm">玩家<span class="sub2">欢迎回来</span></div>
+          </div>
+          <div class="hero-r">
+            <div class="hc">
+              <span class="hc-n">0</span><span class="hc-l">房卡</span>
+              <span class="hc-plus">+</span>
+            </div>
+          </div>
+        </div>
+        <div class="mode"><div class="mi"></div><div class="mb"><span class="mt">好友房</span><span class="md">创建房间邀请好友，或输入房号加入</span></div></div>
+        <div class="mode"><div class="mi"></div><div class="mb"><span class="mt">AI 对战</span><span class="md">与 AI 玩家练习，不消耗房卡</span></div></div>
+
+        <div class="mask">
+          <div class="dlg">
+            <span class="dt">获取房卡</span>
+            <span class="ds">当前 0 张 · 创建好友房消耗 1 张，AI 对战不消耗</span>
+
+            <div class="row">
+              <div><span class="rn">每日领取</span><span class="rd">每天 2 张，次日刷新</span></div>
+              <div class="btn on">领取 +2</div>
+            </div>
+            <div class="row">
+              <div><span class="rn">对局奖励</span><span class="rd">每累计 10 手领 1 张（单次最多 5）</span></div>
+              <div class="btn on">领取 +5</div>
+            </div>
+            <div class="row">
+              <div><span class="rn">加入好友的房间</span><span class="rd">不消耗房卡，输入 6 位房号即可</span></div>
+              <div class="btn gh">去加入</div>
+            </div>
+            <span class="note">体验版不提供付费充值；正式版若做房卡售卖需企业主体 + 支付资质 + 版号备案</span>
+            <div class="btns">
+              <div class="btn gh">关闭</div>
+              <div class="btn on">先玩 AI 桌（0 房卡）</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="col">
+      <div class="cap">② 房卡为 0 时创建房间：不再只有「知道了」</div>
+      <div class="phone">
+        <div class="hero">
+          <div class="hero-l">
+            <div class="av">玩</div>
+            <div class="nm">玩家<span class="sub2">欢迎回来</span></div>
+          </div>
+          <div class="hero-r">
+            <div class="hc"><span class="hc-n">0</span><span class="hc-l">房卡</span><span class="hc-plus">+</span></div>
+          </div>
+        </div>
+        <div class="mode"><div class="mi"></div><div class="mb"><span class="mt">好友房</span><span class="md">创建房间邀请好友，或输入房号加入</span></div></div>
+
+        <div class="mask">
+          <div class="sys">
+            <span class="sys-t">房卡不足</span>
+            <span class="sys-c">创建好友房需要 1 张房卡。<br>今日可免费领 2 张，也可以先玩 AI 对战（不消耗房卡）。</span>
+            <div class="sys-b">
+              <div class="c">AI 桌</div>
+              <div class="k">去领卡</div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <ul>
+        <li>扣卡/发卡共用<b style="color:var(--gold)">乐观锁</b>：<code>id + room_cards</code> 双条件才写回，并发下不会互相覆盖、不会变负数。</li>
+        <li>每日领取用 <code>last_checkin</code> 记日期，同一天只发一次；对局奖励用 <code>bonus_base</code> 记已奖励手数基准。</li>
+        <li>按钮文案严格 ≤ 4 字（<code>去领卡</code> / <code>AI 桌</code>），超长真机静默失败。</li>
+      </ul>
+    </div>
+  </div>
+</div>
+</body>
+</html>

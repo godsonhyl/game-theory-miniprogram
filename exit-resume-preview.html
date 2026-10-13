@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>好友房 · 中途退出与再进入</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 28px; background: #071915;
+    font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; color: #d8e6e0;
+  }
+  h1 { font-size: 20px; color: #d9a441; margin: 0 0 6px; letter-spacing: 1px; }
+  .sub { font-size: 13px; color: #7e968d; margin-bottom: 22px; }
+  .flow { display: flex; gap: 16px; flex-wrap: wrap; align-items: stretch; }
+  .step {
+    flex: 1 1 240px; background: #0d2620; border: 1px solid #1c3c33;
+    border-radius: 14px; padding: 14px; position: relative;
+  }
+  .step .no {
+    position: absolute; top: -10px; left: 14px; background: #d9a441; color: #071915;
+    font-size: 12px; font-weight: 700; padding: 2px 9px; border-radius: 8px;
+  }
+  .step h3 { margin: 6px 0 10px; font-size: 14px; color: #eaf3ef; }
+  .shot {
+    background: #10352c; border-radius: 10px; padding: 12px; min-height: 118px;
+    display: flex; flex-direction: column; justify-content: center; gap: 8px;
+  }
+  .bar { display: flex; align-items: center; gap: 8px; font-size: 12px; color: #a9c2b9; }
+  .dot { width: 22px; height: 22px; border-radius: 50%; background: #1c4a3e; display: flex; align-items: center; justify-content: center; font-size: 11px; color: #d9a441; }
+  .chip { background: #1c4a3e; color: #d9a441; padding: 3px 8px; border-radius: 6px; font-size: 11px; }
+  .btn { background: linear-gradient(180deg,#e8bd6b,#c8912f); color: #2a1c05; border-radius: 8px; padding: 7px 12px; font-size: 12px; font-weight: 700; text-align: center; }
+  .btn.ghost { background: #17453a; color: #a9c2b9; }
+  .row { display: flex; gap: 8px; }
+  .row .btn { flex: 1; }
+  .modal { background: #f5f2ea; color: #22302c; border-radius: 12px; padding: 14px; }
+  .modal .t { font-size: 13px; font-weight: 700; margin-bottom: 6px; }
+  .modal .c { font-size: 12px; color: #5b6b65; line-height: 1.5; }
+  .modal .row { margin-top: 10px; }
+  .modal .btn { border-radius: 8px; }
+  .modal .btn.ghost { background: #e2e0d8; color: #4a5a54; }
+  .note { margin-top: 10px; font-size: 12px; color: #8fa8a0; line-height: 1.6; }
+  .note b { color: #d9a441; font-weight: 600; }
+  .card {
+    background: #17453a; border-radius: 10px; padding: 10px 12px; display: flex;
+    align-items: center; justify-content: space-between; font-size: 12px;
+  }
+  .card .r { color: #d9a441; font-size: 12px; }
+  .kv { margin-top: 24px; background: #0d2620; border: 1px solid #1c3c33; border-radius: 12px; padding: 14px 16px; }
+  .kv h4 { margin: 0 0 8px; font-size: 13px; color: #d9a441; }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid #17342c; color: #a9c2b9; }
+  th { color: #d9a441; font-weight: 600; }
+  td.k { color: #eaf3ef; width: 130px; }
+</style>
+</head>
+<body>
+  <h1>好友房：中途退出 → 再进入续局</h1>
+  <div class="sub">牌桌页左上角返回键 = 退出入口；房间不会消失，从首页「我的房间」可继续本局</div>
+
+  <div class="flow">
+    <div class="step">
+      <span class="no">0 两个出口</span>
+      <h3>退出本局 ≠ 退出房间</h3>
+      <div class="shot">
+        <div class="bar"><span class="dot">↕</span> 右栏操作区按钮</div>
+        <div class="card"><span>站起退出本局</span><span class="r">留在房间 · 观战</span></div>
+        <div class="card"><span>坐下加入游戏</span><span class="r">下一手重新入局</span></div>
+        <div class="card"><span>左上「‹」退出房间</span><span class="r">存快照离开</span></div>
+        <div class="note">弃牌后或本手结束才能站起（站起者自动弃牌、不再参与发牌）；站起后随时可坐下，<b>下一手生效</b>。</div>
+      </div>
+    </div>
+
+    <div class="step">
+      <span class="no">1 退出</span>
+      <h3>牌桌左上「‹」→ 二次确认</h3>
+      <div class="shot">
+        <div class="bar"><span class="dot">‹</span> 好友房 #246810 <span class="chip">翻牌</span></div>
+        <div class="modal">
+          <div class="t">离开牌局？</div>
+          <div class="c">房间会保留，可从首页「我的房间」重新进入继续本局</div>
+          <div class="row">
+            <div class="btn ghost">留下</div>
+            <div class="btn">离开</div>
+          </div>
+        </div>
+        <div class="note">确认后：座位 / 剩余筹码 / 第几手 / 庄位写入本地快照，云端房间保持 active。</div>
+      </div>
+    </div>
+
+    <div class="step">
+      <span class="no">2 保留</span>
+      <h3>首页「我的房间」显示可续局</h3>
+      <div class="shot">
+        <div class="bar">我的房间 <span class="chip">1 个进行中</span></div>
+        <div class="card"><span>房间 246810 · 好友房</span><span>继续第 7 手 ›</span></div>
+        <div class="card"><span>房间 123456 · 好友房</span><span>等待中 ›</span></div>
+        <div class="note">有快照 → <b>继续第 N 手</b>；无快照（仍在等待室）→ <b>等待中</b>。快照 24 小时后过期清理。</div>
+      </div>
+    </div>
+
+    <div class="step">
+      <span class="no">3 进入</span>
+      <h3>点卡片直接回到牌桌</h3>
+      <div class="shot">
+        <div class="bar"><span class="dot">‹</span> 好友房 #246810 <span class="chip">翻牌</span> 第 7 手</div>
+        <div class="card"><span>座位与筹码</span><span>沿用退出时状态</span></div>
+        <div class="card"><span>提示</span><span class="r">已回到房间 · 第 7 手</span></div>
+        <div class="note">不再退回空等待室；重发当前这一手继续打。<br>访客（分享卡片进入）只能等待房主开始。</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="kv">
+    <h4>规则与边界</h4>
+    <table>
+      <tr><th>场景</th><th>行为</th></tr>
+      <tr><td class="k">站起退出本局</td><td>弃牌后或本手结束可用；仍在房间内观战，不再发牌/行动，可随时坐下（下一手生效）</td></tr>
+      <tr><td class="k">未弃牌时站起</td><td>拦截并提示「本手结束后或弃牌后可站起」，避免中途抽身影响牌局</td></tr>
+      <tr><td class="k">退出房间</td><td>左上「‹」弹确认「退出 / 留下」；退出则存快照（含站起状态），房间保留</td></tr>
+      <tr><td class="k">等待室空等退出</td><td>房主视为放弃，关闭云端房间并从「我的房间」移除（30 分钟无人加入也会自动解散）</td></tr>
+      <tr><td class="k">访客退出</td><td>不影响房间，房主侧牌局继续</td></tr>
+      <tr><td class="k">房主再进入</td><td>读本地快照续局（同一设备）；换设备无快照，从等待室重新开始</td></tr>
+      <tr><td class="k">跨设备真实同步</td><td>当前为本地引擎模拟，需服务端房间状态才能真正多人同局</td></tr>
+    </table>
+  </div>
+</body>
+</html>

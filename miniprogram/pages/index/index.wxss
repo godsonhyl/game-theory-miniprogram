@@ -1,0 +1,222 @@
+.home {
+  min-height: 100vh;
+  background: radial-gradient(ellipse at 50% 0%, #16302a 0%, #0d1a17 60%);
+  padding: 40rpx 32rpx;
+}
+
+/* 顶部卡片 */
+.hero {
+  display: flex; align-items: center; justify-content: space-between;
+  background: rgba(255,255,255,.05); border: 1rpx solid rgba(255,255,255,.09);
+  border-radius: 28rpx; padding: 32rpx; margin-bottom: 32rpx;
+}
+.hero-user { display: flex; align-items: center; }
+.hero-avatar {
+  width: 96rpx; height: 96rpx; border-radius: 50%;
+  background: linear-gradient(145deg, #2f9e6e, #1d6b4a);
+  color: #fff; font-size: 40rpx; font-weight: 800;
+  display: flex; align-items: center; justify-content: center;
+  margin-right: 22rpx;
+}
+.hero-info { display: flex; flex-direction: column; }
+.hero-name { font-size: 32rpx; font-weight: 700; color: #eaf2ee; }
+.hero-sub { font-size: 22rpx; color: #8fa8a0; margin-top: 6rpx; }
+
+.hero-cards {
+  display: flex; flex-direction: column; align-items: center;
+  background: rgba(217,164,65,.12); border: 1rpx solid rgba(217,164,65,.3);
+  border-radius: 20rpx; padding: 14rpx 26rpx;
+}
+.cards-num { font-size: 40rpx; font-weight: 800; color: #d9a441; line-height: 1.1; }
+.cards-label { font-size: 20rpx; color: #d9a441; }
+/* 房卡右上角的「+」：点开免费获取途径 */
+.cards-add {
+  position: absolute; top: -8rpx; right: -10rpx;
+  width: 32rpx; height: 32rpx; line-height: 30rpx; text-align: center;
+  font-size: 24rpx; font-weight: 800; color: #1a1a1a;
+  background: #d9a441; border-radius: 50%;
+}
+.hero-cards { position: relative; }
+
+/* 房卡弹窗：三条获取途径 */
+.card-row {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-top: 20rpx; padding: 20rpx 22rpx;
+  background: rgba(255,255,255,.05); border: 1rpx solid rgba(255,255,255,.09);
+  border-radius: 16rpx;
+}
+.card-gain { flex: 1; min-width: 0; }
+.cg-name { display: block; font-size: 28rpx; color: #eaf2ee; font-weight: 600; }
+.cg-desc { display: block; font-size: 21rpx; color: #8fa8a0; margin-top: 6rpx; }
+.cg-btn {
+  flex: none; width: 200rpx; height: 64rpx; line-height: 64rpx;
+  font-size: 24rpx; padding: 0; margin-left: 16rpx;
+}
+.cg-btn.off { opacity: .45; }
+
+/* 模式卡片 */
+.modes { margin-bottom: 32rpx; }
+.mode {
+  display: flex; align-items: center;
+  background: rgba(255,255,255,.05); border: 1rpx solid rgba(255,255,255,.09);
+  border-radius: 24rpx; padding: 28rpx 26rpx; margin-bottom: 20rpx;
+}
+.mode-icon {
+  width: 88rpx; height: 88rpx; border-radius: 20rpx;
+  background-color: rgba(255,255,255,.08);
+  display: flex; align-items: center; justify-content: center;
+  margin-right: 22rpx; flex: none;
+}
+.mode-icon.ic { background-size: 48rpx 48rpx; }
+.mode-body { flex: 1; display: flex; flex-direction: column; }
+.mode-title { font-size: 30rpx; font-weight: 700; color: #eaf2ee; }
+.mode-desc { font-size: 22rpx; color: #8fa8a0; margin-top: 6rpx; }
+.mode-arrow { font-size: 40rpx; color: #8fa8a0; margin-left: 12rpx; }
+.mode-tag {
+  font-size: 20rpx; color: #8fa8a0; background: rgba(255,255,255,.07);
+  padding: 6rpx 16rpx; border-radius: 999rpx; margin-left: 12rpx;
+}
+
+/* 战绩 */
+.stats {
+  display: flex; align-items: center; position: relative;
+  background: rgba(255,255,255,.05); border: 1rpx solid rgba(255,255,255,.09);
+  border-radius: 24rpx; padding: 26rpx 24rpx; margin-bottom: 32rpx;
+}
+.stat-item { flex: 1; display: flex; flex-direction: column; align-items: center; }
+.stat-n { font-size: 32rpx; font-weight: 800; color: #d9a441; }
+.stat-n.up { color: #4caf7d; }
+.stat-n.down { color: #e05c4b; }
+.stat-l { font-size: 20rpx; color: #8fa8a0; margin-top: 6rpx; }
+.stats-arrow { position: absolute; right: 24rpx; font-size: 36rpx; color: #8fa8a0; }
+
+/* 规则 */
+.rules {
+  background: rgba(255,255,255,.045); border: 1rpx solid rgba(255,255,255,.09);
+  border-radius: 24rpx; padding: 28rpx 26rpx;
+}
+.rules-title {
+  display: block; font-size: 26rpx; font-weight: 700; color: #cfe0d9;
+  margin-bottom: 20rpx;
+}
+.rule-row {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 12rpx 0; border-bottom: 1rpx solid rgba(255,255,255,.05);
+}
+.rule-row:last-child { border-bottom: none; }
+.rule-name { font-size: 24rpx; color: #d9a441; width: 160rpx; }
+.rule-desc { font-size: 22rpx; color: #8fa8a0; flex: 1; text-align: right; }
+
+.footer-note {
+  text-align: center; font-size: 20rpx; color: #6b7f78;
+  margin-top: 40rpx; line-height: 1.5;
+}
+
+/* 登录状态 */
+.state-box {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  min-height: 100vh; padding: 40rpx;
+}
+.state-title { font-size: 32rpx; font-weight: 700; color: #eaf2ee; }
+.state-sub { font-size: 24rpx; color: #8fa8a0; margin-top: 14rpx; text-align: center; }
+.state-err .state-title { color: #e05c4b; }
+.state-btn { margin-top: 40rpx; width: 300rpx; }
+
+/* 加入房间弹窗 */
+.join-mask {
+  position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(0,0,0,.6);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 50;
+}
+.join-dialog {
+  width: 560rpx; background: #12261f;
+  border: 1rpx solid rgba(217,164,65,.35); border-radius: 24rpx;
+  padding: 40rpx 36rpx; display: flex; flex-direction: column; align-items: center;
+}
+.join-title { font-size: 34rpx; font-weight: 700; color: #d9a441; }
+.join-sub { font-size: 22rpx; color: #8fa8a0; margin-top: 10rpx; }
+.join-input {
+  width: 100%; height: 88rpx; margin-top: 30rpx;
+  background: rgba(255,255,255,.06); border: 1rpx solid rgba(255,255,255,.14);
+  border-radius: 14rpx; text-align: center; font-size: 40rpx; font-weight: 800;
+  color: #eaf2ee; letter-spacing: 8rpx;
+}
+.join-btns { display: flex; width: 100%; margin-top: 30rpx; }
+.join-btn { flex: 1; margin-right: 20rpx; }
+.join-btn:last-child { margin-right: 0; }
+
+/* 我的房间 */
+.myrooms { margin-bottom: 32rpx; }
+.sec-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 18rpx; }
+.sec-title {
+  font-size: 28rpx; font-weight: 700; color: #eaf2ee;
+}
+.sec-count { font-size: 20rpx; color: #8fa8a0; }
+.room-card {
+  display: flex; align-items: center;
+  background: rgba(255,255,255,.05); border: 1rpx solid rgba(217,164,65,.22);
+  border-radius: 20rpx; padding: 22rpx 24rpx; margin-bottom: 16rpx;
+}
+.room-ico {
+  width: 64rpx; height: 64rpx; border-radius: 16rpx;
+  background-color: rgba(217,164,65,.12); flex: none; margin-right: 18rpx;
+}
+.room-ico.ic { background-size: 38rpx 38rpx; }
+.room-info { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+.room-no { font-size: 28rpx; font-weight: 700; color: #eaf2ee; }
+.room-meta { font-size: 20rpx; color: #8fa8a0; margin-top: 4rpx; }
+.room-enter {
+  font-size: 24rpx; color: #d9a441; font-weight: 700;
+  display: flex; align-items: center; flex: none; margin-left: 12rpx;
+}
+.room-enter .chev { font-size: 32rpx; line-height: 1; margin-left: 2rpx; }
+
+/* 顶部右侧：房卡 + 设置齿轮 */
+.hero-right { display: flex; align-items: center; }
+.hero-set {
+  width: 64rpx; height: 64rpx; border-radius: 50%; margin-left: 18rpx;
+  background: rgba(255,255,255,.06); border: 1rpx solid rgba(255,255,255,.12);
+  display: flex; align-items: center; justify-content: center;
+}
+.hero-set:active { background: rgba(255,255,255,.14); }
+.set-ico { width: 36rpx; height: 36rpx; }
+
+/* 设置弹窗：开关行 */
+.set-row {
+  display: flex; align-items: center; width: 100%;
+  padding: 24rpx 0; border-bottom: 1rpx solid rgba(255,255,255,.06);
+}
+.set-info { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+.set-name { font-size: 28rpx; font-weight: 700; color: #eaf2ee; }
+.set-desc { font-size: 20rpx; color: #8fa8a0; margin-top: 6rpx; }
+.switch {
+  width: 84rpx; height: 46rpx; border-radius: 999rpx; flex: none; margin-left: 20rpx;
+  background: rgba(255,255,255,.14); border: 1rpx solid rgba(255,255,255,.16);
+  display: flex; align-items: center; padding: 4rpx;
+  transition: background .18s ease;
+}
+.switch .knob {
+  width: 38rpx; height: 38rpx; border-radius: 50%; background: #fff;
+  transition: transform .18s ease;
+}
+.switch.on { background: linear-gradient(160deg, #f4d78a, #d9a441); }
+.switch.on .knob { transform: translateX(38rpx); }
+
+/* 创建房间：人数 / 时长选项 */
+.opt-label {
+  display: block; font-size: 26rpx; font-weight: 700; color: #eaf2ee;
+  margin: 28rpx 0 14rpx;
+}
+.opt-row { display: flex; flex-wrap: wrap; }
+.opt {
+  font-size: 25rpx; color: #a9c2b9; padding: 14rpx 26rpx; margin: 0 16rpx 16rpx 0;
+  border-radius: 14rpx; background: rgba(255,255,255,.07);
+  border: 1rpx solid rgba(255,255,255,.12);
+}
+.opt.on {
+  color: #2a1c05; font-weight: 700;
+  background: linear-gradient(160deg, #f4d78a, #d9a441);
+  border-color: #d9a441;
+}
+.opt-note { display: block; font-size: 21rpx; color: #8fa8a0; line-height: 1.5; margin-top: 4rpx; }

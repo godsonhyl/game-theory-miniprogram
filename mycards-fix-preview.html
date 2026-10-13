@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>底牌白板修复 · 9 人局底部 myzone 对比</title>
+<style>
+  :root{ --uh:1vh; --uw:1vw; --ink:#e8eef0; --mut:#93a5a0; --gold:#e8a33d; }
+  *{ box-sizing:border-box; }
+  body{ margin:0; background:#0e1512; color:var(--ink);
+        font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif; }
+  .wrap{ padding:2vh 2vw; }
+  h1{ font-size:2.6vh; margin:0 0 .6vh; }
+  p.sub{ font-size:1.9vh; color:var(--mut); margin:0 0 1.6vh; line-height:1.6; }
+  .bars{ display:flex; gap:1vw; align-items:center; margin-bottom:1.4vh; }
+  .chip{ padding:.9vh 1.6vw; border-radius:2vh; font-size:1.9vh; cursor:pointer;
+         background:rgba(255,255,255,.06); border:1px solid rgba(255,255,255,.14); color:var(--mut); }
+  .chip.on{ background:rgba(232,163,61,.16); border-color:var(--gold); color:var(--gold); }
+  .grid{ display:flex; gap:1.6vw; }
+  .col{ flex:1; }
+  .cap{ font-size:2vh; margin-bottom:.8vh; }
+  .cap.bad{ color:#e07a6a; } .cap.good{ color:#5ec98a; }
+  /* 真机模拟：812 × 375（横屏）等比缩到页面宽度 */
+  .phone{ width:100%; aspect-ratio:812/375; background:#0f1a16; border:1px solid rgba(255,255,255,.12);
+          border-radius:2.2vh; padding:1.2vh 1.2vw; display:flex; flex-direction:column; overflow:hidden; }
+  .felt{ flex:1; min-height:0; position:relative; border-radius:2vh;
+         background:radial-gradient(ellipse at 50% 44%, #25604f 0%, #1a4438 45%, #0d2822 100%);
+         border:.8vh solid #241610; }
+  .seat{ position:absolute; transform:translate(-50%,-50%); width:12%; text-align:center; }
+  .av{ width:5.4vh; height:5.4vh; line-height:5.4vh; border-radius:50%; margin:0 auto;
+       background:linear-gradient(160deg,#33474a,#1d2c2e); border:1px solid rgba(255,255,255,.18);
+       font-size:2.2vh; color:var(--ink); }
+  .nm{ font-size:1.5vh; color:var(--mut); margin-top:.3vh; }
+  .board{ position:absolute; top:48%; left:50%; transform:translate(-50%,-50%); display:flex; }
+  .card{ width:9.4vh; height:13.4vh; border-radius:1.6vh; margin-right:.8vw;
+         background:linear-gradient(160deg,#fffdf7,#ece5d4); border:1px solid rgba(0,0,0,.14);
+         display:flex; flex-direction:column; align-items:center; justify-content:center;
+         box-shadow:0 .7vh 1.8vh rgba(0,0,0,.42); }
+  .card .r{ font-size:4vh; font-weight:800; color:#1a1a1a; line-height:1; }
+  .card .s{ font-size:3.2vh; color:#1a1a1a; line-height:1.1; }
+  .card.s-heart .r,.card.s-heart .s{ color:#d0342c; }
+  .card.s-diamond .r,.card.s-diamond .s{ color:#d0342c; }
+  .card.hi{ box-shadow:0 0 0 .4vh var(--gold), 0 0 2.6vh rgba(232,163,61,.6); }
+  /* 底部 myzone —— 本次修复对象 */
+  .myzone{ flex:none; margin-top:1vh; }
+  .mybar{ display:flex; align-items:center; height:14vh; padding:0 1.6vw; border-radius:2.4vh;
+          background:linear-gradient(170deg,rgba(255,255,255,.05),rgba(255,255,255,.02));
+          border:1px solid rgba(255,255,255,.09); }
+  .mycards{ display:flex; align-items:center; }
+  .mycards .card{ margin-right:1vw; width:11.4vh; height:16.2vh; }
+  .mymid{ flex:1; text-align:center; font-size:2.1vh; color:var(--mut); }
+  .mystk{ text-align:center; }
+  .ms-v{ display:block; font-size:3vh; color:var(--gold); font-weight:700; }
+  .ms-l{ display:block; font-size:1.6vh; color:var(--mut); }
+  .actbar{ display:flex; margin-top:1vh; }
+  .ab{ flex:1; margin-right:2.6vw; line-height:8.4vh; text-align:center; border-radius:2.4vh;
+       font-size:2.6vh; font-weight:700; color:#fff; }
+  .ab:last-child{ margin-right:0; }
+  .ab-fold{ background:#5a3a38; } .ab-call{ background:#2f5f52; } .ab-raise{ background:#7a5a2a; }
+  .note{ margin-top:1.6vh; font-size:1.9vh; color:var(--mut); line-height:1.7; }
+  code{ background:rgba(255,255,255,.08); padding:.2vh .6vw; border-radius:.6vh; color:#ffd9a0; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>底牌「白板」修复 · 底部 myzone 手牌对比</h1>
+  <p class="sub">原因：<code>wx:for="{{myCards}}</code> 里用了别名 <code>c.rank / c.suit / c.cls</code>，但漏了
+    <code>wx:for-item="c"</code> —— WXML 里 <code>c</code> 未定义，点数/花色全为空，两张牌只剩白底 = 白板。<br>
+    修复：补上 <code>wx:for-item="c"</code>。与人数无关（2/6/9 人都会白板，9 人局只是最先被发现）。</p>
+
+  <div class="bars">
+    <span style="font-size:1.9vh;color:var(--mut);margin-right:.4vw">人数</span>
+    <span class="chip" data-n="2">2 人</span>
+    <span class="chip" data-n="6">6 人</span>
+    <span class="chip on" data-n="9">9 人</span>
+  </div>
+
+  <div class="grid">
+    <div class="col">
+      <div class="cap bad">修复前（白板）</div>
+      <div class="phone" id="bad">
+        <div class="felt" id="feltBad"><div class="board" id="boardBad"></div></div>
+        <div class="myzone">
+          <div class="mybar">
+            <div class="mycards">
+              <div class="card"><span class="r"></span><span class="s"></span></div>
+              <div class="card"><span class="r"></span><span class="s"></span></div>
+            </div>
+            <div class="mymid">胜率 62% · 赔率 3.4:1 · 建议跟注</div>
+            <div class="mystk"><span class="ms-v">980</span><span class="ms-l">筹码</span></div>
+          </div>
+          <div class="actbar"><div class="ab ab-fold">弃牌</div><div class="ab ab-call">跟注 40</div><div class="ab ab-raise">加注 80</div></div>
+        </div>
+      </div>
+    </div>
+    <div class="col">
+      <div class="cap good">修复后（正常牌面）</div>
+      <div class="phone" id="good">
+        <div class="felt" id="feltGood"><div class="board" id="boardGood"></div></div>
+        <div class="myzone">
+          <div class="mybar">
+            <div class="mycards">
+              <div class="card s-heart hi"><span class="r">A</span><span class="s">♥</span></div>
+              <div class="card s-spade"><span class="r">Q</span><span class="s">♠</span></div>
+            </div>
+            <div class="mymid">胜率 62% · 赔率 3.4:1 · 建议跟注</div>
+            <div class="mystk"><span class="ms-v">980</span><span class="ms-l">筹码</span></div>
+          </div>
+          <div class="actbar"><div class="ab ab-fold">弃牌</div><div class="ab ab-call">跟注 40</div><div class="ab ab-raise">加注 80</div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="note">
+    同时新增 <code>scripts/check-wxml.js</code>（已接入 <code>npm test</code>）：静态扫描所有 WXML，
+    ① 校验标签闭合平衡；② 循环体内出现 <code>{{x.y}}</code> 但没声明 <code>wx:for-item="x"</code> 直接报错，
+    以后这类「静默白板」会在测试阶段就被拦下。
+  </div>
+</div>
+
+<script>
+// 对手排布：复用小程序 OPP_LAYOUT 思路，9 人压到安全区不重叠
+var LAYOUT = {
+  1:[[50,26]],
+  2:[[26,30],[74,30]],
+  3:[[20,40],[50,23],[80,40]],
+  4:[[16,46],[38,25],[62,25],[84,46]],
+  5:[[13,50],[32,27],[50,21],[68,27],[87,50]],
+  6:[[11,52],[27,30],[45,21],[55,21],[73,30],[89,52]],
+  7:[[9,54],[22,33],[38,22],[50,19],[62,22],[78,33],[91,54]],
+  8:[[8,56],[19,36],[33,23],[44,19],[56,19],[67,23],[81,36],[92,56]]
+};
+var NAMES = ['阿强','小李','Mike','老张','Anna','大王','阿珍','Kevin'];
+var BOARD = [
+  {r:'K',s:'♠',c:'s-spade',hi:1},
+  {r:'9',s:'♥',c:'s-heart',hi:0},
+  {r:'4',s:'♦',c:'s-diamond',hi:0}
+];
+function cardsHTML(list){
+  return list.map(function(c){
+    return '<div class="card '+c.c+(c.hi?' hi':'')+'"><span class="r">'+c.r+'</span><span class="s">'+c.s+'</span></div>';
+  }).join('');
+}
+function render(n){
+  var opp = LAYOUT[n-1] || [];
+  var seats = opp.map(function(p,i){
+    return '<div class="seat" style="left:'+p[0]+'%;top:'+p[1]+'%">'+
+             '<div class="av">'+NAMES[i].slice(0,1)+'</div><div class="nm">'+NAMES[i]+'</div></div>';
+  }).join('');
+  document.getElementById('boardBad').innerHTML = cardsHTML(BOARD);
+  document.getElementById('boardGood').innerHTML = cardsHTML(BOARD);
+  document.getElementById('feltBad').insertAdjacentHTML('beforeend','');
+  ['feltBad','feltGood'].forEach(function(id){
+    var f = document.getElementById(id);
+    f.querySelectorAll('.seat').forEach(function(s){ s.remove(); });
+    f.insertAdjacentHTML('beforeend', seats);
+  });
+}
+document.querySelectorAll('[data-n]').forEach(function(b){
+  b.onclick = function(){
+    document.querySelectorAll('[data-n]').forEach(function(x){ x.classList.remove('on'); });
+    b.classList.add('on'); render(+b.dataset.n);
+  };
+});
+render(9);
+</script>
+</body>
+</html>

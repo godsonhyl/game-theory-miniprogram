@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>好友房 · 人数与时长设置</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 28px; background: #071915;
+    font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; color: #d8e6e0;
+  }
+  h1 { font-size: 20px; color: #d9a441; margin: 0 0 6px; letter-spacing: 1px; }
+  .sub { font-size: 13px; color: #7e968d; margin-bottom: 22px; }
+  .flow { display: flex; gap: 16px; flex-wrap: wrap; align-items: stretch; }
+  .step {
+    flex: 1 1 250px; background: #0d2620; border: 1px solid #1c3c33;
+    border-radius: 14px; padding: 14px; position: relative;
+  }
+  .step .no {
+    position: absolute; top: -10px; left: 14px; background: #d9a441; color: #071915;
+    font-size: 12px; font-weight: 700; padding: 2px 9px; border-radius: 8px;
+  }
+  .step h3 { margin: 6px 0 10px; font-size: 14px; color: #eaf3ef; }
+  .shot {
+    background: #10352c; border-radius: 10px; padding: 12px; min-height: 120px;
+    display: flex; flex-direction: column; gap: 8px;
+  }
+  .dlg { background: #12261f; border: 1rpx solid rgba(217,164,65,.4); border-radius: 10px; padding: 12px; }
+  .dlg .t { font-size: 13px; font-weight: 700; color: #eaf2ee; }
+  .dlg .s { font-size: 11px; color: #8fa8a0; margin-top: 3px; }
+  .lbl { font-size: 12px; font-weight: 700; color: #eaf2ee; margin: 10px 0 6px; }
+  .opts { display: flex; flex-wrap: wrap; gap: 6px; }
+  .opt {
+    font-size: 11px; color: #a9c2b9; padding: 5px 10px; border-radius: 8px;
+    background: rgba(255,255,255,.07); border: 1px solid rgba(255,255,255,.12);
+  }
+  .opt.on {
+    color: #2a1c05; font-weight: 700; border-color: #d9a441;
+    background: linear-gradient(160deg, #f4d78a, #d9a441);
+  }
+  .note { font-size: 11px; color: #8fa8a0; line-height: 1.5; margin-top: 8px; }
+  .note b { color: #d9a441; font-weight: 600; }
+  .btn { background: linear-gradient(180deg,#e8bd6b,#c8912f); color: #2a1c05; border-radius: 8px; padding: 7px 12px; font-size: 12px; font-weight: 700; text-align: center; }
+  .btn.ghost { background: rgba(255,255,255,.07); color: #a9c2b9; }
+  .row { display: flex; gap: 8px; margin-top: 10px; }
+  .row .btn { flex: 1; }
+  .bar { display: flex; align-items: center; gap: 8px; font-size: 12px; color: #a9c2b9; flex-wrap: wrap; }
+  .chip { background: rgba(47,158,110,.16); border: 1px solid rgba(78,200,146,.4); color: #6fd3a4; padding: 3px 8px; border-radius: 6px; font-size: 11px; }
+  .clock { color: #ffd98a; background: rgba(217,164,65,.14); border: 1px solid rgba(217,164,65,.4); padding: 3px 9px; border-radius: 999px; font-size: 12px; font-weight: 700; }
+  .clock.urgent { color: #ffb3a7; background: rgba(224,92,75,.18); border-color: rgba(224,92,75,.5); }
+  .srow {
+    display: flex; align-items: center; gap: 8px; padding: 6px 8px;
+    border-radius: 6px; background: rgba(255,255,255,.04); font-size: 12px;
+  }
+  .srow.me { background: rgba(217,164,65,.14); border: 1px solid rgba(217,164,65,.4); }
+  .srow .rk { width: 14px; color: #8fa8a0; font-weight: 700; }
+  .srow .nm { flex: 1; color: #eaf2ee; }
+  .srow .st { color: #8fa8a0; font-size: 11px; }
+  .srow .nt { font-weight: 800; min-width: 52px; text-align: right; }
+  .up { color: #ff6b5a; }   /* 中国习惯：盈利为红 */
+  .down { color: #4caf7d; } /* 亏损为绿 */
+  .my {
+    display: flex; justify-content: space-between; align-items: baseline;
+    border-top: 1px solid rgba(255,255,255,.1); margin-top: 8px; padding-top: 8px; font-size: 12px;
+  }
+  .my .v { font-size: 15px; font-weight: 800; }
+  .kv { margin-top: 24px; background: #0d2620; border: 1px solid #1c3c33; border-radius: 12px; padding: 14px 16px; }
+  .kv h4 { margin: 0 0 8px; font-size: 13px; color: #d9a441; }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid #17342c; color: #a9c2b9; }
+  th { color: #d9a441; font-weight: 600; }
+  td.k { color: #eaf3ef; width: 130px; }
+</style>
+</head>
+<body>
+  <h1>好友房：限定人数 + 游戏时长 + 到点结算</h1>
+  <div class="sub">创建时设定规则（2~9 人、30 分钟 / 1 小时 / 2 小时 / 不限时），开局后倒计时，到点自动结束并统计全员盈亏</div>
+
+  <div class="flow">
+    <div class="step">
+      <span class="no">1 创建</span>
+      <h3>创建弹窗：人数与时长</h3>
+      <div class="shot">
+        <div class="dlg">
+          <div class="t">创建好友房</div>
+          <div class="s">消耗 1 张房卡 · 创建后规则不可修改</div>
+          <div class="lbl">限定人数</div>
+          <div class="opts">
+            <span class="opt">2 人</span><span class="opt">4 人</span>
+            <span class="opt">6 人</span><span class="opt on">9 人</span>
+          </div>
+          <div class="lbl">游戏时长</div>
+          <div class="opts">
+            <span class="opt on">30 分钟</span><span class="opt">1 小时</span>
+            <span class="opt">2 小时</span><span class="opt">不限时</span>
+          </div>
+          <div class="note">倒计时结束时自动结束本局，并统计所有参与人的盈亏</div>
+          <div class="row">
+            <div class="btn ghost">取消</div>
+            <div class="btn">创建（1 房卡）</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="step">
+      <span class="no">2 开局</span>
+      <h3>等待室展示规则 · 顶栏倒计时</h3>
+      <div class="shot">
+        <div class="bar">好友房 #246810</div>
+        <div class="bar"><span class="chip">9 人桌 · 时长 30 分钟</span></div>
+        <div class="bar">
+          <span class="chip">翻牌</span>
+          <span class="clock">⏱ 29:59</span>
+          <span style="color:#8fa8a0">第 7 手</span>
+        </div>
+        <div class="bar">
+          <span class="clock urgent">⏱ 00:42</span>
+          <span style="color:#8fa8a0">最后 1 分钟红色闪烁提示</span>
+        </div>
+        <div class="note">倒计时<b>开局才开始</b>；中途退出房间会保存剩余时间，再进入接着倒数。不限时不显示倒计时。</div>
+      </div>
+    </div>
+
+    <div class="step">
+      <span class="no">3 结算</span>
+      <h3>到点结束 · 全员盈亏排名</h3>
+      <div class="shot">
+        <div class="dlg">
+          <div class="t" style="color:#d9a441;text-align:center">本局结束 · 时长已到</div>
+          <div class="s" style="text-align:center">共 12 手 · 全员盈亏结算</div>
+          <div style="margin-top:10px;display:flex;flex-direction:column;gap:5px">
+            <div class="srow"><span class="rk">1</span><span class="nm">苏晴</span><span class="st">1420</span><span class="nt up">+420</span></div>
+            <div class="srow me"><span class="rk">2</span><span class="nm">你</span><span class="st">1180</span><span class="nt up">+180</span></div>
+            <div class="srow"><span class="rk">3</span><span class="nm">陈默</span><span class="st">960</span><span class="nt down">-40</span></div>
+            <div class="srow"><span class="rk">4</span><span class="nm">赵岩</span><span class="st">440</span><span class="nt down">-560</span></div>
+          </div>
+          <div class="my"><span style="color:#8fa8a0">我的盈亏</span><span class="v up">+180</span></div>
+          <div class="row">
+            <div class="btn ghost">返回房间</div>
+            <div class="btn">再来一局</div>
+          </div>
+        </div>
+        <div class="note">盈亏 = 结束筹码 − 起始筹码（系统补充的筹码不计入）。结束后房间仍在，可再来一局。</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="kv">
+    <h4>规则与边界</h4>
+    <table>
+      <tr><th>场景</th><th>行为</th></tr>
+      <tr><td class="k">限定人数</td><td>2 / 4 / 6 / 9 人，创建时设定不可改；坐满后「添加电脑玩家」提示已达限定人数</td></tr>
+      <tr><td class="k">游戏时长</td><td>30 分钟 / 1 小时 / 2 小时 / 不限时，存入云端 poker_rooms.duration_min（0=不限时）</td></tr>
+      <tr><td class="k">倒计时</td><td>房主点「开始游戏」才启动；顶栏显示 mm:ss，超过 1 小时显示 h:mm:ss，最后 1 分钟变红闪烁</td></tr>
+      <tr><td class="k">到点结束</td><td>停牌局 → 全员盈亏排名结算（红涨绿跌）→ 可「再来一局」（重置筹码与倒计时）或「返回房间」</td></tr>
+      <tr><td class="k">中途退出</td><td>退出房间保存剩余时间与起始筹码，再进入接着倒数，盈亏口径连续</td></tr>
+      <tr><td class="k">座位布局</td><td>2~9 人均沿椭圆均匀分布，我的座位固定在底部中央</td></tr>
+    </table>
+  </div>
+</body>
+</html>

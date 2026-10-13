@@ -1,0 +1,72 @@
+<view class="profile">
+  <view class="head">
+    <view class="head-badge ic ic-spade"></view>
+    <view class="head-avatar">{{initial}}</view>
+    <text class="head-name">{{nickname}}</text>
+    <text class="head-sub">玩家画像与历史战绩</text>
+  </view>
+
+  <view class="summary">
+    <view class="sum-item">
+      <text class="sum-n">{{stats.hands}}</text>
+      <text class="sum-l">总手数</text>
+    </view>
+    <view class="sum-item">
+      <text class="sum-n">{{stats.wins}}</text>
+      <text class="sum-l">胜场</text>
+    </view>
+    <view class="sum-item">
+      <text class="sum-n {{stats.net >= 0 ? 'up' : 'down'}}">{{stats.netText}}</text>
+      <text class="sum-l">累计盈亏</text>
+    </view>
+  </view>
+
+  <view class="section">
+    <view class="sec-head"><view class="sec-ico ic ic-spade"></view><text class="sec-title">打法风格</text></view>
+    <view class="style-card">
+      <view class="style-row">
+        <text class="style-k">风格倾向</text>
+        <text class="style-v">{{style}}</text>
+      </view>
+      <view class="style-row">
+        <text class="style-k">常用打法</text>
+        <text class="style-v">{{habit}}</text>
+      </view>
+      <view class="style-row">
+        <text class="style-k">最常底牌</text>
+        <text class="style-v">{{favHole}}</text>
+      </view>
+    </view>
+  </view>
+
+  <view class="section">
+    <view class="sec-head"><view class="sec-ico ic ic-trophy"></view><text class="sec-title">历史战绩</text></view>
+    <view class="empty" wx:if="{{records.length === 0}}">
+      <text class="empty-icon">♠</text>
+      <text class="empty-text">还没有对局记录</text>
+      <text class="empty-sub">去牌桌玩一局试试</text>
+    </view>
+    <view class="records">
+      <view class="record" wx:for="{{records}}" wx:key="id">
+        <view class="rec-head">
+          <text class="rec-hand">#{{item.handNo}} 手牌</text>
+          <text class="rec-net {{item.net >= 0 ? 'up' : 'down'}}">{{item.net >= 0 ? '+' : ''}}{{item.net}}</text>
+        </view>
+        <view class="rec-body">
+          <view class="rec-cards">
+            <text class="rec-label">手牌</text>
+            <text class="rec-val">{{item.hole}}</text>
+          </view>
+          <view class="rec-cards">
+            <text class="rec-label">公共</text>
+            <text class="rec-val">{{item.board}}</text>
+          </view>
+          <view class="rec-cards">
+            <text class="rec-label">牌型</text>
+            <text class="rec-val gold">{{item.handType}}</text>
+          </view>
+        </view>
+      </view>
+    </view>
+  </view>
+</view>

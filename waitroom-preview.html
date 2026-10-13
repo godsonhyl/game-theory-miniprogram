@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>博弈论 · 好友房等待室预览（横屏 750×345）</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: #0a0f0d; display: flex; justify-content: center; align-items: flex-start;
+         padding: 28px; font-family: -apple-system, "PingFang SC", sans-serif; }
+  .phone {
+    width: 750px; height: 345px; border-radius: 18px; overflow: hidden; flex-shrink: 0;
+    background: radial-gradient(ellipse at 50% 30%, #16302a 0%, #0d1a17 70%);
+    border: 6px solid #1c120a; position: relative;
+  }
+  .wait-room { position: absolute; inset: 0; display: flex; flex-direction: column;
+               align-items: center; justify-content: center; padding: 10px 20px; }
+  .wait-hud { display: flex; align-items: center; justify-content: space-between; width: 100%; }
+  .wait-title { font-size: 26px; font-weight: 700; color: #eaf2ee; }
+  .wait-roomno { display: flex; flex-direction: column; align-items: flex-end;
+                 background: rgba(255,255,255,.07); border: 1px solid rgba(217,164,65,.3);
+                 border-radius: 12px; padding: 6px 18px; }
+  .rn-num { font-size: 20px; font-weight: 700; color: #d9a441; }
+  .rn-copy { font-size: 13px; color: #8fa8a0; margin-top: 2px; }
+  .wait-tip { font-size: 17px; color: #8fa8a0; text-align: center; margin: 18px 0 16px;
+              line-height: 1.5; max-width: 560px; }
+  .wait-seats { display: flex; flex-wrap: wrap; justify-content: center; gap: 16px; max-width: 612px; }
+  .wseat { width: 150px; height: 150px; border-radius: 16px; display: flex; flex-direction: column;
+           align-items: center; justify-content: center; position: relative; }
+  .wseat.off { border: 2px dashed rgba(255,255,255,.18); background: rgba(255,255,255,.03); }
+  .wseat.on { border: 2px solid rgba(217,164,65,.45); background: rgba(217,164,65,.10); }
+  .wavatar { width: 56px; height: 56px; border-radius: 50%; display: flex; align-items: center;
+             justify-content: center; font-size: 24px; font-weight: 800; color: #fff;
+             background: linear-gradient(145deg, #4a6fa5, #2f4d78); border: 2px solid rgba(255,255,255,.22); }
+  .wavatar.empty { background: transparent; color: #6b7d76; font-size: 40px; font-weight: 400; }
+  .wname { font-size: 16px; color: #eaf2ee; margin-top: 8px; max-width: 130px;
+           overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .wname.empty { color: #6b7d76; }
+  .wtag { position: absolute; top: 6px; right: 6px; font-size: 12px; padding: 1px 8px; border-radius: 999px; }
+  .wtag.owner { background: #d9a441; color: #1a1a1a; font-weight: 700; }
+  .wtag.kick { background: rgba(224,92,75,.2); color: #e08a7d; border: 1px solid rgba(224,92,75,.4); }
+  .wait-actions { display: flex; gap: 12px; margin-top: 22px; }
+  .wbtn { font-size: 19px; line-height: 64px; border-radius: 12px; color: #fff; border: none;
+          padding: 0 22px; cursor: pointer; }
+  .wbtn.ghost { background: rgba(255,255,255,.1); border: 1px solid rgba(255,255,255,.18); }
+  .wbtn.primary { background: linear-gradient(160deg, #d9a441, #b8791f); color: #1a1a1a; font-weight: 700; }
+  .wbtn[disabled] { opacity: .4; }
+  .note { color: #8fa8a0; font-size: 13px; margin-top: 14px; max-width: 750px; line-height: 1.6; }
+</style>
+</head>
+<body>
+  <div>
+    <div class="phone">
+      <div class="wait-room">
+        <div class="wait-hud">
+          <div class="wait-title">好友房</div>
+          <div class="wait-roomno">
+            <div class="rn-num">房间号 884201</div>
+            <div class="rn-copy">点击复制</div>
+          </div>
+        </div>
+        <div class="wait-tip">把房间号发给好友，等好友坐下后由房主点「开始游戏」发牌</div>
+        <div class="wait-seats">
+          <div class="wseat on"><div class="wavatar">你</div><div class="wname">你（房主）</div><div class="wtag owner">房主</div></div>
+          <div class="wseat off"><div class="wavatar empty">＋</div><div class="wname empty">空位</div></div>
+          <div class="wseat off"><div class="wavatar empty">＋</div><div class="wname empty">空位</div></div>
+          <div class="wseat off"><div class="wavatar empty">＋</div><div class="wname empty">空位</div></div>
+          <div class="wseat off"><div class="wavatar empty">＋</div><div class="wname empty">空位</div></div>
+          <div class="wseat off"><div class="wavatar empty">＋</div><div class="wname empty">空位</div></div>
+        </div>
+        <div class="wait-actions">
+          <div class="wbtn ghost">邀请好友</div>
+          <div class="wbtn ghost">添加电脑玩家</div>
+          <div class="wbtn primary" style="opacity:.4">开始游戏（至少 2 人）</div>
+        </div>
+      </div>
+    </div>
+    <div class="note">
+      预览说明：横屏真机视口约 750×345rpx（1rpx≈1px）。当前为「空房间」初始态——仅房主坐下 0 号位，
+      开始按钮因不足 2 人而禁用。点「添加电脑玩家」会占一个空位（模拟好友进入坐下），
+      满 2 人后「开始游戏」亮起，点它才发牌进入牌桌。真实跨设备好友进入待服务端（当前为该骨架的本地模拟）。
+    </div>
+  </div>
+</body>
+</html>

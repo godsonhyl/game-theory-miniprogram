@@ -1,0 +1,65 @@
+/**
+ * 全局样式
+ * 注意：小程序不支持 CSS 变量，改用固定色值；
+ * 单位统一用 rpx（750rpx = 屏幕宽度）。
+ */
+
+page {
+  background: #0d1a17;
+  color: #eaf2ee;
+  font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Helvetica Neue", sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+view, text, button, scroll-view, input {
+  box-sizing: border-box;
+}
+
+/* 通用卡片 */
+.card-panel {
+  background: rgba(255, 255, 255, 0.045);
+  border: 1rpx solid rgba(255, 255, 255, 0.09);
+  border-radius: 24rpx;
+  padding: 26rpx;
+}
+
+/* 主按钮 */
+.btn-primary {
+  background: linear-gradient(160deg, #d9a441, #b8791f);
+  color: #1a1a1a;
+  font-weight: 800;
+  border-radius: 16rpx;
+  border: none;
+  line-height: 88rpx;
+  font-size: 30rpx;
+}
+.btn-primary::after { border: none; }
+.btn-primary[disabled] { opacity: .4; }
+
+.btn-ghost {
+  background: rgba(255, 255, 255, 0.07);
+  color: #eaf2ee;
+  border: 1rpx solid rgba(255, 255, 255, 0.14);
+  font-weight: 600;
+  border-radius: 16rpx;
+  line-height: 88rpx;
+  font-size: 30rpx;
+}
+.btn-ghost::after { border: none; }
+
+.text-muted { color: #8fa8a0; }
+.text-gold { color: #d9a441; }
+
+/* === 精细线性图标 (auto-generated) === */
+.ic { background-repeat: no-repeat; background-position: center; background-size: contain; display: block; }
+.ic-friend { background-image: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjZDlhNDQxIiBzdHJva2Utd2lkdGg9IjEuOCIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIj48Y2lyY2xlIGN4PSI5IiBjeT0iOCIgcj0iMyIvPjxwYXRoIGQ9Ik0zLjUgMTljMC0zIDIuNi01LjUgNS41LTUuNVMxNC41IDE2IDE0LjUgMTkiLz48Y2lyY2xlIGN4PSIxNyIgY3k9IjkiIHI9IjIuMyIvPjxwYXRoIGQ9Ik0xNS42IDE0LjRjMi41LjUgNC40IDIuMyA0LjQgNS42Ii8+PC9zdmc+"); }
+.ic-ai { background-image: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjZDlhNDQxIiBzdHJva2Utd2lkdGg9IjEuOCIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIj48cmVjdCB4PSI1IiB5PSI4IiB3aWR0aD0iMTQiIGhlaWdodD0iMTEiIHJ4PSIyLjUiLz48cGF0aCBkPSJNMTIgOFY0LjYiLz48Y2lyY2xlIGN4PSIxMiIgY3k9IjMuNiIgcj0iMS4xIiBmaWxsPSIjZDlhNDQxIiBzdHJva2U9Im5vbmUiLz48Y2lyY2xlIGN4PSI5LjMiIGN5PSIxMy4yIiByPSIxLjIiLz48Y2lyY2xlIGN4PSIxNC43IiBjeT0iMTMuMiIgcj0iMS4yIi8+PHBhdGggZD0iTTkuMyAxNi42aDUuNCIvPjwvc3ZnPg=="); }
+.ic-rank { background-image: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjZDlhNDQxIiBzdHJva2Utd2lkdGg9IjEuOCIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIj48cGF0aCBkPSJNMTMgMi41IDQuNSAxMy44SDEwbC0xIDcuNyA5LTEyLjJoLTUuNXoiLz48L3N2Zz4="); }
+.ic-cards { background-image: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjZDlhNDQxIiBzdHJva2Utd2lkdGg9IjEuOCIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIj48cmVjdCB4PSI0IiB5PSI3IiB3aWR0aD0iMTEiIGhlaWdodD0iMTQiIHJ4PSIyIi8+PHJlY3QgeD0iOS41IiB5PSIzLjUiIHdpZHRoPSIxMSIgaGVpZ2h0PSIxNCIgcng9IjIiLz48L3N2Zz4="); }
+.ic-back { background-image: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjYTljMmI5IiBzdHJva2Utd2lkdGg9IjIiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCI+PHBhdGggZD0iTTE0LjUgNiA4IDEybDYuNSA2Ii8+PC9zdmc+"); }
+.ic-chevron { background-image: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjYTljMmI5IiBzdHJva2Utd2lkdGg9IjIiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCI+PHBhdGggZD0iTTkgNWw3IDctNyA3Ii8+PC9zdmc+"); }
+.ic-trophy { background-image: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjZDlhNDQxIiBzdHJva2Utd2lkdGg9IjEuOCIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIj48cGF0aCBkPSJNNyA0aDEwdjRhNSA1IDAgMCAxLTEwIDB6Ii8+PHBhdGggZD0iTTcuNSA1SDQuOHYyYTMgMyAwIDAgMCAyLjcgMyIvPjxwYXRoIGQ9Ik0xNi41IDVoMi43djJhMyAzIDAgMCAxLTIuNyAzIi8+PHBhdGggZD0iTTEyIDEzdjMuNCIvPjxwYXRoIGQ9Ik05LjYgMjFoNC44Ii8+PHBhdGggZD0iTTEwLjIgMTdoMy42djRoLTMuNnoiLz48L3N2Zz4="); }
+.ic-spade { background-image: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjZDlhNDQxIiBzdHJva2Utd2lkdGg9IjEuOCIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIj48cGF0aCBkPSJNMTIgM2MtMi42IDIuOC01LjQgNS42LTUuNCA4LjZhMyAzIDAgMCAwIDUuNCAxLjZjLS4zLS42LS41LTEuMi0uNS0xLjkgMSAuOCAyLjUuOCAzLjUgMC0uMS43LS4yIDEuMy0uNSAxLjlhMyAzIDAgMCAwIDUuNC0xLjZDMTcuNCA4LjYgMTQuNiA1LjggMTIgM3oiLz48cGF0aCBkPSJNMTIgMTUuNFYyMSIvPjxwYXRoIGQ9Ik05IDIxaDYiLz48L3N2Zz4="); }
+.ic-share { background-image: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjZDlhNDQxIiBzdHJva2Utd2lkdGg9IjEuOCIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIj48Y2lyY2xlIGN4PSI2IiBjeT0iMTIiIHI9IjIuNCIvPjxjaXJjbGUgY3g9IjE3LjYiIGN5PSI2IiByPSIyLjQiLz48Y2lyY2xlIGN4PSIxNy42IiBjeT0iMTgiIHI9IjIuNCIvPjxwYXRoIGQ9Ik04LjMgMTAuOWw3LjMtMy43TTguMyAxMy4xbDcuMyAzLjciLz48L3N2Zz4="); }
+
+.ic-gear { background-image: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjZDlhNDQxIiBzdHJva2Utd2lkdGg9IjEuOCIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIj48Y2lyY2xlIGN4PSIxMiIgY3k9IjEyIiByPSIzLjIiLz48cGF0aCBkPSJNMTIgMy4ydjIuMk0xMiAxOC42djIuMk00LjggNC44bDEuNiAxLjZNMTcuNiAxNy42bDEuNiAxLjZNMy4yIDEyaDIuMk0xOC42IDEyaDIuMk00LjggMTkuMmwxLjYtMS42TTE3LjYgNi40bDEuNi0xLjYiLz48L3N2Zz4="); }

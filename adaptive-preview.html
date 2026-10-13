@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>博弈论 · 横屏自适应预览（可切换屏幕比例）</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #1b2320; color: #eaf2ee;
+    font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+    min-height: 100vh; display: flex; flex-direction: column; align-items: center;
+    padding: 16px; gap: 12px;
+  }
+  h1 { font-size: 16px; font-weight: 700; color: #d9a441; }
+  .hint { font-size: 12px; color: #8fa8a0; text-align: center; line-height: 1.6; }
+  .switcher { display: flex; gap: 8px; }
+  .switcher button {
+    background: rgba(255,255,255,.08); color: #eaf2ee; border: 1px solid rgba(255,255,255,.18);
+    border-radius: 999px; padding: 6px 16px; font-size: 13px; cursor: pointer;
+  }
+  .switcher button.on { background: #d9a441; color: #1a1a1a; font-weight: 700; border-color: #d9a441; }
+  .stage-wrap { flex: 1; width: 100%; display: flex; align-items: center; justify-content: center; min-height: 0; }
+  /* 设备屏幕：aspect-ratio 由按钮切换，内部全部用 vh/vw 自适应 */
+  .device {
+    height: min(78vh, 92vw / var(--ar));
+    aspect-ratio: var(--ar);
+    background: radial-gradient(ellipse at 50% 30%, #16302a 0%, #0d1a17 70%);
+    border-radius: 14px; border: 3px solid #2a3530;
+    position: relative; overflow: hidden;
+    transition: height .25s;
+  }
+  .view-tag { position: absolute; top: 6px; left: 50%; transform: translateX(-50%); z-index: 40;
+    background: rgba(0,0,0,.5); font-size: 11px; padding: 2px 10px; border-radius: 999px; color: #8fa8a0; }
+
+  /* ===== 以下与 table.wxss 自适应方案同源（1vh = 屏幕高 / 100） ===== */
+  .page { height: 100%; padding: 3vh 1.8vw; display: flex; flex-direction: row; overflow: hidden; position: relative; }
+  .main-col { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+  .side-col { width: 33vw; flex-shrink: 0; margin-left: 1.8vw; display: flex; flex-direction: column; min-height: 0; }
+  .felt { position: relative; width: 100%; height: 100%;
+    background: radial-gradient(ellipse at 50% 42%, #24685a 0%, #1b4d40 42%, #0f2f27 100%);
+    border: 1.3vw solid #2a1a10; border-radius: 50% / 42%; box-shadow: 0 3vh 8vh rgba(0,0,0,.5); }
+
+  .hud { position: absolute; top: 2.5vh; display: flex; align-items: center; z-index: 5; }
+  .hud-left { left: 3vw; } .hud-right { right: 3vw; }
+  .back-btn { font-size: 5.2vh; color: #eaf2ee; background: rgba(0,0,0,.35);
+    border: 1px solid rgba(255,255,255,.2); border-radius: 999px; padding: 1vh 4.6vw; line-height: 1.4; }
+  .hud-left .back-btn { margin-right: 3vw; }
+  .hud-title { font-size: 6.5vh; font-weight: 700; }
+  .hud-room { font-size: 5vh; color: #8fa8a0; margin-left: 2.8vw; background: rgba(255,255,255,.07); padding: .5vh 3.2vw; border-radius: 999px; }
+  .hud-street { font-size: 5vh; padding: .5vh 4vw; border-radius: 999px; background: #1b4d40; border: 1px solid rgba(217,164,65,.3); color: #d9a441; }
+  .hud-hand { font-size: 5vh; color: #8fa8a0; margin-left: 2.8vw; }
+
+  .board-row { position: absolute; top: 53%; left: 50%; transform: translate(-50%,-50%); display: flex; align-items: center; }
+  .pot-pill { display: flex; align-items: baseline; background: rgba(6,18,15,.85); border: 1px solid rgba(217,164,65,.35);
+    border-radius: 999px; padding: 1vh 4.2vw; margin-right: 4vw; }
+  .pot-label { font-size: 4.6vh; color: #8fa8a0; margin-right: 2.2vw; }
+  .pot-amount { font-size: 8vh; font-weight: 800; color: #d9a441; }
+  .board { display: flex; }
+  .card { width: 18vh; height: 25.5vh; border-radius: 3vh; background: linear-gradient(160deg,#fffdf7,#ece5d4);
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    border: 1px solid rgba(0,0,0,.14); box-shadow: 0 1vh 3vh rgba(0,0,0,.42); margin-right: 1vw; }
+  .card .r { font-size: 7.5vh; font-weight: 800; line-height: 1; color: #1a1a1a; }
+  .card .s { font-size: 6.4vh; line-height: 1; color: #1a1a1a; }
+  .card.red .r, .card.red .s { color: #d0342c; }
+  .card-ph { width: 18vh; height: 25.5vh; border-radius: 3vh; border: 2px dashed rgba(255,255,255,.14);
+    background: rgba(0,0,0,.14); margin-left: 1vw; }
+
+  .seat { position: absolute; transform: translate(-50%,-50%); width: 18vw;
+    display: flex; flex-direction: column; align-items: center; }
+  .seat-bet { position: absolute; top: -3.5vh; font-size: 4.3vh; color: #d9a441; background: rgba(6,18,15,.9);
+    padding: .3vh 2.8vw; border-radius: 999px; white-space: nowrap; z-index: 3; }
+  .avatar { position: relative; width: 13vh; height: 13vh; border-radius: 50%; display: flex; align-items: center;
+    justify-content: center; font-size: 5.5vh; font-weight: 800; color: #fff;
+    background: linear-gradient(145deg,#4a6fa5,#2f4d78); border: 2px solid rgba(255,255,255,.22); }
+  .seat.active .avatar { box-shadow: 0 0 0 1vh #d9a441, 0 0 6vh rgba(217,164,65,.6); }
+  .dealer { position: absolute; top: -2.3vh; right: -2.8vh; width: 7.5vh; height: 7.5vh; border-radius: 50%;
+    background: #d9a441; color: #1a1a1a; border: 2px solid #fff; font-size: 4vh; font-weight: 800;
+    display: flex; align-items: center; justify-content: center; }
+  .seat-meta { display: flex; align-items: center; margin-top: 1vh; max-width: 100%; overflow: hidden; }
+  .seat-name { font-size: 4.6vh; max-width: 12vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .seat-stack { font-size: 4.3vh; color: #cfe0d9; background: rgba(0,0,0,.42); padding: 0 2.2vw; border-radius: 999px; margin-left: 1.2vw; }
+  .seat-cards { display: flex; height: 19.5vh; align-items: center; margin-top: 1vh; }
+  .card-sm { width: 13.3vh; height: 18.5vh; border-radius: 2.3vh; margin-right: 1.2vw; }
+  .card-sm .r { font-size: 5.5vh; } .card-sm .s { font-size: 4.6vh; }
+  .card.back { background: repeating-linear-gradient(45deg,#2a4a7a 0 2.3vh,#1e3a63 2.3vh 4.6vh); border: 2px solid #e8eef5; }
+
+  .action-inner { background: rgba(255,255,255,.045); border: 1px solid rgba(255,255,255,.09);
+    border-radius: 4.6vh; padding: 4vh 4.6vw; }
+  .wait-tip { text-align: center; font-size: 5.8vh; color: #8fa8a0; padding: 5vh 0; }
+  .actions { display: flex; }
+  .act-btn { flex: 1; margin-right: 2.8vw; border-radius: 3.5vh; line-height: 19vh; font-size: 6.6vh;
+    font-weight: 700; color: #fff; border: none; text-align: center; }
+  .act-btn:last-child { margin-right: 0; }
+  .btn-fold { background: linear-gradient(160deg,#6b7280,#4b5563); }
+  .btn-call { background: linear-gradient(160deg,#2f9e6e,#1d7a52); }
+  .btn-raise { background: linear-gradient(160deg,#d9a441,#b8791f); color: #1a1a1a; }
+  .advice-panel { flex: 1; min-height: 0; margin-top: 3.5vh; background: rgba(255,255,255,.045);
+    border: 1px solid rgba(255,255,255,.09); border-radius: 4.6vh; padding: 4vh 4.6vw; }
+  .advice-cap { font-size: 5.5vh; color: #8fa8a0; }
+  .advice-text { font-size: 5vh; color: #cfe0d9; line-height: 1.45; margin-top: 1.2vh; }
+
+  /* 等待室 */
+  .wait-room { flex: 1; min-height: 0; display: flex; flex-direction: column; align-items: center;
+    justify-content: flex-start; padding: 2vh 4vw; overflow-y: auto; width: 100%; }
+  .wait-hud { display: flex; align-items: center; justify-content: space-between; width: 100%; flex-shrink: 0; }
+  .hud-left-group { display: flex; align-items: center; gap: 4vw; }
+  .wait-hud .back-btn { background: rgba(255,255,255,.1); }
+  .wait-title { font-size: 7vh; font-weight: 700; }
+  .wait-roomno { display: flex; flex-direction: column; align-items: flex-end; background: rgba(255,255,255,.07);
+    border: 1px solid rgba(217,164,65,.3); border-radius: 3.5vh; padding: 1vh 4.6vw; }
+  .rn-num { font-size: 5.5vh; font-weight: 700; color: #d9a441; }
+  .rn-copy { font-size: 3.5vh; color: #8fa8a0; }
+  .wait-tip2 { font-size: 4.6vh; color: #8fa8a0; text-align: center; margin: 2.3vh 0 3vh; flex-shrink: 0; }
+  .wait-seats { display: flex; flex-wrap: nowrap; justify-content: center; gap: 2vh 2.4vw;
+    width: 100%; max-width: 730px; flex: 1; min-height: 0; align-items: center; }
+  .wseat { flex: 1 1 0; min-width: 0; max-width: 108px; height: 28vh; border-radius: 4vh;
+    display: flex; flex-direction: column; align-items: center; justify-content: center; position: relative; }
+  .wseat.off { border: 2px dashed rgba(255,255,255,.18); background: rgba(255,255,255,.03); }
+  .wseat.on { border: 2px solid rgba(217,164,65,.45); background: rgba(217,164,65,.1); }
+  .wavatar { width: 12.5vh; height: 12.5vh; border-radius: 50%; display: flex; align-items: center;
+    justify-content: center; font-size: 5.8vh; font-weight: 800; color: #fff;
+    background: linear-gradient(145deg,#4a6fa5,#2f4d78); border: 2px solid rgba(255,255,255,.22); }
+  .wavatar.empty { background: transparent; color: #6b7d76; font-size: 9vh; font-weight: 400; }
+  .wname { font-size: 4.3vh; margin-top: 1.4vh; max-width: 96px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .wname.empty { color: #6b7d76; }
+  .wtag { position: absolute; top: 1.2vh; right: 1.2vh; font-size: 3.2vh; padding: .3vh 1.8vw; border-radius: 999px; }
+  .wtag.owner { background: #d9a441; color: #1a1a1a; font-weight: 700; }
+  .wait-actions { display: flex; gap: 3.4vw; margin-top: 4vh; flex-shrink: 0; }
+  .wbtn { font-size: 5.2vh; line-height: 16vh; border-radius: 3.5vh; color: #fff; border: none; padding: 0 6.4vw; }
+  .wbtn.ghost { background: rgba(255,255,255,.1); border: 1px solid rgba(255,255,255,.18); }
+  .wbtn.primary { background: linear-gradient(160deg,#d9a441,#b8791f); color: #1a1a1a; font-weight: 700; }
+</style>
+</head>
+<body>
+  <h1>博弈论 · 横屏自适应预览</h1>
+  <div class="hint">全部尺寸基于 vh/vw（与 table.wxss 同源），切换屏幕比例或拖动浏览器窗口大小，内容应始终完整显示、等比缩放。<br>底部按钮可切换「等待室 / 牌桌」视图。</div>
+  <div class="switcher" id="ratio">
+    <button data-ar="2.1667" class="on">19.5 : 9 全面屏</button>
+    <button data-ar="2.2222">20 : 9</button>
+    <button data-ar="1.7778">16 : 9</button>
+    <button data-ar="1.4286">iPad 10:7</button>
+  </div>
+  <div class="switcher">
+    <button id="v-wait" class="on">等待室视图</button>
+    <button id="v-play">牌桌视图</button>
+  </div>
+  <div class="stage-wrap">
+    <div class="device" id="device" style="--ar:2.1667">
+      <div class="view-tag" id="tag">等待室（好友房）</div>
+
+      <!-- 等待室 -->
+      <div class="page" id="wait">
+        <div class="wait-room">
+          <div class="wait-hud">
+            <div class="hud-left-group">
+              <div class="back-btn">‹ 返回</div>
+              <div class="wait-title">好友房</div>
+            </div>
+            <div class="wait-roomno"><div class="rn-num">房间号 654321</div><div class="rn-copy">点击复制</div></div>
+          </div>
+          <div class="wait-tip2">把房间号发给好友，坐下后由房主点「开始游戏」发牌</div>
+          <div class="wait-seats">
+            <div class="wseat on"><div class="wtag owner">房主</div><div class="wavatar">你</div><div class="wname">你（房主）</div></div>
+            <div class="wseat off"><div class="wavatar empty">＋</div><div class="wname empty">空位</div></div>
+            <div class="wseat off"><div class="wavatar empty">＋</div><div class="wname empty">空位</div></div>
+            <div class="wseat off"><div class="wavatar empty">＋</div><div class="wname empty">空位</div></div>
+            <div class="wseat off"><div class="wavatar empty">＋</div><div class="wname empty">空位</div></div>
+            <div class="wseat off"><div class="wavatar empty">＋</div><div class="wname empty">空位</div></div>
+          </div>
+          <div class="wait-actions">
+            <button class="wbtn ghost">邀请好友</button>
+            <button class="wbtn ghost">添加电脑玩家</button>
+            <button class="wbtn primary">开始游戏（至少 2 人）</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 牌桌 -->
+      <div class="page" id="play" style="display:none">
+        <div class="main-col">
+          <div class="felt">
+            <div class="hud hud-left"><div class="back-btn">‹ 返回</div><div class="hud-title">好友房</div><div class="hud-room">房间 654321</div></div>
+            <div class="hud hud-right"><div class="hud-street">翻牌</div><div class="hud-hand">第 3 手</div></div>
+            <div class="board-row">
+              <div class="pot-pill"><span class="pot-label">底池</span><span class="pot-amount">240</span></div>
+              <div class="board">
+                <div class="card"><span class="r">A</span><span class="s">♠</span></div>
+                <div class="card red"><span class="r">K</span><span class="s">♥</span></div>
+                <div class="card"><span class="r">9</span><span class="s">♦</span></div>
+                <div class="card-ph"></div><div class="card-ph"></div>
+              </div>
+            </div>
+            <div class="seat" style="left:50%;top:88%"><div class="seat-bet">◆40</div>
+              <div class="avatar active">你</div>
+              <div class="seat-meta"><span class="seat-name">你</span><span class="seat-stack">920</span></div>
+              <div class="seat-cards"><div class="card-sm"><span class="r">Q</span><span class="s">♣</span></div><div class="card-sm back"></div></div>
+            </div>
+            <div class="seat" style="left:15%;top:40%"><div class="avatar">机</div>
+              <div class="seat-meta"><span class="seat-name">电脑1</span><span class="seat-stack">880</span></div>
+              <div class="seat-cards"><div class="card-sm back"></div><div class="card-sm back"></div></div>
+            </div>
+            <div class="seat" style="left:85%;top:40%"><div class="avatar">机</div>
+              <div class="seat-meta"><span class="seat-name">电脑2</span><span class="seat-stack">960</span></div>
+              <div class="seat-cards"><div class="card-sm back"></div><div class="card-sm back"></div></div>
+            </div>
+          </div>
+        </div>
+        <div class="side-col">
+          <div class="action-inner">
+            <div class="wait-tip">等待 <b style="color:#d9a441">电脑2</b> 行动…</div>
+            <div class="actions">
+              <div class="act-btn btn-fold">弃牌</div><div class="act-btn btn-call">跟注 40</div><div class="act-btn btn-raise">加注</div>
+            </div>
+          </div>
+          <div class="advice-panel"><div class="advice-cap">牌力分析 · 练习模式</div>
+            <div class="advice-text">顶对顶踢脚，胜率约 72%，可加注施压。</div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+<script>
+  const device = document.getElementById('device');
+  document.getElementById('ratio').addEventListener('click', e => {
+    const b = e.target.closest('button'); if (!b) return;
+    document.querySelectorAll('#ratio button').forEach(x => x.classList.remove('on'));
+    b.classList.add('on');
+    device.style.setProperty('--ar', b.dataset.ar);
+  });
+  const wait = document.getElementById('wait'), play = document.getElementById('play'), tag = document.getElementById('tag');
+  document.getElementById('v-wait').onclick = () => { wait.style.display='flex'; play.style.display='none'; tag.textContent='等待室（好友房）'; };
+  document.getElementById('v-play').onclick = () => { wait.style.display='none'; play.style.display='flex'; tag.textContent='牌桌（对局中）'; };
+</script>
+</body>
+</html>

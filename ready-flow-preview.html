@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>博弈论 · 坐下入局与准备就绪机制</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: #0d1512; color: #e8eef0;
+    font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+    padding: 32px 20px 48px; line-height: 1.6;
+  }
+  .wrap { max-width: 1080px; margin: 0 auto; }
+  h1 { font-size: 22px; letter-spacing: .5px; margin-bottom: 6px; }
+  .sub { font-size: 13px; color: #93a5a0; margin-bottom: 26px; }
+  .gold { color: #e8a33d; }
+
+  .steps { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; margin-bottom: 26px; }
+  .card {
+    background: linear-gradient(170deg, rgba(255,255,255,.06), rgba(255,255,255,.02));
+    border: 1px solid rgba(255,255,255,.09); border-radius: 14px; padding: 16px 18px;
+  }
+  .no { display: inline-block; font-size: 11px; color: #e8a33d; border: 1px solid rgba(232,163,61,.45);
+        border-radius: 999px; padding: 1px 9px; margin-bottom: 8px; }
+  .card h3 { font-size: 15px; margin-bottom: 8px; }
+  .card p { font-size: 13px; color: #a9bdb6; }
+  .card .kv { font-size: 12px; color: #7d8f8a; margin-top: 8px; }
+
+  h2 { font-size: 16px; margin: 30px 0 12px; padding-left: 10px; border-left: 3px solid #e8a33d; }
+
+  /* 结算 + 就绪面板模拟 */
+  .mock {
+    width: 100%; max-width: 560px; margin: 0 auto;
+    background: rgba(4,14,11,.94); border: 1px solid rgba(232,163,61,.35);
+    border-radius: 14px; padding: 16px 18px; box-shadow: 0 10px 34px rgba(0,0,0,.5);
+  }
+  .m-title { font-size: 14px; font-weight: 700; text-align: center; margin-bottom: 10px; }
+  .m-net { font-size: 12px; color: #93a5a0; text-align: center; margin-bottom: 12px; }
+  .ready-list { display: flex; flex-wrap: wrap; justify-content: center; margin-bottom: 10px; }
+  .rrow {
+    display: flex; align-items: center; margin: 0 6px 6px;
+    padding: 3px 10px; border-radius: 999px;
+    background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.1);
+    font-size: 12px; cursor: pointer; user-select: none; transition: .15s;
+  }
+  .rrow.on { background: rgba(232,163,61,.16); border-color: rgba(232,163,61,.55); }
+  .dot { width: 7px; height: 7px; border-radius: 50%; background: rgba(255,255,255,.28); margin-right: 7px; }
+  .rrow.on .dot { background: #e8a33d; }
+  .rrow .st { color: #93a5a0; margin-left: 7px; }
+  .rrow.on .st { color: #e8a33d; }
+  .hint { text-align: center; font-size: 12px; color: #93a5a0; margin-bottom: 12px; min-height: 18px; }
+  .btn {
+    display: block; width: 190px; margin: 0 auto; text-align: center;
+    line-height: 34px; border-radius: 10px; font-size: 14px; font-weight: 700; color: #1a1a1a;
+    background: linear-gradient(160deg, #f4d78a, #d9a441 60%, #b8791f); cursor: pointer;
+  }
+  .btn.ghost { background: rgba(255,255,255,.06); color: #e8a33d; border: 1px solid rgba(232,163,61,.4); }
+  .mock-actions { display: flex; gap: 10px; justify-content: center; margin-top: 14px; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 9px 10px; border-bottom: 1px solid rgba(255,255,255,.08); }
+  th { color: #93a5a0; font-weight: 500; }
+  td.k { color: #e8a33d; white-space: nowrap; width: 150px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>坐下入局 · <span class="gold">准备就绪</span> 机制</h1>
+  <div class="sub">坐下不再插进已开始的牌局；每手结束后全员就绪才发下一手；超时 1 分钟未就绪自动站起</div>
+
+  <div class="steps">
+    <div class="card">
+      <span class="no">1 坐下</span>
+      <h3>下一手才入局</h3>
+      <p>观战中点「坐下加入游戏」，本手仍不参与（轮到你自动弃牌），<b>下一手发牌时</b>才正式落座拿牌。</p>
+      <div class="kv">底部状态行提示：已坐下 · 下一手开始入局</div>
+    </div>
+    <div class="card">
+      <span class="no">2 就绪</span>
+      <h3>全员点「准备就绪」</h3>
+      <p>上一手结算后进入就绪阶段，列出所有在座玩家；<b>全部就绪且不少于 2 人</b>才自动发下一手。</p>
+      <div class="kv">电脑玩家 1.5~4 秒内自动就绪</div>
+    </div>
+    <div class="card">
+      <span class="no">3 超时</span>
+      <h3>1 分钟未就绪自动站起</h3>
+      <p>倒计时 60 秒，未点就绪的人<b>自动站起</b>退出本局（仍留在房间内，可随时再坐下）。</p>
+      <div class="kv">站起后重新计票：其余在座者已就绪且≥2 人则直接发牌</div>
+    </div>
+  </div>
+
+  <h2>结算面板 · 就绪阶段（可点击演示）</h2>
+  <div class="mock">
+    <div class="m-title">牌局结束</div>
+    <div class="m-net">你赢得 120 筹码</div>
+    <div class="ready-list" id="list"></div>
+    <div class="hint" id="hint"></div>
+    <div class="btn" id="btn" onclick="readyMe()">准备就绪（60s）</div>
+    <div class="mock-actions">
+      <div style="font-size:12px;color:#7d8f8a;line-height:34px" id="tick"></div>
+      <div class="btn ghost" style="width:140px" onclick="reset()">重置演示</div>
+    </div>
+  </div>
+
+  <h2>规则与边界</h2>
+  <table>
+    <tr><th>场景</th><th>行为</th></tr>
+    <tr><td class="k">牌局进行中坐下</td><td>不插进当前这手，标记待入局；下一手发牌时落座</td></tr>
+    <tr><td class="k">观战中坐下</td><td>下一手入局；若正处于就绪阶段，会重新计票（你也要点就绪）</td></tr>
+    <tr><td class="k">有人一直不就绪</td><td>60 秒后自动站起，聊天区留一条「超时未准备，已自动站起」</td></tr>
+    <tr><td class="k">站起后人数不足 2</td><td>暂不开牌，提示「人数不足 2 人」，可从菜单「坐下加入游戏」回来</td></tr>
+    <tr><td class="k">游戏时长已到</td><td>直接进入盈亏结算，不再进入就绪阶段</td></tr>
+    <tr><td class="k">中途退出房间</td><td>就绪与站起状态一并写入快照，重新进入后保持一致</td></tr>
+  </table>
+</div>
+
+<script>
+var PLAYERS = [
+  { name: '你', me: true },
+  { name: '林小满' }, { name: '陈默' },
+  { name: '苏晴' }, { name: '赵岩' }, { name: '周叙' }
+];
+var state = {};
+var left = 60;
+var timer = null;
+
+function reset() {
+  state = {};
+  PLAYERS.forEach(function (p, i) { state[i] = false; });
+  left = 60;
+  if (timer) clearInterval(timer);
+  // 电脑玩家随机 1.5~4s 自动就绪
+  PLAYERS.forEach(function (p, i) {
+    if (p.me) return;
+    setTimeout(function () {
+      if (!state[i]) { state[i] = true; draw(); check(); }
+    }, 1500 + Math.random() * 2500);
+  });
+  draw();
+  timer = setInterval(function () {
+    left--;
+    if (left <= 0) {
+      clearInterval(timer);
+      // 超时：未就绪的人自动站起
+      PLAYERS.forEach(function (p, i) { if (!state[i]) state[i] = 'stand'; });
+      draw(true);
+      return;
+    }
+    draw();
+  }, 1000);
+}
+
+function readyMe() { state[0] = true; draw(); check(); }
+
+function check() {
+  var all = PLAYERS.every(function (p, i) { return state[i] === true; });
+  if (all) {
+    if (timer) clearInterval(timer);
+    document.getElementById('hint').textContent = '全部就绪，即将发下一手…';
+  }
+}
+
+function draw(ended) {
+  var list = document.getElementById('list');
+  list.innerHTML = PLAYERS.map(function (p, i) {
+    var s = state[i];
+    var on = s === true;
+    var txt = s === 'stand' ? '已站起' : (on ? '已准备' : '准备中…');
+    if (s === 'stand') return '<div class="rrow" style="opacity:.45"><span class="dot"></span>' + p.name + '<span class="st">已站起</span></div>';
+    return '<div class="rrow ' + (on ? 'on' : '') + '" onclick="toggle(' + i + ')">' +
+      '<span class="dot"></span>' + p.name + '<span class="st">' + txt + '</span></div>';
+  }).join('');
+
+  var ok = PLAYERS.filter(function (p, i) { return state[i] === true; }).length;
+  var live = PLAYERS.filter(function (p, i) { return state[i] !== 'stand'; }).length;
+  var hint = document.getElementById('hint');
+  if (ended) {
+    hint.textContent = live < 2 ? '人数不足 2 人 · 菜单「坐下加入游戏」可重新入局'
+                                : '已就绪 ' + ok + '/' + live + ' · 超时未准备者已自动站起';
+  } else if (ok >= PLAYERS.length) {
+    hint.textContent = '全部就绪，即将发下一手…';
+  } else {
+    hint.textContent = '已就绪 ' + ok + '/' + PLAYERS.length + ' · 超时未准备将自动站起';
+  }
+
+  var btn = document.getElementById('btn');
+  if (state[0] === 'stand') { btn.style.display = 'none'; }
+  else if (state[0] === true) { btn.textContent = '已准备 · 等待其他人…'; btn.style.display = 'block'; btn.style.opacity = .6; }
+  else { btn.textContent = '准备就绪（' + left + 's）'; btn.style.display = 'block'; btn.style.opacity = 1; }
+
+  document.getElementById('tick').textContent = ended ? '倒计时已结束' : ('倒计时 ' + left + 's');
+}
+
+function toggle(i) {
+  if (i === 0) return;
+  if (state[i] === true) state[i] = false; else if (state[i] === false) state[i] = true;
+  draw(); check();
+}
+
+reset();
+</script>
+</body>
+</html>

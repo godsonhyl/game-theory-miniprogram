@@ -1,0 +1,49 @@
+{
+  "miniprogramRoot": "miniprogram/",
+  "compileType": "miniprogram",
+  "appid": "touristappid",
+  "projectname": "game-theory-demo",
+  "libVersion": "3.5.5",
+
+  "setting": {
+    "urlCheck": false,
+    "es6": true,
+    "enhance": true,
+    "postcss": true,
+    "minified": true,
+    "minifyWXSS": true,
+    "minifyWXML": true,
+    "showShadowRootInWxmlPanel": true,
+    "useCompilerPlugins": false,
+    "ignoreUploadUnusedFiles": true,
+    "packNpmManually": false,
+    "packNpmRelationList": [],
+    "coverView": true,
+    "lazyloadPlaceholderEnable": false,
+    "useStaticServer": false,
+    "checkInvalidKey": true,
+    "disableUseStrict": false,
+    "condition": true
+  },
+
+  "packOptions": {
+    "ignore": [
+      { "type": "file", "value": "README-体验版上传.md" },
+      { "type": "file", "value": "test-miniprogram-logic.js" },
+      { "type": "file", "value": "test-cloud-integration.js" },
+      { "type": "file", "value": "package.json" },
+      { "type": "folder", "value": "node_modules" }
+    ],
+    "include": []
+  },
+
+  "condition": {
+    "miniprogram": {
+      "list": [
+        { "name": "首页", "pathName": "pages/index/index", "query": "", "scene": null },
+        { "name": "牌桌（AI 对战）", "pathName": "pages/table/table", "query": "mode=ai", "scene": null },
+        { "name": "我的战绩", "pathName": "pages/profile/profile", "query": "", "scene": null }
+      ]
+    }
+  }
+}

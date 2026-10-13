@@ -1,0 +1,398 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>博弈论 · 牌桌优化预览（参考主流扑克 App）</title>
+<style>
+  :root { --uh: 3.75px; --uw: 8.12px; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; background: #071310; color: #eaf2ee;
+    font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; overflow: hidden; }
+
+  /* 预览台：按 19.5:9 横屏等比缩放，便于在桌面查看真机效果 */
+  #stage { position: absolute; left: 50%; top: 50%; transform-origin: center;
+    width: 812px; height: 375px; transform: translate(-50%,-50%); }
+  #frame { position: absolute; inset: -14px; border: 1px solid rgba(217,164,65,.25);
+    border-radius: 18px; pointer-events: none; }
+  #frame::after { content: "19.5 : 9 横屏"; position: absolute; right: 10px; bottom: -22px;
+    font-size: 11px; color: #6d837b; }
+
+  .toolbar { position: fixed; left: 16px; bottom: 14px; display: flex; gap: 10px; z-index: 200; }
+  .toolbar button { font-size: 12px; padding: 7px 12px; border-radius: 999px; cursor: pointer;
+    background: rgba(255,255,255,.08); color: #cfe0d9; border: 1px solid rgba(255,255,255,.16); }
+  .toolbar button.on { background: rgba(217,164,65,.22); border-color: rgba(217,164,65,.6); color: #ffd98a; }
+
+  /* ---------- 牌桌 ---------- */
+  .table-page { height: 100%; width: 100%;
+    background: radial-gradient(ellipse at 20% 0%, rgba(217,164,65,.06) 0%, transparent 55%),
+      radial-gradient(ellipse at 80% 100%, rgba(47,158,110,.07) 0%, transparent 55%),
+      radial-gradient(ellipse at 50% 30%, #142a25 0%, #0b1613 75%);
+    padding: calc(1.8 * var(--uh)) calc(1.6 * var(--uw));
+    display: flex; flex-direction: row; overflow: hidden; }
+  .main-col { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+  .side-col { width: 250px; flex-shrink: 0; margin-left: calc(1.6 * var(--uw));
+    display: flex; flex-direction: column; min-height: 0; }
+
+  .top-bar { height: calc(6.5 * var(--uh)); flex-shrink: 0; display: flex;
+    align-items: center; justify-content: space-between; margin-bottom: calc(1.4 * var(--uh)); }
+  .tb-left, .tb-right { display: flex; align-items: center; }
+  .tb-title { font-size: calc(3.9 * var(--uh)); font-weight: 700; margin-left: calc(2.2 * var(--uw));
+    background: linear-gradient(120deg, #f4d78a, #d9a441 60%, #b8791f);
+    -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .tb-room { font-size: calc(3 * var(--uh)); color: #cbb27a; margin-left: calc(2.4 * var(--uw));
+    background: rgba(217,164,65,.1); border: 1px solid rgba(217,164,65,.28);
+    padding: calc(0.3 * var(--uh)) calc(2.4 * var(--uw)); border-radius: 999px; }
+  .tb-chip { font-size: calc(2.9 * var(--uh)); padding: calc(0.5 * var(--uh)) calc(3 * var(--uw));
+    border-radius: 999px; background: rgba(47,158,110,.16); border: 1px solid rgba(78,200,146,.4);
+    color: #6fd3a4; font-weight: 600; }
+  .tb-hand { font-size: calc(2.9 * var(--uh)); color: #8fa8a0; margin: 0 calc(2.4 * var(--uw)); }
+  .icon-btn { width: calc(6.2 * var(--uh)); height: calc(6.2 * var(--uh)); border-radius: 50%;
+    display: flex; align-items: center; justify-content: center; cursor: pointer;
+    background: rgba(255,255,255,.07); border: 1px solid rgba(255,255,255,.16); }
+  .icon-btn.gold { background: rgba(217,164,65,.13); border-color: rgba(217,164,65,.4); }
+  .tb-ico { width: calc(3 * var(--uh)); height: calc(3 * var(--uh)); display: block;
+    background: no-repeat center/contain;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23d9a441' stroke-width='1.8' stroke-linecap='round'><circle cx='6' cy='12' r='2.4'/><circle cx='17.6' cy='6' r='2.4'/><circle cx='17.6' cy='18' r='2.4'/><path d='M8.3 10.9l7.3-3.7M8.3 13.1l7.3 3.7'/></svg>"); }
+  .tb-help { font-size: calc(3.4 * var(--uh)); font-weight: 800; color: #cbb27a; }
+
+  .table-area { flex: 1; min-height: 0; }
+  .felt { position: relative; width: 100%; height: 100%;
+    background: radial-gradient(ellipse at 50% 38%, rgba(255,255,255,.05) 0%, transparent 55%),
+      radial-gradient(ellipse at 50% 42%, #256b5c 0%, #1b4d40 45%, #0e2c25 100%);
+    border: calc(0.9 * var(--uh)) solid #241610; border-radius: 50% / 42%;
+    box-shadow: 0 0 0 1px rgba(217,164,65,.35), 0 0 calc(4 * var(--uh)) rgba(217,164,65,.14),
+      inset 0 0 calc(6 * var(--uh)) rgba(0,0,0,.45); }
+  .felt-glow { position: absolute; left: 12%; right: 12%; top: 16%; bottom: 16%;
+    border-radius: 50% / 46%; pointer-events: none;
+    background: radial-gradient(ellipse at 50% 45%, rgba(111,211,164,.1) 0%, transparent 65%);
+    animation: glowBreath 5s ease-in-out infinite; }
+  @keyframes glowBreath { 0%,100% { opacity:.5 } 50% { opacity:1 } }
+
+  .pot-row { position: absolute; top: 22%; left: 50%; transform: translate(-50%,-50%); z-index: 2; }
+  .pot-pill { display: flex; align-items: baseline; background: rgba(5,16,13,.88);
+    border: 1px solid rgba(217,164,65,.45); border-radius: 999px;
+    padding: calc(0.6 * var(--uh)) calc(4 * var(--uw)); }
+  .pot-pill.live { animation: potPulse 2.6s ease-in-out infinite; }
+  @keyframes potPulse { 0%,100% { box-shadow: 0 0 calc(2.4*var(--uh)) rgba(217,164,65,.2) }
+    50% { box-shadow: 0 0 calc(4.4*var(--uh)) rgba(217,164,65,.42) } }
+  .pot-label { font-size: calc(3.1 * var(--uh)); color: #8fa8a0; margin-right: calc(2 * var(--uw)); }
+  .pot-amount { font-size: calc(5.2 * var(--uh)); font-weight: 800;
+    background: linear-gradient(120deg, #ffe4a8, #d9a441); -webkit-background-clip: text;
+    background-clip: text; color: transparent; }
+
+  .board-row { position: absolute; top: 55%; left: 50%; transform: translate(-50%,-50%);
+    display: flex; align-items: center; z-index: 2; }
+  .board { display: flex; align-items: center; }
+  .card { width: calc(11 * var(--uh)); height: calc(15.5 * var(--uh)); border-radius: calc(2.4 * var(--uh));
+    background: linear-gradient(160deg, #fffdf7, #ece5d4); display: flex; flex-direction: column;
+    align-items: center; justify-content: center; border: 1px solid rgba(0,0,0,.14);
+    box-shadow: 0 calc(1 * var(--uh)) calc(2.6 * var(--uh)) rgba(0,0,0,.42);
+    margin-right: calc(1.2 * var(--uw)); flex-shrink: 0;
+    animation: dealIn .38s cubic-bezier(.2,.9,.3,1.2) both; }
+  @keyframes dealIn { from { transform: translateY(calc(-5*var(--uh))) rotate(-6deg) scale(.82); opacity: 0 }
+    to { transform: none; opacity: 1 } }
+  .card .r { font-size: calc(4.6 * var(--uh)); font-weight: 800; line-height: 1; color: #1a1a1a; }
+  .card .s { font-size: calc(3.8 * var(--uh)); line-height: 1.1; color: #1a1a1a; }
+  /* 四色牌：♠黑 / ♣绿 / ♦蓝 / ♥红 */
+  .card.s-spade .r, .card.s-spade .s, .card.s-club .r, .card.s-club .s { color: #1a1a1a; }
+  .card.s-diamond .r, .card.s-diamond .s, .card.s-heart .r, .card.s-heart .s { color: #d0342c; }
+  .four-color .card.s-club .r, .four-color .card.s-club .s { color: #1f9d55; }
+  .four-color .card.s-diamond .r, .four-color .card.s-diamond .s { color: #2f6fd6; }
+  .four-color .card.s-spade .r, .four-color .card.s-spade .s { color: #1a1a1a; }
+  .four-color .card.s-heart .r, .four-color .card.s-heart .s { color: #d0342c; }
+
+  .seat { position: absolute; transform: translate(-50%,-50%); width: 96px;
+    display: flex; flex-direction: column; align-items: center; z-index: 3; }
+  .seat-bet { position: absolute; top: calc(-2.6 * var(--uh)); left: 50%; transform: translateX(-50%);
+    font-size: calc(3 * var(--uh)); color: #ffd98a; background: rgba(5,16,13,.92);
+    padding: calc(0.25*var(--uh)) calc(2.2*var(--uw)); border-radius: 999px;
+    border: 1px solid rgba(217,164,65,.4); white-space: nowrap; z-index: 4;
+    animation: betIn .3s cubic-bezier(.2,.9,.3,1.2) both; }
+  @keyframes betIn { from { transform: translateX(-50%) scale(.6); opacity: 0 }
+    to { transform: translateX(-50%) scale(1); opacity: 1 } }
+  .avatar { position: relative; width: calc(10.5*var(--uh)); height: calc(10.5*var(--uh));
+    border-radius: 50%; display: flex; align-items: center; justify-content: center;
+    font-size: calc(4.4*var(--uh)); font-weight: 800; color: #fff;
+    background: linear-gradient(145deg,#4a6fa5,#2f4d78); border: 2px solid rgba(255,255,255,.25); }
+  .seat.active .avatar { animation: ringPulse 1.6s ease-in-out infinite; }
+  @keyframes ringPulse { 0%,100% { box-shadow: 0 0 0 calc(0.5*var(--uh)) rgba(217,164,65,.95), 0 0 calc(3*var(--uh)) rgba(217,164,65,.55) }
+    50% { box-shadow: 0 0 0 calc(0.9*var(--uh)) rgba(217,164,65,.55), 0 0 calc(7*var(--uh)) rgba(217,164,65,.85) } }
+  .dealer { position: absolute; top: calc(-1.6*var(--uh)); right: calc(-2*var(--uh));
+    width: calc(5.6*var(--uh)); height: calc(5.6*var(--uh)); border-radius: 50%;
+    background: linear-gradient(160deg,#f4d78a,#d9a441); color: #1a1a1a; border: 2px solid #fff;
+    font-size: calc(3*var(--uh)); font-weight: 800; display: flex; align-items: center; justify-content: center; }
+  .timer { position: absolute; bottom: calc(-1*var(--uh)); right: calc(-1.6*var(--uh));
+    width: calc(6*var(--uh)); height: calc(6*var(--uh)); border-radius: 50%;
+    border: 2px solid rgba(15,47,39,.9); display: flex; align-items: center; justify-content: center;
+    box-shadow: 0 0 calc(2*var(--uh)) rgba(217,164,65,.4); overflow: hidden; }
+  .timer-num { width: 76%; height: 76%; border-radius: 50%; background: #e05c4b; color: #fff;
+    font-size: calc(2.8*var(--uh)); font-weight: 700; display: flex; align-items: center; justify-content: center; }
+  .seat-meta { display: flex; align-items: center; margin-top: calc(0.8*var(--uh)); max-width: 96px; overflow: hidden; }
+  .seat-name { font-size: calc(3.5*var(--uh)); color: #eaf2ee; max-width: 58px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .seat-stack { font-size: calc(3.2*var(--uh)); color: #cfe0d9; background: rgba(0,0,0,.45);
+    padding: 0 calc(1.8*var(--uw)); border-radius: 999px; margin-left: calc(1*var(--uw)); white-space: nowrap; }
+  .seat-cards { display: flex; height: calc(11*var(--uh)); align-items: center; margin-top: calc(0.8*var(--uh)); }
+  .card-sm { width: calc(7.6*var(--uh)); height: calc(10.6*var(--uh)); }
+  .card-sm .r { font-size: calc(3.2*var(--uh)); }
+  .card-sm .s { font-size: calc(2.6*var(--uh)); }
+  .card.back { background: repeating-linear-gradient(45deg, rgba(255,255,255,.06) 0 calc(1.6*var(--uh)), transparent calc(1.6*var(--uh)) calc(3.2*var(--uh))),
+      linear-gradient(160deg,#2e5290,#1c3763); border: 2px solid rgba(232,238,245,.85); }
+
+  .action-inner { background: linear-gradient(170deg, rgba(255,255,255,.06), rgba(255,255,255,.03));
+    border: 1px solid rgba(255,255,255,.1); border-radius: calc(3.6*var(--uh));
+    padding: calc(2.4*var(--uh)) calc(3.8*var(--uw)); display: flex; flex-direction: column; }
+  .actions { display: flex; margin-top: calc(1.6*var(--uh)); }
+  .act-btn { flex: 1; margin-right: calc(2.2*var(--uw)); border-radius: calc(2.8*var(--uh));
+    line-height: calc(9*var(--uh)); font-size: calc(3.6*var(--uh)); font-weight: 700;
+    color: #fff; border: none; text-align: center; }
+  .act-btn:last-child { margin-right: 0; }
+  .btn-fold { background: linear-gradient(160deg,#6b7280,#454f5c); }
+  .btn-call { background: linear-gradient(160deg,#35b27b,#1d7a52); }
+  .btn-raise { background: linear-gradient(160deg,#f4d78a,#d9a441 60%,#b8791f); color: #1a1a1a; }
+  .raise-head { display: flex; align-items: center; justify-content: space-between; }
+  .raise-val { font-size: calc(4.4*var(--uh)); font-weight: 800; color: #ffd98a; }
+  .raise-head .text-muted { font-size: calc(3.2*var(--uh)); color: #8fa8a0; }
+
+  .coach-strip { flex-shrink: 0; margin-top: calc(2*var(--uh)); display: flex; align-items: center;
+    background: rgba(217,164,65,.12); border: 1px solid rgba(217,164,65,.35);
+    border-radius: calc(2.4*var(--uh)); padding: calc(1.4*var(--uh)) calc(2.4*var(--uw)); }
+  .coach-text { flex: 1; font-size: calc(2.8*var(--uh)); color: #ffd98a; line-height: 1.35; }
+  .coach-x { font-size: calc(3.4*var(--uh)); color: #cbb27a; padding-left: calc(1.6*var(--uw)); cursor: pointer; }
+
+  .chat-panel { flex-shrink: 0; margin-top: calc(2*var(--uh));
+    background: linear-gradient(170deg, rgba(255,255,255,.06), rgba(255,255,255,.03));
+    border: 1px solid rgba(255,255,255,.1); border-radius: calc(3.2*var(--uh));
+    padding: calc(1.8*var(--uh)) calc(2.6*var(--uw)); }
+  .chat-log { display: flex; flex-direction: column; max-height: calc(11*var(--uh)); overflow: hidden; }
+  .chat-line { font-size: calc(2.9*var(--uh)); color: #cfe0d9; line-height: 1.35;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .chat-empty { font-size: calc(2.7*var(--uh)); color: #6d837b; }
+  .chat-bar { display: flex; flex-wrap: wrap; margin-top: calc(1.2*var(--uh)); }
+  .chat-bar.emoji { margin-top: calc(0.8*var(--uh)); }
+  .chat-quick { font-size: calc(2.6*var(--uh)); color: #eaf2ee; background: rgba(255,255,255,.07);
+    border: 1px solid rgba(255,255,255,.13); border-radius: calc(1.2*var(--uh));
+    padding: calc(0.5*var(--uh)) calc(1.6*var(--uw));
+    margin: calc(0.5*var(--uh)) calc(1*var(--uw)) 0 0; cursor: pointer; }
+  .chat-quick:active { background: rgba(255,255,255,.18); }
+  .chat-emoji { font-size: calc(3.4*var(--uh)); margin-right: calc(1.4*var(--uw)); cursor: pointer; }
+
+  .advice-panel { flex: 1; min-height: 0; margin-top: calc(2*var(--uh)); overflow: hidden;
+    background: linear-gradient(170deg, rgba(255,255,255,.06), rgba(255,255,255,.03));
+    border: 1px solid rgba(255,255,255,.1); border-radius: calc(3.6*var(--uh));
+    padding: calc(2*var(--uh)) calc(3.8*var(--uw)); display: flex; flex-direction: column; }
+  .advice-cap { font-size: calc(3.4*var(--uh)); font-weight: 600; color: #cfe0d9; }
+  .advice-body { border-left: calc(0.9*var(--uw)) solid #4caf7d; padding-left: calc(2.8*var(--uw)); }
+  .advice-text { font-size: calc(3*var(--uh)); color: #cfe0d9; line-height: 1.4; }
+  .advice-metrics { font-size: calc(3*var(--uh)); color: #cfe0d9; margin-bottom: calc(0.8*var(--uh)); }
+  .metric-val { color: #ffd98a; font-weight: 800; margin: 0 calc(1*var(--uw)); }
+
+  .help-mask { position: absolute; inset: 0; background: rgba(0,0,0,.66);
+    display: flex; align-items: center; justify-content: center; z-index: 60; }
+  .help-dialog { width: 520px; background: #12261f; border: 1px solid rgba(217,164,65,.4);
+    border-radius: calc(3.4*var(--uh)); padding: calc(3.4*var(--uh)) calc(3*var(--uw));
+    display: flex; flex-direction: column; box-shadow: 0 calc(2*var(--uh)) calc(6*var(--uh)) rgba(0,0,0,.6); }
+  .help-title { font-size: calc(4.2*var(--uh)); font-weight: 700; color: #d9a441; text-align: center;
+    margin-bottom: calc(1.6*var(--uh)); }
+  .help-row { display: flex; align-items: baseline; padding: calc(0.7*var(--uh)) 0; }
+  .help-name { font-size: calc(3.2*var(--uh)); color: #ffd98a; font-weight: 700; width: 90px; flex: none; }
+  .help-desc { font-size: calc(3*var(--uh)); color: #cfe0d9; flex: 1; }
+  .help-tip { font-size: calc(2.8*var(--uh)); color: #8fa8a0; line-height: 1.4; margin-top: calc(1.4*var(--uh));
+    border-left: calc(0.6*var(--uw)) solid rgba(217,164,65,.5); padding-left: calc(2*var(--uw)); }
+  .help-btn { margin-top: calc(2.6*var(--uh)); line-height: calc(8*var(--uh));
+    font-size: calc(3.4*var(--uh)); font-weight: 700; color: #1a1a1a; border: none; cursor: pointer;
+    background: linear-gradient(160deg,#f4d78a,#d9a441 60%,#b8791f); border-radius: calc(2.4*var(--uh)); }
+
+  .no-anim .card, .no-anim .felt-glow, .no-anim .seat.active .avatar,
+  .no-anim .seat-bet, .no-anim .pot-pill.live { animation: none !important; }
+</style>
+</head>
+<body>
+<div id="stage">
+  <div id="frame"></div>
+  <div class="table-page four-color" id="page">
+    <div class="main-col">
+      <div class="top-bar">
+        <div class="tb-left">
+          <div class="icon-btn"><span class="tb-ico" style="transform:rotate(180deg)"></span></div>
+          <span class="tb-title">好友房</span>
+          <span class="tb-room"># 803657</span>
+        </div>
+        <div class="tb-right">
+          <span class="tb-chip">翻牌</span>
+          <span class="tb-hand">第 7 手</span>
+          <div class="icon-btn gold"><span class="tb-ico"></span></div>
+          <div class="icon-btn" id="helpBtn"><span class="tb-help">?</span></div>
+        </div>
+      </div>
+      <div class="table-area">
+        <div class="felt">
+          <div class="felt-glow"></div>
+          <div class="pot-row"><div class="pot-pill live">
+            <span class="pot-label">底池</span><span class="pot-amount">240</span></div></div>
+          <div class="board-row"><div class="board">
+            <div class="card s-spade"><span class="r">Q</span><span class="s">♠</span></div>
+            <div class="card s-diamond"><span class="r">J</span><span class="s">♦</span></div>
+            <div class="card s-club"><span class="r">9</span><span class="s">♣</span></div>
+            <div class="card s-heart"><span class="r">3</span><span class="s">♥</span></div>
+            <div class="card s-spade"><span class="r">2</span><span class="s">♠</span></div>
+          </div></div>
+
+          <div class="seat" style="left:50%;top:84%">
+            <div class="seat-bet">◆60</div>
+            <div class="avatar">你</div>
+            <div class="seat-meta"><span class="seat-name">你</span><span class="seat-stack">940</span></div>
+            <div class="seat-cards">
+              <div class="card card-sm s-spade"><span class="r">A</span><span class="s">♠</span></div>
+              <div class="card card-sm s-heart"><span class="r">K</span><span class="s">♥</span></div>
+            </div>
+          </div>
+          <div class="seat active" style="left:15%;top:68%">
+            <div class="seat-bet">◆60</div>
+            <div class="avatar">林<div class="timer" style="background:conic-gradient(#d9a441 65%, rgba(255,255,255,.16) 0)"><div class="timer-num">13</div></div></div>
+            <div class="seat-meta"><span class="seat-name">林小满</span><span class="seat-stack">880</span></div>
+            <div class="seat-cards"><div class="card card-sm back"></div><div class="card card-sm back"></div></div>
+          </div>
+          <div class="seat" style="left:15%;top:30%">
+            <div class="avatar">陈<div class="dealer">D</div></div>
+            <div class="seat-meta"><span class="seat-name">陈默</span><span class="seat-stack">1020</span></div>
+            <div class="seat-cards"><div class="card card-sm back"></div><div class="card card-sm back"></div></div>
+          </div>
+          <div class="seat" style="left:50%;top:21%">
+            <div class="avatar">苏</div>
+            <div class="seat-meta"><span class="seat-name">苏晴</span><span class="seat-stack">760</span></div>
+            <div class="seat-cards"><div class="card card-sm back"></div><div class="card card-sm back"></div></div>
+          </div>
+          <div class="seat" style="left:85%;top:30%">
+            <div class="avatar">赵</div>
+            <div class="seat-meta"><span class="seat-name">赵岩</span><span class="seat-stack">1100</span></div>
+            <div class="seat-cards"><div class="card card-sm back"></div><div class="card card-sm back"></div></div>
+          </div>
+          <div class="seat" style="left:85%;top:68%">
+            <div class="avatar">周</div>
+            <div class="seat-meta"><span class="seat-name">周叙</span><span class="seat-stack">920</span></div>
+            <div class="seat-cards"><div class="card card-sm back"></div><div class="card card-sm back"></div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="side-col">
+      <div class="action-inner">
+        <div class="raise-head"><span class="text-muted">加注至</span><span class="raise-val">120</span></div>
+        <div class="actions">
+          <div class="act-btn btn-fold">弃牌</div>
+          <div class="act-btn btn-call">跟注 60</div>
+          <div class="act-btn btn-raise">加注</div>
+        </div>
+      </div>
+
+      <div class="coach-strip" id="coach">
+        <span class="coach-text">💡 轮到你时：看右侧「牌力分析」的胜率与赔率，胜率高于赔率再跟注。</span>
+        <span class="coach-x" id="coachX">×</span>
+      </div>
+
+      <div class="chat-panel">
+        <div class="chat-log" id="chatLog">
+          <span class="chat-line">林小满：打得不错</span>
+          <span class="chat-line">你：🔥</span>
+        </div>
+        <div class="chat-bar">
+          <span class="chat-quick">打得不错</span><span class="chat-quick">运气真好</span>
+          <span class="chat-quick">好牌！</span><span class="chat-quick">跟一手</span>
+        </div>
+        <div class="chat-bar emoji">
+          <span class="chat-emoji">👍</span><span class="chat-emoji">😂</span><span class="chat-emoji">😮</span>
+          <span class="chat-emoji">🔥</span><span class="chat-emoji">💰</span><span class="chat-emoji">😢</span>
+        </div>
+      </div>
+
+      <div class="advice-panel">
+        <span class="advice-cap">牌力分析</span>
+        <div class="advice-body">
+          <div class="advice-metrics">胜率 <span class="metric-val">62%</span>赔率 <span class="metric-val">3.2:1</span></div>
+          <span class="advice-text">顶对好踢脚，牌力中等偏上，建议跟注或小幅加注。</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="help-mask" id="helpMask" style="display:none">
+      <div class="help-dialog">
+        <span class="help-title">怎么打完一手牌</span>
+        <div class="help-row"><span class="help-name">翻牌前</span><span class="help-desc">每人两张底牌，大小盲先行下注</span></div>
+        <div class="help-row"><span class="help-name">翻牌</span><span class="help-desc">发出 3 张公共牌，开始第二轮下注</span></div>
+        <div class="help-row"><span class="help-name">转牌</span><span class="help-desc">第 4 张公共牌，再一轮下注</span></div>
+        <div class="help-row"><span class="help-name">河牌</span><span class="help-desc">第 5 张公共牌，最后一轮下注</span></div>
+        <div class="help-row"><span class="help-name">摊牌</span><span class="help-desc">7 张牌取最大 5 张组合比大小</span></div>
+        <span class="help-tip">提示：牌力越强、赔率越合适越值得加注；不确定时先过牌或弃牌。</span>
+        <button class="help-btn" id="helpClose">知道了</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="toolbar">
+  <button id="t4c" class="on">四色牌</button>
+  <button id="tAnim" class="on">牌桌动画</button>
+  <button id="tCoach" class="on">教练提示</button>
+  <button id="tHelp">规则弹层</button>
+</div>
+
+<script>
+  // 视口变量：与小程序一致，uh = min(宽,高)/100，uw = 宽/100
+  function fit() {
+    const stage = document.getElementById('stage');
+    const scale = Math.min(window.innerWidth / 860, window.innerHeight / 430, 1.6);
+    stage.style.transform = 'translate(-50%,-50%) scale(' + scale + ')';
+    const uw = 812 / 100, uh = Math.min(812, 375) / 100;
+    document.documentElement.style.setProperty('--uw', uw + 'px');
+    document.documentElement.style.setProperty('--uh', uh + 'px');
+  }
+  window.addEventListener('resize', fit); fit();
+
+  const page = document.getElementById('page');
+  const t4c = document.getElementById('t4c');
+  t4c.onclick = () => { page.classList.toggle('four-color'); t4c.classList.toggle('on'); };
+  const tAnim = document.getElementById('tAnim');
+  tAnim.onclick = () => { page.classList.toggle('no-anim'); tAnim.classList.toggle('on'); };
+  const coach = document.getElementById('coach');
+  const tCoach = document.getElementById('tCoach');
+  tCoach.onclick = () => {
+    const on = coach.style.display !== 'none';
+    coach.style.display = on ? 'none' : 'flex';
+    tCoach.classList.toggle('on', !on);
+  };
+  document.getElementById('coachX').onclick = () => { coach.style.display = 'none'; tCoach.classList.remove('on'); };
+
+  const mask = document.getElementById('helpMask');
+  document.getElementById('helpBtn').onclick = () => { mask.style.display = 'flex'; };
+  document.getElementById('helpClose').onclick = () => { mask.style.display = 'none'; };
+  mask.onclick = e => { if (e.target === mask) mask.style.display = 'none'; };
+  const tHelp = document.getElementById('tHelp');
+  tHelp.onclick = () => {
+    const on = mask.style.display === 'flex';
+    mask.style.display = on ? 'none' : 'flex';
+    tHelp.classList.toggle('on', !on);
+  };
+
+  // 聊天互动演示
+  const log = document.getElementById('chatLog');
+  let seq = 0;
+  function push(text) {
+    const line = document.createElement('span');
+    line.className = 'chat-line';
+    line.textContent = text;
+    log.appendChild(line);
+    while (log.children.length > 4) log.removeChild(log.firstChild);
+    seq++;
+  }
+  document.querySelectorAll('.chat-quick').forEach(el => {
+    el.onclick = () => push('你：' + el.textContent);
+  });
+  document.querySelectorAll('.chat-emoji').forEach(el => {
+    el.onclick = () => push('你：' + el.textContent);
+  });
+</script>
+</body>
+</html>
