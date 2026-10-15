@@ -129,7 +129,7 @@
 
   <!-- 加入房间弹窗 -->
   <view class="join-mask" wx:if="{{joinShow}}" bindtap="onJoinCancel">
-    <view class="join-dialog" catchtap>
+    <view class="join-dialog" catchtap="onBlockTap">
       <text class="join-title">加入房间</text>
       <text class="join-sub">输入好友告诉你的 6 位房间号</text>
       <input class="join-input" type="number" maxlength="6" placeholder="房间号"
@@ -143,7 +143,7 @@
 
   <!-- 创建好友房：人数 2–9 逐人可调；时长 10 分钟为一档（可切不限时） -->
   <view class="join-mask" wx:if="{{createShow}}" bindtap="onCreateClose">
-    <view class="join-dialog" catchtap>
+    <view class="join-dialog" catchtap="onBlockTap">
       <text class="join-title">创建好友房</text>
       <text class="join-sub">消耗 1 张房卡 · 创建后规则不可修改</text>
 
@@ -199,7 +199,7 @@
 
   <!-- 房卡：免费获取途径（体验版不做任何货币化） -->
   <view class="join-mask" wx:if="{{cardsShow}}" bindtap="onCardsClose">
-    <view class="join-dialog" catchtap>
+    <view class="join-dialog" catchtap="onBlockTap">
       <text class="join-title">获取房卡</text>
       <text class="join-sub">当前 {{roomCards}} 张 · 创建好友房消耗 1 张，AI 对战不消耗</text>
 
@@ -244,7 +244,7 @@
 
   <!-- 牌桌设置（参考主流扑克 App 的 Table Appearance） -->
   <view class="join-mask" wx:if="{{setShow}}" bindtap="onSettingsClose">
-    <view class="join-dialog" catchtap>
+    <view class="join-dialog" catchtap="onBlockTap">
       <text class="join-title">牌桌设置</text>
       <text class="join-sub">四色牌与反馈效果，下次进入牌桌生效</text>
 

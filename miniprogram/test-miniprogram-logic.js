@@ -1031,6 +1031,18 @@ while (guard++ < 400) {
     ok(toasts.filter(t => t === '测试文案A').length === 2, '节流窗口过后恢复提示');
   }
 
+  /* ---------- 弹窗 catchtap 显式化 + 对手计时环残值（评审 MEDIUM UI 细节回归）---------- */
+  {
+    // 裸 catchtap（无属性值）吞冒泡是「无保证行为」，显式绑定空函数才随基础库稳定
+    ok(!/catchtap>/.test(wxmlSrc) && !/"catchtap"|catchtap=""/.test(wxmlSrc),
+      'table.wxml 无裸 catchtap（全部显式绑定了处理函数）');
+    ok(/onBlockTap\(\)\s*\{\s*\/\* 有意留空/.test(tableSrc),
+      '显式空处理函数 onBlockTap 已定义');
+    const idxWxml = require('fs').readFileSync(
+      path.join(__dirname, 'pages', 'index', 'index.wxml'), 'utf8');
+    ok(!/catchtap>/.test(idxWxml), 'index.wxml 同样无裸 catchtap');
+  }
+
   /* ---------- 输出 ---------- */
   console.log('\n' + '='.repeat(52));
   if (failures.length === 0) {

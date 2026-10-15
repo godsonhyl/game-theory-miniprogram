@@ -254,7 +254,7 @@
 
   <!-- 入座买入（WePoker 式）：点空位 → 选买入额 → 入座 -->
   <view class="help-mask" wx:if="{{buyInShow}}" bindtap="cancelBuyIn">
-    <view class="buyin-dialog" catchtap>
+    <view class="buyin-dialog" catchtap="onBlockTap">
       <text class="buyin-title">坐下 · {{buyInSeat + 1}} 号位</text>
       <text class="buyin-sub">选择带入筹码（盲注 10/20，1000 ≈ 50BB）</text>
       <view class="buyin-opts">
@@ -284,7 +284,7 @@
 
   <!-- 本局结束：时长到点后的全员盈亏结算 -->
   <view class="help-mask" wx:if="{{summary}}">
-    <view class="summary-dialog" catchtap>
+    <view class="summary-dialog" catchtap="onBlockTap">
       <text class="summary-title">{{summary.title}}</text>
       <text class="summary-sub">{{summary.sub}}</text>
 
@@ -315,7 +315,7 @@
        逐人显示摊牌手牌 + 牌型 + 本手净盈亏；关闭后停留在当前阶段
        （亮牌展示期 → 进就绪；就绪期 → 留在就绪条，不重置计票）。 -->
   <view class="help-mask" wx:if="{{resultModal}}">
-    <view class="summary-dialog" catchtap>
+    <view class="summary-dialog" catchtap="onBlockTap">
       <text class="summary-title">{{resultModal.title}}</text>
       <text class="summary-sub">{{resultModal.netText}}</text>
 
@@ -346,7 +346,7 @@
 
   <!-- 新手引导：下注轮次与规则（等待室/牌桌通用） -->
   <view class="help-mask" wx:if="{{helpShow}}" bindtap="onHelpClose">
-    <view class="help-dialog" catchtap>
+    <view class="help-dialog" catchtap="onBlockTap">
       <text class="help-title">怎么打完一手牌</text>
       <view class="help-row" wx:for="{{helpRows}}" wx:key="name">
         <text class="help-name">{{item.name}}</text>

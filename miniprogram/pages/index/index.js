@@ -89,6 +89,12 @@ Page({
     this.setData({ createShow: false });
   },
 
+  /**
+   * 弹窗内容层的点按吞没（catchtap 绑定目标）：拦住冒泡防误触遮罩关闭。
+   * 裸 catchtap 是无保证写法（评审 2026-10-15 MEDIUM），显式绑定空函数才稳。
+   */
+  onBlockTap() { /* 有意留空：只吞冒泡 */ },
+
   /** 设定限定人数，夹到 2–9 */
   setMax(n) {
     const v = Number(n);

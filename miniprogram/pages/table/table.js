@@ -403,6 +403,13 @@ Page({
     try { sfx.unlock(); } catch (e) { /* 音效不可用也不能影响牌局 */ }
   },
 
+  /**
+   * 弹窗内容层的点按吞没：拦住冒泡，防止误触底下的遮罩关闭（bindtap=onHelpClose 等）。
+   * 裸 catchtap（无属性值）在 WXML 校验里属「无保证行为」——空属性是否生效随
+   * 基础库版本漂移（评审 2026-10-15 MEDIUM），显式绑定空函数才是稳定写法。
+   */
+  onBlockTap() { /* 有意留空：只吞冒泡，不做任何事 */ },
+
   /** 视口尺寸变化（转屏 / 分窗）时重算布局变量 */
   onResize(res) {
     this.updateViewport(res);
