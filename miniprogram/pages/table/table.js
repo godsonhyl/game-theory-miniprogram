@@ -2008,26 +2008,43 @@ Page({
     else if (v === 'pot') target = Math.min(legal.maxRaiseTo, Math.max(legal.minRaiseTo, curBet * 2 + pot));
     else target = legal.maxRaiseTo;
 
-    this.setData({ raiseTo: Math.round(target), raisePreset: v });
-  },
-
-  onRaiseChange(e) {
-    this.setData({ raiseTo: e.detail.value, raisePreset: '' });
+    this.setRaiseTo(target, v);
   },
 
   // 展开/收起自定义下注面板
+  /**
+   * 统一设置下注金额：连同按钮文案派生的 raiseSubmit / raiseAllIn 一起写入。
+   *
+   * ⚠️ 必须走这个方法，不能直接 setData({raiseTo})：
+   * 加注按钮读的是 raiseSubmit / raiseAllIn（不是 raiseTo），而这两个字段
+   * 若只在 render() 里算，滑杆/输入框改动就不触发 render，按钮文案会一直
+   * 停在上一帧的旧值（曾出现：滑杆拉到 346，按钮仍显示「加注 20」）。
+   * 口径与 onRaise 的提交钳制严格一致：低于最小按最小，达上限算全下。
+   */
+  setRaiseTo(amt, preset) {
+    const l = this.data.legal || {};
+    const min = Number(l.minRaiseTo) || 0;
+    const max = Number(l.maxRaiseTo) || 0;
+    const v = Math.round(Number(amt) || 0);
+    const submit = min ? Math.max(min, v) : v;
+    const patch = { raiseTo: v, raiseSubmit: submit, raiseAllIn: !!(max && submit >= max) };
+    if (preset !== undefined) patch.raisePreset = preset;
+    this.setData(patch);
+    return patch;
+  },
+
   onCustomTap() {
     const legal = this.data.legal;
     if (!legal || !legal.canRaise) return;
     const open = !this.data.raiseCustom;
     // 展开时若当前金额低于最小下注，自动对齐到最小（避免直接全下 0 这种非法值）
     const raiseTo = open && this.data.raiseTo < legal.minRaiseTo ? legal.minRaiseTo : this.data.raiseTo;
-    this.setData({ raiseCustom: open, raisePreset: open ? 'custom' : this.data.raisePreset, raiseTo: Math.round(raiseTo) });
+    this.setRaiseTo(raiseTo, open ? 'custom' : this.data.raisePreset);
   },
 
   // 滑杆拖动：0 ~ MAX 任意值（MAX = 全下）
   onRaiseSlider(e) {
-    this.setData({ raiseTo: Math.round(e.detail.value), raisePreset: 'custom' });
+    this.setRaiseTo(e.detail.value, 'custom');
   },
 
   // 数字输入：只做清洗与上限。不在输入过程中抬到下限 —— 否则想输「500」时
@@ -2039,14 +2056,14 @@ Page({
     let v = parseInt(e.detail.value, 10);
     if (isNaN(v) || v < 0) v = 0;
     if (max && v > max) v = max;
-    this.setData({ raiseTo: v, raisePreset: 'custom' });
+    this.setRaiseTo(v, 'custom');
   },
 
   // 失焦：把低于最小加注的值补到下限，保证界面上显示的数字始终合法
   onRaiseBlur() {
     const l = this.data.legal || {};
     const min = l.minRaiseTo || this.data.raiseMin || 0;
-    if (min && this.data.raiseTo < min) this.setData({ raiseTo: min, raisePreset: 'custom' });
+    if (min && this.data.raiseTo < min) this.setRaiseTo(min, 'custom');
   },
 
   // 收起自定义面板 → 恢复档位条（两者互斥，收起即回到「最小/½池/底池/全下」）
@@ -2054,18 +2071,18 @@ Page({
     this.setData({ raiseCustom: false });
   },
 
-  onCustomMin() { const l = this.data.legal; if (l) this.setData({ raiseTo: l.minRaiseTo, raisePreset: 'custom' }); },
+  onCustomMin() { const l = this.data.legal; if (l) this.setRaiseTo(l.minRaiseTo, 'custom'); },
   onCustomHalf() {
     const l = this.data.legal; if (!l) return;
     const target = Math.min(l.maxRaiseTo, Math.max(l.minRaiseTo, game.currentBet * 2 + game.potTotal() * 0.5));
-    this.setData({ raiseTo: Math.round(target), raisePreset: 'custom' });
+    this.setRaiseTo(target, 'custom');
   },
   onCustomPot() {
     const l = this.data.legal; if (!l) return;
     const target = Math.min(l.maxRaiseTo, Math.max(l.minRaiseTo, game.currentBet * 2 + game.potTotal()));
-    this.setData({ raiseTo: Math.round(target), raisePreset: 'custom' });
+    this.setRaiseTo(target, 'custom');
   },
-  onCustomMax() { const l = this.data.legal; if (l) this.setData({ raiseTo: l.maxRaiseTo, raisePreset: 'custom' }); },
+  onCustomMax() { const l = this.data.legal; if (l) this.setRaiseTo(l.maxRaiseTo, 'custom'); },
 
   onFold() {
     if (!this.data.isMyTurn) return;

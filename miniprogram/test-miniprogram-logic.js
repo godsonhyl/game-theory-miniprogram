@@ -706,9 +706,6 @@ while (guard++ < 400) {
   ok(/onRaiseInput\(e\) \{[\s\S]{0,400}?if \(isNaN\(v\) \|\| v < 0\) v = 0;/.test(tableSrc) &&
     /onRaiseInput[\s\S]{0,400}?\n  \},/.test(tableSrc),
     '自定义下注：输入过程中只清洗与钳上限，不抢先抬到下限（否则无法连续输入目标值）');
-  ok(/\n  onRaiseBlur\(\)/.test(tableSrc) &&
-    /onRaiseBlur[\s\S]{0,300}?this\.data\.raiseTo < min[\s\S]{0,80}?raiseTo: min/.test(tableSrc),
-    '自定义下注：失焦时把低于最小加注的值补到下限（界面显示始终合法）');
   // 滑杆范围 = 最小 ~ 全下上限，按钮文案与实际提交同口径
   ok(/min="\{\{raiseMin\}\}" max="\{\{raiseMax\}\}"/.test(wxmlSrc),
     'WXML：滑杆范围 最小加注 ~ 最大（全下金额）');
@@ -770,6 +767,71 @@ while (guard++ < 400) {
     'table 启动 300ms 音效事件泵（对手在计时器路径的动作也能发声）');
   ok(/stopSfxPump\(\)/.test(tableSrc), '音效泵有明确的停止生命周期（onUnload 调用）');
   ok(/this\.data\.soundOn/.test(tableSrc), '音效开关在事件泵内逐次判断（切换即时生效）');
+
+  /* ---------- 回归：自定义金额必须同步加注按钮文案 ----------
+   * 现象（真机）：自定义滑杆拉到 346，底部按钮仍显示「加注 20」。
+   * 根因：raiseSubmit / raiseAllIn 只在 render() 里派生，而滑杆/输入框/快捷档
+   *      只 setData({raiseTo}) 不触发 render → 按钮文案永远停在上一帧旧值。
+   * 修法：所有改金额的入口统一走 setRaiseTo()，同帧写入三个字段。 */
+  pageCtx.onLoad();
+  pageCtx.chooseSeat({ currentTarget: { dataset: { seat: 2 } } });
+  pageCtx.confirmBuyIn({ currentTarget: { dataset: { amt: '1000' } } });
+  pageCtx.startGame();
+  // AI 用真实 setTimeout 推进，异步轮询到轮到我且可加注
+  {
+    const t0 = Date.now();
+    while (Date.now() - t0 < 15000 &&
+           !(dataStore.isMyTurn && dataStore.legal && dataStore.legal.canRaise)) {
+      await new Promise(r => setTimeout(r, 50));
+    }
+  }
+  ok(dataStore.isMyTurn === true && !!(dataStore.legal && dataStore.legal.canRaise),
+    '异步推进到「轮到我且可加注」（验证加注按钮文案的前置条件）');
+  if (dataStore.isMyTurn && dataStore.legal && dataStore.legal.canRaise) {
+    const minT = dataStore.legal.minRaiseTo, maxT = dataStore.legal.maxRaiseTo;
+    pageCtx.onRaiseSlider({ detail: { value: 346 } });
+    ok(dataStore.raiseTo === 346, '滑杆拖到 346 → raiseTo 同步为 346');
+    ok(dataStore.raiseSubmit === 346,
+      '滑杆拖到 346 → 加注按钮文案同步为 346（曾停在旧值 20），实际 ' + dataStore.raiseSubmit);
+    ok(dataStore.raiseAllIn === false, '346 未达上限 → 按钮显示「加注 346」而非「全下」');
+    pageCtx.onCustomHalf();
+    ok(dataStore.raiseSubmit === dataStore.raiseTo && dataStore.raiseTo >= minT,
+      '点「½池」→ 按钮文案与金额同步（' + dataStore.raiseTo + '）');
+    pageCtx.onCustomMin();
+    ok(dataStore.raiseSubmit === minT, '点「最小」→ 按钮文案同步为 ' + minT);
+    pageCtx.onCustomMax();
+    ok(dataStore.raiseAllIn === true && dataStore.raiseSubmit === maxT,
+      '点「最大」→ 按钮切换为「全下」（' + dataStore.raiseSubmit + ' = max ' + maxT + '）');
+    pageCtx.onRaiseInput({ detail: { value: '0' } });
+    ok(dataStore.raiseTo === 0 && dataStore.raiseSubmit === minT,
+      '输入 0 → 输入框保留 0，但按钮按最小加注 ' + minT + ' 显示（与提交口径一致）');
+    pageCtx.onRaiseBlur();
+    ok(dataStore.raiseTo === minT && dataStore.raiseSubmit === minT,
+      '失焦 → 补正到最小加注 ' + minT + '，按钮同步');
+    pageCtx.onCustomClose();
+    ok(dataStore.raiseCustom === false, '「收起」→ 回到档位条');
+  }
+
+  /* ---------- 静态守卫：金额入口全部收口到 setRaiseTo ---------- */
+  ok(/setRaiseTo\(amt, preset\)/.test(tableSrc),
+    '存在统一入口 setRaiseTo()：一次写入 raiseTo + raiseSubmit + raiseAllIn');
+  ok(/setRaiseTo[\s\S]{0,400}?raiseSubmit: submit, raiseAllIn:/.test(tableSrc),
+    'setRaiseTo 同帧写入按钮文案派生字段（不依赖 render 触发）');
+  ok(!/setData\(\{ raiseTo/.test(tableSrc),
+    '所有改下注金额的入口均已收口到 setRaiseTo（无裸 setData({raiseTo}) 漏同步）');
+  const raiseEntry = (tableSrc.match(/setRaiseTo\(/g) || []).length;
+  ok(raiseEntry >= 10, '金额设置入口全部走 setRaiseTo（1 定义 + 9 调用），实际 ' + raiseEntry);
+  ['onCustomTap', 'onRaiseSlider', 'onRaiseInput', 'onRaiseBlur', 'onCustomMin',
+    'onCustomHalf', 'onCustomPot', 'onCustomMax', 'onPresetTap'].forEach(fn => {
+    const body = (tableSrc.match(new RegExp('\\n  ' + fn + '\\([\\s\\S]*?\\n  \\},')) || [''])[0];
+    ok(!/setData\(\{ raiseTo/.test(body),
+      '自定义下注：' + fn + ' 不直写 raiseTo（按钮文案必然同步）');
+  });
+  ok(/Math\.max\(legal\.minRaiseTo, Math\.round\(this\.data\.raiseTo \|\| 0\)\)/.test(tableSrc),
+    'onRaise 钳制口径与按钮文案一致：低于最小加注按最小值提交');
+  ok(/raiseAllIn \? '全下'/.test(wxmlSrc), 'WXML：加注按钮按 raiseAllIn 显示「全下」');
+  ok(!/onRaiseChange/.test(tableSrc) && !/onRaiseChange/.test(wxmlSrc),
+    '旧滑杆回调 onRaiseChange 无死代码、无悬空绑定');
 
   /* ---------- 输出 ---------- */
   console.log('\n' + '='.repeat(52));
