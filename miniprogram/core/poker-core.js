@@ -811,6 +811,11 @@
       game.players.forEach(p => {
         p.hole = []; p.folded = false; p.allIn = false;
         p.bet = 0; p.committed = 0; p.actedBet = null; p.canRaise = true;
+        // 0 筹码不参与本手：不发牌、不进行动轮、不参与摊牌——否则一手 check 到底
+        // 就能 0 成本白抢池（评审 2026-10-15 MEDIUM）。不走 sittingOut：那是
+        // 「站起观战」的跨手语义（由坐下动作清除），这里借用 folded 更安全——
+        // 演示态补筹（table.js 每手把 <20 拉回 1000）后下一手自然复位重新入局。
+        if (p.stack <= 0) p.folded = true;
       });
       game.board = [];
       game.totalPot = 0;
@@ -858,12 +863,15 @@
       const sbPaid = postBlind(sbSeat, game.sb);
       const bbPaid = postBlind(bbSeat, game.bb);
 
-      // 发底牌：从按钮左手第一位开始，每人两张，轮两轮
+      // 发底牌：从按钮左手第一位开始，每人两张，轮两轮。
+      // 0 筹码座位刚在上面被标 folded（不参与本手）→ 跳过发牌，保持
+      // 「不过牌桌成本」的语义（发了他反而会在 UI 渲染出两张看不见的暗牌）。
       const dealStart = seats.indexOf(btnSeat);
       for (let round = 0; round < 2; round++) {
         for (let k = 1; k <= seats.length; k++) {
           const seat = seats[(dealStart + k) % seats.length];
-          game.seatOf(seat).hole.push(game.deck.pop());
+          const dp = game.seatOf(seat);
+          if (!dp.folded) dp.hole.push(game.deck.pop());
         }
       }
 

@@ -386,6 +386,30 @@ console.log('\n【7】压力测试：2000 手全自动对局');
   });
   ok(d.action !== 'raise', 'canRaise=false 时 AI 不返回加注，实际 ' + d.action);
 }
+// 4) 零筹码玩家不参与发牌（评审 MEDIUM：0 筹码玩家曾照发牌摊牌白抢池）
+{
+  const gz = P.createGame({
+    players: [mkPlayer(0, 0), mkPlayer(1, 1000), mkPlayer(2, 1000)],
+    sb: 10, bb: 20, dealerSeat: 2, seed: 'zero'
+  });
+  const rz = gz.startHand();
+  ok(rz.ok, '零筹码玩家在场时仍可开局（2 名足够筹码者）');
+  eq(gz.players[0].hole.length, 0, '0 筹码座位不发底牌（等同观战）');
+  ok(gz.activePlayers().every(p => p.stack > 0), '行动者不含 0 筹码座位');
+  // 打完整手后 0 筹码座位也绝不该出现在摊牌亮牌名单
+  let gzStep = 0;
+  while (!gz.result && gzStep++ < 200) {
+    const s = gz.actionSeat;
+    if (s === -1) break;
+    const legalZ = gz.legalActions(s);
+    if (!legalZ) break;
+    if (legalZ.canCheck) gz.act(s, 'check');
+    else if (legalZ.canCall) gz.act(s, 'call');
+    else break;
+  }
+  ok(gz.showdownReveal[0] === undefined, '0 筹码座位不进摊牌亮牌名单');
+  eq(gz.players[0].stack, 0, '0 筹码座位筹码不被这手牌改变');
+}
 
 let hands = 0;
 const errors = [];
