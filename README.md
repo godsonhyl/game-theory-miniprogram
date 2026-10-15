@@ -53,11 +53,17 @@ advise(game, seat) {
 
 ## 1. 目录结构
 
+> 2026-10-15 同步：下图为**规划稿**。当前实际落地为双树结构——引擎 + 测试 + 打包脚本在仓库根，
+> 小程序源码在 `miniprogram/` 子目录；`server/` 尚未创建（权威逻辑现跑在房主端，
+> 服务端化蓝图见 `docs/服务端化蓝图.md`）；实际页面只有 index / profile / table 三个，
+> 实际 utils 见 `miniprogram/utils/`（cloud / auth / room-sync / room-snapshot / settings / sfx 等）。
+> 现状口径以 `CLAUDE.md` 为准。
+
 ```
 poker/
 ├── core/
-│   └── poker-core.js          # 纯逻辑引擎（已通过 128 项自测）
-├── test-core.js               # 测试套件
+│   └── poker-core.js          # 纯逻辑引擎（现通过 182 项自测，见 §6）
+├── test-core.js               # 测试套件（现 182 项断言，见 §6）
 ├── index.html                 # 可玩原型（浏览器）
 ├── server/                    # 服务端（Node.js + TypeScript）
 │   ├── src/
@@ -77,30 +83,37 @@ poker/
 │   │       ├── mysql.ts        # 持久化
 │   │       └── redis.ts        # 牌局热状态缓存
 │   └── package.json
-└── miniprogram/                # 微信小程序
+└── miniprogram/                # 微信小程序（真正的上传源，见 CLAUDE.md「双树结构」）
     ├── app.js / app.json / app.wxss
     ├── core/
-    │   └── poker-core.js       # ★ 直接复用，无需转译
+    │   └── poker-core.js       # ★ 直接复用，无需转译（与根目录引擎是两份 identical 拷贝）
     ├── pages/
-    │   ├── index/              # 首页：好友房 / AI 对战 / 战绩
-    │   ├── lobby/              # 房间列表与创建
-    │   ├── table/              # 牌桌（核心页面）
-    │   │   ├── index.wxml
-    │   │   ├── index.wxss      # 横屏适配
-    │   │   └── index.js
-    │   ├── analysis/           # 牌力分析 / 复盘
+    │   ├── index/              # 首页：好友房 / AI 对战 / 我的房间 / 签到领卡
+    │   ├── table/              # 牌桌（核心页面，含等待室）
     │   └── profile/            # 个人数据与统计
     └── utils/
-        ├── ws.js               # WebSocket 封装（自动重连）
-        └── auth.js
+        ├── cloud.js + auth.js  # WorkBuddy 云 SDK 接入 / 登录与房卡
+        ├── room-sync.js        # 好友房跨设备同步（云端表轮询模型，见 CLAUDE.md）
+        ├── room-snapshot.js    # 退出续局（本地缓存）
+        ├── settings.js         # 本地设置存储
+        └── sfx.js              # WebAudio 实时合成音效（零资源文件）
 ```
 
 **关键点**：`core/poker-core.js` 采用 UMD 包装（`module.exports` + 全局挂载），
-小程序侧 `require('../../core/poker-core.js')` 可直接使用，**零转译成本**。
+小程序侧 `require('../../core/poker-core.js')` 可直接使用，**零转译成本**
+（⚠️ 但因此引擎有两份 identical 拷贝——根目录与 `miniprogram/core/` 各一份，
+改任何一份必须同步另一份，`cmp` 确认一致；详见 CLAUDE.md「双树结构」）。
 
 ---
 
-## 2. 服务端权威架构
+## 2. 服务端权威架构（规划——现状为房主端权威 + 云端表轮询）
+
+> **2026-10-15 现状**：下章为目标架构。当前实现是过渡态——牌局权威逻辑跑在
+> 房主端（`pages/table/table.js`），好友端镜像房主广播的快照，跨设备同步走
+> `utils/room-sync.js` 的云端表轮询模型。已知边界（快照含真人底牌、战绩
+> 客户端自报、签到客户端时钟等）与迁移清单见 `docs/服务端化蓝图.md`。
+> `table_snapshot` 的底牌脱敏（他人手牌摊牌前为 `null`）是服务端化后
+> 才能兑现的能力，当前快照含全场底牌。
 
 ### 2.1 为什么必须服务端权威
 
@@ -152,7 +165,12 @@ const rng = createRng(seed);          // xorshift128+
 
 ---
 
-## 3. 实时通信
+## 3. 实时通信（规划——现状为云端表轮询，非 WebSocket）
+
+> **2026-10-15 现状**：`server/` 未创建，小程序端也没有 `utils/ws.js`。
+> 当前同步是 `room-sync.js` 的轮询模型：动作上行写云端表自己行，
+> 房主 1.5s 轮询消化，快照随帧广播；好友端 1.5s 轮询拉快照镜像。
+> 本章 WebSocket 方案是服务端化（§2）的配套规划。
 
 ### 3.1 方案选型
 
@@ -186,6 +204,8 @@ interface ServerMsg {
 
 `table_snapshot` 的内容直接由 `game.snapshot()` 提供，**注意它已做底牌脱敏**：
 他人手牌在摊牌前为 `null`，仅本人可见。
+（⚠️ 这是服务端架构下的能力；当前房主端快照**含全场真人底牌**，
+客户端掩码不可行的原因与迁移路径见 `docs/服务端化蓝图.md`。）
 
 ### 3.3 断线重连
 
@@ -261,43 +281,37 @@ CREATE TABLE `record` (
 > 原型里我用的就是 `transform + keyframes`，
 > 见 `index.html` 的 `.card.deal` 与 `dealIn` 动画。
 
-### 5.2 复用引擎
+### 5.2 复用引擎的原则
 
-```javascript
-// pages/table/index.js
-const P = require('../../core/poker-core.js');   // 零转译
+客户端引擎仅用于「预渲染」与「合法性预校验」，绝不用它的状态做
+最终判定——权威端（当前为房主端，服务端化后为服务端）返回才为准。
 
-// ⚠️ 关键原则：客户端引擎仅用于「预渲染」与「合法性预校验」，
-// 绝不用它的状态做最终判定——那必须以服务端返回为准。
-function legalPreview(seat) {
-  return localGame.legalActions(seat);
-}
+### 5.3 客户端接入的云服务（WorkBuddy SDK，现状）
+
+```js
+// utils/cloud.js —— 表结构（RLS 按用户隔离）：
+//   poker_profiles / poker_records  按用户隔离读写
+//   poker_rooms                     按房号公开读
+//   poker_room_seats                好友房座位同步（每真人一行）
+// 登录：wx.login → signInWithWechat(code, appid)，客户端不接触 AppSecret。
+// 安全红线：禁止手写 wx.request 访问 /.cloud/**（绕过凭证注入）；
+//          insert 不得携带 owner_id（服务端 auth.uid() 决定）。
+// 红线由 npm run test:cloud 静态校验。
 ```
 
-### 5.3 登录与房卡
+### 5.4 登录与房卡
 
-```javascript
-// 静默授权获取 openid
-wx.login({
-  success: res => {
-    wx.request({
-      url: `${API_BASE}/auth/login`,
-      method: 'POST',
-      data: { code: res.code },     // 交给服务端换 openid，客户端不接触
-      success: r => { /* r.data.token */ }
-    });
-  }
-});
-```
-
-房卡扣减**必须服务端完成**。客户端只发「开房请求」，
-服务端校验余额 → 事务扣减 → 创建房间。客户端禁止自行判断余额。
+房卡扣减**必须服务端完成**（规划）。**当前客户端实现**（`utils/auth.js`）：
+扣减走乐观锁（`.eq()` 条件更新），签到/对局奖励/战绩累计均已做客户端层
+并发收口（置标记先行 + 冲突重读重试）；但 total_hands 仍客户端自报、
+签到日期仍客户端时钟——完整事务化见 `docs/服务端化蓝图.md`，接支付前照单实施。
 
 ---
 
 ## 6. 引擎已验证的能力
 
-`test-core.js` 共 **128 项断言全部通过**，覆盖：
+`test-core.js` 现 **182 项断言全部通过**（初版 128 项，2026-10-15 评审后增至 182：
+新增轮子优先评估器回归 9 项、AI 决策健全性 5 项、零筹码入局等），覆盖：
 
 | 能力 | 测试点 | 关键回归 |
 |---|---|---|
@@ -374,15 +388,18 @@ wx.login({
 
 ---
 
-## 9. 本地试玩
+## 9. 本地试玩与测试
 
 ```bash
-cd poker
+cd <仓库根>                       # 「 poker 目录」即本仓库根（见 CLAUDE.md 双树结构）
 python -m http.server 8899        # 或任意静态服务器
 # 浏览器打开 http://127.0.0.1:8899/index.html
 
 # 跑引擎自测
-node test-core.js                 # 预期输出「全部通过：128 项断言 ✓」
+node test-core.js                 # 预期输出「全部通过：182 项断言 ✓」
+
+# 跑全量测试（9 套件：引擎/牌桌页/牌面/云规范/首页/跨设备同步/SDK/WXML/打包规则）
+npm test                          # 不装微信开发者工具也能全过（mock wx/Page）
 ```
 
 原型已实现：完整牌局规则、边池、5 个 AI 对手、发牌/下注动画、
