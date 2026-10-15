@@ -380,19 +380,24 @@
     for (let i = 0; i < levels.length; i++) {
       const lv = levels[i];
       let amount = 0;
+      const contribs = {};
       players.forEach(p => {
-        amount += Math.min(p.committed, lv) - Math.min(p.committed, prev);
+        const slice = Math.min(p.committed, lv) - Math.min(p.committed, prev);
+        if (slice > 0) { contribs[p.seat] = (contribs[p.seat] || 0) + slice; amount += slice; }
       });
       const eligible = players
         .filter(p => !p.folded && p.committed >= lv)
         .map(p => p.seat).sort((a, b) => a - b);
-      if (amount > 0 && eligible.length > 0) {
-        raw.push({ amount, eligible, level: lv });
+      // 有出资的层一律保留（含资格为空的异常层）：由摊牌/结算侧的防御性退款
+      // 按出资原路退回，绝不允许整层随资格判断被静默丢弃 → 筹码凭空蒸发。
+      if (amount > 0) {
+        raw.push({ amount, eligible, contribs, level: lv });
       }
       prev = lv;
     }
 
-    // 合并相邻且资格相同的层（分层算法会为同一资格集合切成多层）
+    // 合并相邻且资格相同的层（分层算法会为同一资格集合切成多层）。
+    // ⚠️ contribs 必须同步累加——退款兜底按出资退回时口径才对得上。
     const merged = [];
     raw.forEach(pot => {
       const last = merged[merged.length - 1];
@@ -400,8 +405,14 @@
         last.eligible.every((s, i) => s === pot.eligible[i])) {
         last.amount += pot.amount;
         last.level = pot.level;
+        Object.keys(pot.contribs).forEach(s => {
+          last.contribs[s] = (last.contribs[s] || 0) + pot.contribs[s];
+        });
       } else {
-        merged.push({ amount: pot.amount, eligible: pot.eligible.slice(), level: pot.level });
+        merged.push({
+          amount: pot.amount, eligible: pot.eligible.slice(),
+          contribs: Object.assign({}, pot.contribs), level: pot.level
+        });
       }
     });
     return merged;
@@ -984,6 +995,9 @@
         const seat = seats[(startIdx + k + seats.length) % seats.length];
         const p = game.seatOf(seat);
         if (p.folded || p.allIn) continue;
+        // 中途站起（牌局进行中被置 sittingOut）：等同弃牌跳过，绝不能把行动权
+        // 交给 legalActions 会返回 null 的人——那会让整手牌永久卡死。
+        if (p.sittingOut) { p.folded = true; game.logMsg(`座位${seat} ${p.name} 中途站起，按弃牌处理`); continue; }
         if (p.bet < game.currentBet || p.actedBet !== game.currentBet) { next = seat; break; }
       }
 
@@ -1013,6 +1027,8 @@
 
     function nextStreet() {
       const seats = game.inHandPlayers().map(p => p.seat).sort((a, b) => a - b);
+      // 庄位可能因中途站起被移出 seats（btnIdx === -1）：从座位表头顺延，
+      // 而不是错位地从 seats[0] 起算——否则翻牌后行动顺序整轮错乱。
       const btnIdx = seats.indexOf(game.dealerSeat);
       // 翻牌后从按钮左一开始；若其已弃牌/全下，顺移到下一个可行动的人（防卡死）
       game.actionSeat = -1;
@@ -1085,7 +1101,14 @@
 
       pots.forEach((pot, i) => {
         const seatsToWin = winnerSeats.filter(s => pot.eligible.indexOf(s) !== -1);
-        if (!seatsToWin.length) return;
+        if (!seatsToWin.length) {
+          // 防御性退款（与 showdown 同口径）：无人可赢的池按出资原路退回
+          game.logMsg(`池 ${i}（${pot.amount}）无人可赢，按出资退回`, 'warn');
+          Object.keys(pot.contribs || {}).forEach(s => {
+            game.seatOf(Number(s)).stack += pot.contribs[s];
+          });
+          return;
+        }
         const share = Math.floor(pot.amount / seatsToWin.length);
         let rem = pot.amount - share * seatsToWin.length;
         seatsToWin.forEach(s => {
@@ -1141,7 +1164,15 @@
           if (cmp > 0) { bestSeat = seat; ties = [seat]; }
           else if (cmp === 0) ties.push(seat);
         });
-        if (!ties.length) return;
+        if (!ties.length) {
+          // 防御性退款：整池无人有资格（外部状态污染 / 状态不一致）时按出资原路退回，
+          // 绝不静默吞掉整层筹码（历史缺陷：资格为空的层金额直接消失）。
+          game.logMsg(`边池 ${i}（${pot.amount}）无摊牌资格者，按出资退回`, 'warn');
+          Object.keys(pot.contribs || {}).forEach(s => {
+            game.seatOf(Number(s)).stack += pot.contribs[s];
+          });
+          return;
+        }
 
         const share = Math.floor(pot.amount / ties.length);
         let rem = pot.amount - share * ties.length;
@@ -1180,6 +1211,18 @@
 
     game.advance = advance;
     game._showdown = showdown;
+
+    /**
+     * 外部推进入口：应用层代打/掉线接管时用（不经过 act 的合法性闸门）。
+     * 适用场景：座位已被中途标记 sittingOut（legalActions 会返回 null），
+     * 但牌局必须继续推进——advance 内部会把 sittingOut 玩家按弃牌跳过。
+     * 仅当 game.result 尚未产生时有效（结束后是幂等 no-op）。
+     */
+    game.advanceInHand = function () {
+      if (game.result || game.over) return { ok: false, error: '本手已结束' };
+      if (game.actionSeat < 0) return { ok: false, error: '当前无行动者' };
+      return advance();
+    };
 
     /**
      * 把云端广播的快照镜像进本地 game 对象（好友端专用：不跑引擎，只做渲染）。

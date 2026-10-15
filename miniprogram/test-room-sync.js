@@ -473,6 +473,31 @@ eq(roomSync.readySeats([mkRow(1, 99999, { ready_hand: 4 })], 4, now), {}, '离�
     await host.pollOnce();
     ok(host.isStanding(2) === true, '房主：好友掉线（心跳超时）被自动站起');
 
+    /* ---- C-2 回归：掉线/站起者恰好轮到行动 → 房主代弃推进，绝不全桌冻结 ---- */
+    // 构造：好友已 sittingOut（上一步掉线判定），把行动权推到他的座位（模拟
+    // 上一手结束时恰好轮到他当庄/下一动作序）。旧代码 watchFriendAction 每 1.5s
+    // 重置计时后干等 30s，game.act 被合法性永远拒绝 → 全桌冻结。
+    {
+      const hostGame = host.requireGame();          // 房主端引擎引用（测试注入 getter）
+      // 直接对好友座位触发一对「代弃 + 推进」：他应当被按弃牌跳过且 afterAct 正常走
+      const friendP = hostGame.seatOf(2);
+      ok(!!friendP && friendP.sittingOut === true, 'C-2 前置：好友座位已标 sittingOut');
+      if (friendP && friendP.sittingOut) {
+        const beforeResult = !!hostGame.result;
+        // 若本手已结束（就绪期），先看 advanceInHand 的幂等拒绝
+        if (beforeResult) {
+          const r = hostGame.advanceInHand();
+          ok(r.ok === false, 'C-2：牌局已结束时 advanceInHand 幂等拒绝');
+        } else {
+          // 本手进行中：把行动权硬拨到好友座位（模拟轮到他时恰好已判掉线）
+          hostGame.actionSeat = 2;
+          const r = hostGame.advanceInHand();
+          ok(r.ok === true, 'C-2：sittingOut 行动者被引擎推进（代弃跳过）');
+          ok(hostGame.actionSeat !== 2, 'C-2：行动权已移交他人，不在掉线座位上卡死');
+        }
+      }
+    }
+
     /* ---- 好友镜像新手数 ---- */
     currentUid = 'uid_friend';
     await friend.pollOnce();

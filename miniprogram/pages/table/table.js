@@ -732,6 +732,7 @@ Page({
     if (this.data.phase !== 'playing' || !game) return;
     const live = {};
     roomSync.activeSeats(rows, Date.now()).forEach(r => { live[r.seat] = true; });
+    let dirty = false;
     game.players.forEach(p => {
       if (this.botSeats[p.seat]) return;              // 机器人不受心跳影响
       if (p.seat === this.mySeat) return;             // 我自己
@@ -740,7 +741,13 @@ Page({
       p.sittingOut = true;
       this.standingMap[p.seat] = true;                // 同步到 UI：头像下显示「观战」
       this.pushChat(p.seat, p.name, '掉线，自动站起');
+      dirty = true;
     });
+    // 中途站起若恰好轮到该座位 / 引擎推进落在他头上 → 立即代弃推进，防全桌冻结（C-2）
+    if (dirty && !game.result && game.actionSeat >= 0) {
+      const seat = game.actionSeat;
+      if (!this.botSeats[seat] && seat !== this.mySeat && this.standingMap[seat]) this.advance();
+    }
   },
 
   /** 房主消化一个好友动作 */
@@ -768,6 +775,8 @@ Page({
           this.renderReady();
           this.checkAllReady();
         }
+        // 牌局进行中站起：若行动权恰好在他手上 → 立即代弃推进，防全桌冻结（C-2）
+        if (this.data.phase === 'playing' && !game.result && game.actionSeat === seat) this.advance();
         this.render();
         this.forcePublish();   // 站起是关键状态：穿透节流立即广播，镜像端马上回显
       }
@@ -812,6 +821,13 @@ Page({
     const seat = game.actionSeat;
     if (seat === this.mySeat || this.botSeats[seat]) { this.friendActSince = 0; return; }
     const now = Date.now();
+    if (this.isStanding(seat)) {
+      // 该座位已被判站起/掉线（sittingOut → legalActions 返回 null，act 会被拒）：
+      // 不能干等 30s——立即走 advance 的中途站起弃牌推进，否则全桌冻结（C-2）。
+      this.friendActSince = 0;
+      this.advance();
+      return;
+    }
     if (!this.friendActSince) this.friendActSince = now;
     if (now - this.friendActSince >= roomSync.SYNC.ACTION_TIMEOUT_SEC * 1000) {
       this.friendActSince = 0;
@@ -820,6 +836,10 @@ Page({
       if (r.ok) {
         this.pushChat(seat, p ? p.name : '', '超时未行动，自动弃牌');
         this.afterAct();
+      } else {
+        // 代弃被拒（座位已不可行动）：罕见但必须兜底，否则 watchFriendAction 每 1.5s 空转
+        console.error('[table] 好友超时代弃被引擎拒绝', JSON.stringify({ seat, error: r.error }));
+        this.advance();
       }
     }
   },
@@ -1465,8 +1485,18 @@ Page({
     if (!game || game.result) return;
     try {
       const seat = game.actionSeat;
-      // 已站起的人（含超时未准备被自动站起者）不参与本手：轮到即自动弃牌跳过
+      // 已站起的人（含超时未准备被自动站起者）不参与本手：轮到即自动弃牌跳过。
+      // ⚠️ sittingOut 置位后 legalActions 返回 null，act 会被拒——
+      // 必须先代弃（此时还没标 sittingOut，legal 仍合法）或直接由引擎
+      // 推进路径处理，否则该座位永远轮空 → 全桌冻结（C-2 核心守卫）。
       if (this.isStanding(seat)) {
+        const p = game.seatOf(seat);
+        if (p && p.sittingOut && !p.folded) {
+          // 已被标 sittingOut：走引擎推进路径（advance 内部按弃牌跳过）
+          game.advanceInHand();
+          this.afterAct();
+          return;
+        }
         const r = game.act(seat, 'fold');
         if (r.ok) { this.afterAct(); return; }
       }
@@ -2231,6 +2261,11 @@ Page({
   isStanding(seat) {
     if (seat === this.mySeat) return !!this.myStanding;
     return !!this.standingMap[seat];
+  },
+
+  /** 引擎引用（测试注入用：跨端引擎行为断言，业务代码不要调用） */
+  requireGame() {
+    return game;
   },
 
   /** 某座位是否算「在座」：我已坐下但待下一手入局时，同样算在座并需点就绪 */

@@ -132,6 +132,14 @@ eq(pots.map(p => p.amount), [80, 180, 240, 300], '四路 20/80/200/500 → 80/18
 eq(pots.map(p => p.eligible.length), [4, 3, 2, 1], '资格人数 4→3→2→1');
 eq(pots.reduce((s, p) => s + p.amount, 0), 800, '总额守恒 800');
 
+// 回归（C-2 配套）：资格为空的异常层不再被静默丢弃——保留在 pots 里，
+// 由 showdown/finishHand 的防御性退款按出资原路退回（筹码绝不蒸发）
+pots = P.buildSidePots([mk(0, 100, true)]);   // 唯一出资者弃牌 → 层无资格
+eq(pots.length, 1, '弃牌者独出资的层仍保留');
+eq(pots[0].contribs[0], 100, '层内记录出资归属（退款兜底的数据源）');
+eq(pots[0].eligible.length, 0, '该层资格为空');
+eq(pots.reduce((s, p) => s + p.amount, 0), 100, '守恒：异常层金额不丢');
+
 pots = P.buildSidePots([mk(0, 20), mk(1, 20, true), mk(2, 20, true)]);
 eq(pots.map(p => [p.amount, p.eligible]), [[60, [0]]], '仅 1 席未弃牌 → 单池 60 且独享');
 

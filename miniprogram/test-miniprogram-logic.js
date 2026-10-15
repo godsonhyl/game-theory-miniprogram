@@ -783,6 +783,11 @@ while (guard++ < 400) {
     while (Date.now() - t0 < 15000 &&
            !(dataStore.isMyTurn && dataStore.legal && dataStore.legal.canRaise)) {
       await new Promise(r => setTimeout(r, 50));
+      // 偶发（2 人桌）：AI 翻牌前直接弃牌 → 本手提前结束、永远轮不到我。
+      // 与上方 25s 主循环同策略：重发一手继续等，避免随机牌局误报。
+      if (dataStore.result && !(dataStore.isMyTurn && dataStore.legal && dataStore.legal.canRaise)) {
+        pageCtx.startHand();
+      }
     }
   }
   ok(dataStore.isMyTurn === true && !!(dataStore.legal && dataStore.legal.canRaise),
