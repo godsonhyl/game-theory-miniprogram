@@ -61,11 +61,16 @@ Page({
   },
 
   onLoad(options) {
-    // 从好友分享卡片进入：自动填入房间号并尝试加入
+    // 从好友分享卡片进入：自动填入房间号并尝试加入。
+    // 分享参数是外部输入：非 6 位数字直接当房间号弹窗处理（不自动 tryJoin，
+    // 否则脏参数会带着 loading/登录等待白跑一趟云端查询）
     const room = options && options.room;
-    if (room) {
-      this.setData({ joinShow: true, joinNo: room });
-      this.tryJoin(room);
+    if (room && /^\d{6}$/.test(String(room))) {
+      this.setData({ joinShow: true, joinNo: String(room) });
+      this.tryJoin(String(room));
+    } else if (room) {
+      this.setData({ joinShow: true, joinNo: '' });
+      wx.showToast({ title: '分享链接无效', icon: 'none' });
     }
   },
 
@@ -249,8 +254,15 @@ Page({
       // 1. 云端建房（带上限定人数与游戏时长）
       const room = await auth.createRoom('friend', max, dur);
 
-      // 2. 扣房卡（乐观锁）。失败则回滚关闭房间
-      const cost = await app.consumeRoomCard(1);
+      // 2. 扣房卡（乐观锁）。失败（不足/并发变动）或抛异常（网络断）都回滚关闭房间——
+      //    否则重试一次就在云端泄漏一个 active 房间，占用首页「我的房间」坑位
+      let cost;
+      try {
+        cost = await app.consumeRoomCard(1);
+      } catch (cardErr) {
+        auth.closeRoom(room.room_no).catch(() => {});
+        throw cardErr;
+      }
       if (!cost.ok) {
         auth.closeRoom(room.room_no).catch(() => {});
         wx.hideLoading();

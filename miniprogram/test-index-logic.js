@@ -25,14 +25,17 @@ global.wx = {
   removeStorageSync: k => { delete global.__storage[k]; }
 };
 global.__storage = {};
-global.getApp = () => ({
+// getApp 返回单例：index.js 在模块加载时以 const app = getApp() 捕获引用，
+// 测试要改 methods（如 consumeRoomCard）必须改这份单例，新建对象改不动已加载页面。
+const __appSingleton = {
   globalData: {
     ready: true, loginError: '',
     profile: { nickname: '玩家', room_cards: 12, total_hands: 10, total_wins: 4, total_net: 30, owner_id: 'u_test' }
   },
   login: async () => {},
   consumeRoomCard: async n => ({ ok: true, roomCards: 12 - n })
-});
+};
+global.getApp = () => __appSingleton;
 
 let currentPage = null;
 global.Page = cfg => { currentPage = cfg; };
@@ -218,6 +221,51 @@ const pageCtx = Object.assign({}, cfg, {
   await new Promise(r => setTimeout(r, 60));
   ok(global.__closed.length === 0, '取消删除时不关闭房间');
   ok(dataStore.myRooms.length === 1, '取消删除后列表不变');
+
+  /* ---------- 建房扣卡抛异常 → 房间回滚关闭（防泄漏 active 房） ---------- */
+  global.__created = null;
+  global.__closed = [];
+  global.__cardError = true;   // 让 consumeRoomCard 抛错（模拟扣卡瞬间断网）
+  const origConsume = __appSingleton.consumeRoomCard;
+  __appSingleton.consumeRoomCard = async () => {
+    if (global.__cardError) throw new Error('network down');
+    return origConsume(1);
+  };
+  await pageCtx.onCreateRoom(6, 30);
+  await new Promise(r => setTimeout(r, 60));
+  ok(global.__created !== null, '异常路径：云端房间已建出');
+  ok(global.__closed.indexOf('888888') !== -1,
+    '扣卡抛异常 → 已建房间被回滚关闭: ' + JSON.stringify(global.__closed));
+  global.__cardError = false;   // 恢复正常扣卡
+  global.__created = null;
+  global.__closed = [];
+  await pageCtx.onCreateRoom(6, 30);
+  await new Promise(r => setTimeout(r, 60));
+  ok(global.__closed.length === 0, '恢复正常扣卡后建房成功（不触发回滚）');
+  __appSingleton.consumeRoomCard = origConsume;   // 还原，不影响后续场景
+
+  /* ---------- 分享参数校验：onLoad 的 room 参数 ---------- */
+  // 合法 6 位数字 → 自动尝试加入
+  global.__nav = null;
+  global.__joinedRoom = null;
+  const origTryJoin = pageCtx.tryJoin;
+  pageCtx.tryJoin = function (no) { global.__joinedRoom = no; return Promise.resolve(); };
+  pageCtx.onLoad({ room: '700123' });
+  ok(global.__joinedRoom === '700123', '分享带合法 6 位房号 → 自动 tryJoin');
+  ok(dataStore.joinShow === true && dataStore.joinNo === '700123', '分享进入：加入弹窗带房号');
+  // 脏参数（拼接的 query / 脚本串）→ 不自动加入，只提示
+  global.__joinedRoom = null;
+  pageCtx.onLoad({ room: '700123&own=1' });
+  ok(global.__joinedRoom === null, '分享参数带拼接 query → 不自动加入');
+  global.__joinedRoom = null;
+  pageCtx.onLoad({ room: 'abc123' });
+  ok(global.__joinedRoom === null, '非 6 位数字参数 → 不自动加入');
+  global.__joinedRoom = null;
+  pageCtx.onLoad({});
+  ok(global.__joinedRoom === null, '无 room 参数 → 不触发加入流程');
+  pageCtx.tryJoin = origTryJoin;
+  // 恢复：手动打开加入弹窗的路径不受影响
+  global.__nav = null;
 
   if (failures.length === 0) {
     console.log('首页逻辑测试全部通过：' + passes + ' 项断言 ✓');

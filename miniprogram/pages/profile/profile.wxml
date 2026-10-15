@@ -48,14 +48,7 @@
         <text class="style-k">风格倾向</text>
         <text class="style-v">{{style}}</text>
       </view>
-      <view class="style-row">
-        <text class="style-k">常用打法</text>
-        <text class="style-v">{{habit}}</text>
-      </view>
-      <view class="style-row">
-        <text class="style-k">最常底牌</text>
-        <text class="style-v">{{favHole}}</text>
-      </view>
+      <!-- 「常用打法 / 最常底牌」：引擎不产出这类聚合数据，占位字段永远为空，已移除 -->
     </view>
   </view>
 
