@@ -247,6 +247,17 @@ for (let i = 1; i < dataStore.summary.rows.length; i++) {
 ok(sortedOk, '结算按盈亏从高到低排名');
 ok(typeof dataStore.summary.myNet === 'number', '结算给出我的盈亏: ' + dataStore.summary.myNet);
 ok(dataStore.summary.rows.filter(r => r.isMe).length === 1, '结算标出我自己');
+// 盈亏基准回归（评审 MEDIUM）：无起始记录的座位不得按常数 1000 记假盈亏
+{
+  const g = pageCtx.requireGame();
+  const probe = g.players[0];   // 任取一个真实玩家
+  const savedSs = Object.assign({}, pageCtx.startStacks);
+  delete pageCtx.startStacks[probe.seat];   // 制造「无基准」座位（站起者/续局缺项同态）
+  pageCtx.endGame();
+  const row2 = dataStore.summary.rows.filter(r => r.seat === probe.seat)[0];
+  eq(row2.net, 0, '无起始记录的座位盈亏记 0（不再按常数 1000 算假盈亏）');
+  pageCtx.startStacks = savedSs;   // 还原记账，后续流程不受影响
+}
 // timeUp 后不再接受行动
 const stackBefore = dataStore.myStack;
 pageCtx.onFold();
@@ -1041,6 +1052,25 @@ while (guard++ < 400) {
     const idxWxml = require('fs').readFileSync(
       path.join(__dirname, 'pages', 'index', 'index.wxml'), 'utf8');
     ok(!/catchtap>/.test(idxWxml), 'index.wxml 同样无裸 catchtap');
+  }
+
+  /* ---------- 对手计时环不显示我的残值（评审 MEDIUM UI 细节回归）---------- */
+  {
+    // startTimer 的每秒回调只写 myTimer/myTimerPct；对手环的 seats[].timer 依赖
+    // render 的 tick 快照，且仅行动座位有值——保证不会把我的残值 setData 给对手环
+    const stBody = (tableSrc.match(/startTimer\(\)\s*\{[\s\S]*?1000\);\r?\n  \}/) || [''])[0];
+    ok(/myTimer: tick/.test(stBody), 'startTimer 回调写我的计时字段');
+    ok(!/seats:/.test(stBody), 'startTimer 每秒回调不写对手座位数组（对手环等 render 刷新，不吃我的残值）');
+    ok(/timer: !readyPhase && game\.actionSeat === p\.seat \? tick : ''/.test(tableSrc),
+      '对手环只在行动座位显示 tick（非行动座位为空串，环隐藏）');
+  }
+
+  /* ---------- 结算弹窗注释与行为一致（评审 MEDIUM：注释曾写「只由用户触发、不自动弹出」）---------- */
+  {
+    const mdoc = (tableSrc.match(/弹出单手结算弹窗[\s\S]{0,300}?由 render 末尾的统一调度[\s\S]{0,120}?自动触发/) || [])[0];
+    ok(!!mdoc, 'showResultModal 注释已改为「render 统一调度自动触发 + 用户可提前打开」（与代码一致）');
+    ok(/this\.resultTimer = setTimeout\(\(\) => \{[\s\S]{0,200}?showResultModal\(\)/.test(tableSrc),
+      'render 末尾确有自动弹出调度（注释与代码不再矛盾）');
   }
 
   /* ---------- 输出 ---------- */

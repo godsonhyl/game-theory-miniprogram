@@ -1422,7 +1422,10 @@ Page({
       seat: p.seat,
       name: p.name,
       stack: p.stack,
-      net: p.stack - (this.startStacks[p.seat] !== undefined ? this.startStacks[p.seat] : 1000),
+      // 盈亏基准 = 起始筹码。兜底不再是常数 1000（站起观战者/续局快照缺项者曾被
+      // 凭空记 ±几百的假盈亏），而是该玩家当前筹码——即「无基准记录则视为 0 盈亏」，
+      // 与 startStacks 的记账语义一致（评审 2026-10-15 MEDIUM）。
+      net: p.stack - (this.startStacks[p.seat] !== undefined ? this.startStacks[p.seat] : p.stack),
       isMe: !!p.isHuman
     })).sort((a, b) => b.net - a.net);
 
@@ -2345,8 +2348,9 @@ Page({
   },
 
   /**
-   * 弹出单手结算弹窗（每人净盈亏 + 摊牌手牌）。只由用户点「查看结算」触发，
-   * 不再自动弹出（摊牌亮牌期与就绪期都可点）。打开后 RESULT_MODAL_MS 自动关闭；
+   * 弹出单手结算弹窗（每人净盈亏 + 摊牌手牌）。通常由 render 末尾的统一调度
+   * 在亮牌展示 RESULT_SHOW_MS 后自动触发，也可由用户点「查看结算」提前打开
+   * （摘要条 / 就绪条都有入口）。打开后 RESULT_MODAL_MS 自动关闭；
    * 若关闭时尚未进就绪阶段（亮牌展示期内点开），顺带进入就绪；
    * 已在就绪阶段则只关弹窗——enterReadyPhase 会清空就绪计票，绝不能误调。
    */
@@ -2647,6 +2651,14 @@ Page({
   },
 
   // ---------- 计时器 ----------
+  /**
+   * 行动计时环（20s）。tick 是「本回合残值」的全局单值（TICK_MAX 起倒数）：
+   *   - 轮到我 → 残值写到 myTimer/myTimerPct（myzone 专属字段，每秒 setData）；
+   *   - 轮到对手 → 残值只进整帧 render 的 seats[].timer；本回调**不**写对手
+   *     字段——曾经每秒把我的残值 setData 给对手计时环（评审 2026-10-15
+   *     MEDIUM），导致「对手环用我的剩余秒数跳」；对手环等下一帧 render 刷新，
+   *     牺牲的流畅度换正确性（对手到点由房主 30s 代弃兜底，不依赖本地环）。
+   */
   startTimer() {
     if (timer) clearInterval(timer);
     tick = TICK_MAX;
