@@ -9,10 +9,15 @@ function ok(c, l) { if (c) passes++; else failures.push(l); }
 global.wx = {
   login: ({ success }) => success({ code: 'mock' }),
   showToast: () => {},
+  // 与真实 wx.showModal 语义一致：确认与取消都回调 success（取消时 res.cancel=true、
+  // confirm=false），只有弹窗本身失败才走 fail。此前 mock 没有 cancel 分支，取消时
+  // 什么也不回调——依赖它的「取消删除」用例验证的不是真机会走的路径（评审 MEDIUM）。
   showModal: o => {
     global.__lastModal = o;
-    if (global.__modalMode === 'confirm' && o.success) o.success({ confirm: true, cancel: false });
-    else if (global.__modalMode === 'fail' && o.fail) o.fail();
+    const m = global.__modalMode;
+    if (m === 'confirm' && o.success) o.success({ confirm: true, cancel: false });
+    else if (m === 'cancel' && o.success) o.success({ confirm: false, cancel: true });
+    else if (m === 'fail' && o.fail) o.fail();
   },
   navigateTo: o => { global.__nav = o.url; },
   navigateBack: () => { global.__navBack = true; },
@@ -214,13 +219,23 @@ const pageCtx = Object.assign({}, cfg, {
   ok(dataStore.myRooms.length === 1 && dataStore.myRooms[0].roomNo === '654321',
     '删除后列表刷新，只剩 654321: ' + JSON.stringify((dataStore.myRooms || []).map(r => r.roomNo)));
 
-  // 取消删除：不关房间
-  global.__modalMode = 'cancel-x';  // 未匹配 confirm/fail → 视为取消
+  // 取消删除：不关房间（真实 wx 语义——取消同样回调 success，res.cancel=true）
+  global.__modalMode = 'cancel';
   global.__closed = [];
   pageCtx.onCloseRoom({ currentTarget: { dataset: { room: '654321' } } });
   await new Promise(r => setTimeout(r, 60));
   ok(global.__closed.length === 0, '取消删除时不关闭房间');
   ok(dataStore.myRooms.length === 1, '取消删除后列表不变');
+
+  // 白盒：验证 mock 的 cancel 分支确实回调 success（res.cancel=true），
+  // 而不是依赖「未匹配 → 不回调」的旧行为——评审 MEDIUM 指出旧 mock 取消时
+  // 什么也不回调，依赖它的「取消」用例验证的不是真机会走的路径。
+  {
+    let got = null;
+    global.wx.showModal({ success: res => { got = res; } });
+    ok(!!got && got.cancel === true && got.confirm === false,
+      'mock showModal：cancel 模式回调 success({cancel:true,confirm:false})（与真实 wx 一致）');
+  }
 
   /* ---------- 建房扣卡抛异常 → 房间回滚关闭（防泄漏 active 房） ---------- */
   global.__created = null;
