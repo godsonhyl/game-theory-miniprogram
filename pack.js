@@ -15,31 +15,18 @@
 const fs = require('fs');
 const path = require('path');
 const zlib = require('zlib');
+const RULES = require('./scripts/pack-rules');
 
 const SRC = path.join(__dirname, 'miniprogram');
 const DIST = path.join(__dirname, 'dist');
 const VERSION = '0.1.0';
 const ZIP_NAME = `game-theory-miniprogram-${VERSION}.zip`;
 
-// 不应打进包的开发文件
+// 排除清单单一来源：scripts/pack-rules.js（pack.js / upload.js /
+// project.config.json 三处共用，check-pack-rules.js 校验无漂移）。
 // 注意：node_modules 与 package.json 也不进包 —— 微信「构建 npm」时
 // 依赖会被编译进 miniprogram_npm/（编译产物保留在包里，云 SDK 运行时靠它解析）。
-// test-*.js 按前缀统一排除，与 upload.js / project.config.json 保持一致口径。
-const EXCLUDE = [
-  'README-体验版上传.md',
-  'test-cards.js',
-  'test-cloud-integration.js',
-  'test-index-logic.js',
-  'test-miniprogram-logic.js',
-  'test-room-sync.js',
-  'package.json',
-  'package-lock.json',
-  'node_modules'
-];
-// 精确名匹配放不下 glob：test- 前缀兜底（漏登记的新测试文件也不进包）
-const EXCLUDE_PREFIX = ['test-'];
-// 防误打包密钥/隐私文件（.wbapp_*.privacy.json 是云平台本地标识，外部包不需要）
-const EXCLUDE_PATTERN = [/\.key$/i, /\.pem$/i, /^private\./, /^\.wbapp_.*\.privacy\.json$/];
+const EXCLUDE_RULES = RULES;
 
 /* ============================================================
  * 最小可用 ZIP 实现（store 或 deflate）
@@ -145,9 +132,7 @@ function collect(dir, base = '') {
   const out = [];
   fs.readdirSync(dir).forEach(name => {
     // 排除名单同时作用于文件与目录（node_modules 等整棵子树跳过）
-    if (EXCLUDE.indexOf(name) >= 0) return;
-    if (EXCLUDE_PREFIX.some(p => name.startsWith(p))) return;
-    if (EXCLUDE_PATTERN.some(re => re.test(name))) return;
+    if (EXCLUDE_RULES.shouldExclude(name)) return;
     const full = path.join(dir, name);
     const rel = base ? base + '/' + name : name;
     const st = fs.statSync(full);

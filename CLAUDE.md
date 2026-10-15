@@ -73,6 +73,7 @@ npm run preview                 # 仅生成预览包，不上传
 - 注释、文档、commit message 用中文；文件头注释解释「为什么这么设计」是本仓库的强约定，修改前先读目标文件头部注释（内含不可破坏的格式约定和踩坑记录）。
 - `scripts/check-wxml.js` 的两条规则来自历史事故：wx:for 内用别名插值必须声明 `wx:for-item`；标签必须闭合平衡。
 - 牌桌动画只用 `transform`/`opacity` + CSS keyframes，不动 `top/left/width`（重排红线，目标 60fps）；包体积红线 2MB。
+- 打包/上传排除清单唯一来源是 `scripts/pack-rules.js`（pack.js / upload.js / project.config.json 三处共用）——改清单只改它，`npm test` 里的 `scripts/check-pack-rules.js` 会拦住 project.config.json 漂移和 `miniprogram_npm` 被误排除（历史事故：排除 = 体验版白屏）。
 - 位运算必须加括号（`&` 优先级高于 `===` 曾导致顺子判定全错）；任何决策输出过引擎 `act()` 前必须夹取到合法区间。
 - `project.private.config.json`、`private.*.key`、`miniprogram/.wbapp_*.privacy.json` 等本地/密钥文件不进版本库（已在 .gitignore）。
 - 「行动建议」类功能（`advise()`）仅在练习模式/AI 对战启用，好友房与匹配对战必须关闭（合规硬约束）。

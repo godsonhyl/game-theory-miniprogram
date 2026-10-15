@@ -18,6 +18,7 @@
  */
 const path = require('path');
 const fs = require('fs');
+const RULES = require('./scripts/pack-rules');
 
 // ============ 配置 ============
 const CONFIG = {
@@ -110,16 +111,11 @@ async function main() {
     type: 'miniProgram',
     projectPath: CONFIG.projectPath,
     privateKeyPath: keyPath,
+    // 排除清单单一来源：scripts/pack-rules.js（pack.js / project.config.json 共用，
+    // check-pack-rules.js 校验无漂移）。
     // node_modules 不进包（体积红线），但 miniprogram_npm 是「构建 npm」的编译产物，
-    // 云 SDK 运行时靠它解析 —— 排除它会导致体验版 require 失败、白屏（C 级回归，勿再排除）。
-    // 测试文件按前缀统一排除，与 pack.js / project.config.json 保持一致口径。
-    ignores: [
-      'README-体验版上传.md',
-      'test-*.js',
-      'package.json',
-      'package-lock.json',
-      'node_modules/**'
-    ]
+    // 云 SDK 运行时靠它解析 —— 排除它会导致体验版 require 失败、白屏（历史事故，勿再排除）。
+    ignores: RULES.ciIgnores()
   });
 
   if (process.argv.includes('--preview')) {
