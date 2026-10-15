@@ -72,6 +72,15 @@ eq(val([H.C3, H.C4, H.D5, H.H6, H.S7], 'sevenHigh'), [4, [5]], '3-4-5-6-7 → 7 
 eq(val([H.C3, H.C4, H.D5, H.H6, H.S7, H.DJ, H.SQ], 'sevenHigh7'), [4, [5]], '7 张仍取 7 高顺');
 // 2-3-4-6-7 缺 5 → 不是顺子（7 张里最大 5 张为 Q,J,7,6,4）
 eq(val([H.C2, H.C3, H.D4, H.H6, H.S7, H.DJ, H.SQ], 'gap2'), [0, [10, 9, 5, 4, 2]], '2-3-4-6-7 缺 5 → 不是顺子');
+// 回归（C-1）：A-2-3-4-5-6 同时存在轮子与 6 高顺，必须取 6 高（轮子检查不可抢先返回）
+eq(val([H.SA, H.C2, H.C3, H.D4, H.H5, H.S6, H.C9], 'wheelVs6'), [4, [4]], 'A-2-3-4-5-6 → 6 高顺而非 5 高轮子');
+eq(val([H.SA, H.C2, H.D3, H.S4, H.C5, H.D6], 'wheelVs6-5cards'), [4, [4]], 'A23456（5 张即含两条顺）→ 6 高');
+ok(P.compare(ev([H.SA, H.C2, H.C3, H.D4, H.H5, H.S6, H.C9], 'w56'),
+  ev([H.SA, H.C2, H.C3, H.D4, H.H5, H.CJ, H.CQ], 'w55')) > 0, '6 高顺 > 5 高轮子（平池 bug 回归）');
+// 同花顺同理：A♠2♠3♠4♠5♠6♠ 必须是 6 高同花顺
+eq(val([H.SA, H.S2, H.S3, H.S4, H.S5, H.S6, H.C2], 'sfWheelVs6'), [8, [4]], '同花 A23456 → 6 高同花顺');
+ok(P.compare(ev([H.SA, H.S2, H.S3, H.S4, H.S5, H.S6, H.C2], 's5'),
+  ev([H.HA, H.H2, H.H3, H.H4, H.H5, H.CJ, H.CQ], 's6')) > 0, '同花顺 6 高 > 轮子同花顺 5 高');
 
 group('— 同花 / 三条 / 两对 / 一对 / 高牌');
 eq(val([H.HA, H.HJ, H.H9, H.H5, H.H3, H.C7, H.D6], 'flush'), [5, [12, 9, 7, 3, 1]], '同花取最高 5 张');
