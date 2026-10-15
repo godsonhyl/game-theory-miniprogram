@@ -81,15 +81,27 @@ function setData(patch, cb) {
 }
 const pageCtx = Object.assign({}, cfg, { data: dataStore, setData });
 
-/* ---------- 驱动一整局 ---------- */
+/* ---------- AI 对战：同样先选座坐下、点开始才发牌 ---------- */
 pageCtx.onLoad();
+ok(dataStore.phase === 'waiting', 'AI 对战进入等待室（不自动开局）');
+ok(dataStore.waitHint.indexOf('空位') >= 0, 'AI 等待室提示引导选座：' + dataStore.waitHint);
+ok(dataStore.canStart === false, '还没坐下时不可开始');
+// 选一个非 0 号位坐下，验证「自选座位」真的生效
+pageCtx.chooseSeat({ currentTarget: { dataset: { seat: 3 } } });
+pageCtx.confirmBuyIn({ currentTarget: { dataset: { amt: '1000' } } });
+ok(dataStore.waitSeats[3].occupied === true, 'AI 桌选了 3 号位坐下');
+ok(dataStore.waitHint.indexOf('开始游戏') >= 0, '坐下后提示改为「点开始游戏」');
+ok(dataStore.canStart === true, '坐下后系统自动补 AI 对手 → 可开始');
+ok(dataStore.waitSeats.filter(s => s.occupied).length === 2, '自动补位到 2 人，不一次加满');
+pageCtx.startGame();
+ok(dataStore.phase === 'playing', 'AI 桌点开始后进入牌桌');
 
 ok(dataStore.handNo >= 1, '开局后 handNo = ' + dataStore.handNo);
 ok(dataStore.pot === 30, '开局底池 = 30（盲注 10+20），实际 ' + dataStore.pot);
-ok(dataStore.seats.length === 6, 'WPK 式布局：所有座位（含我）都在牌桌环上，实际 ' + dataStore.seats.length);
-const mySeat0 = dataStore.seats.filter(s => s.seat === 0 && s.isMe)[0];
-ok(!!mySeat0, '我的座位（0 号位）也在牌桌环上（isMe=true）');
-ok(mySeat0 && mySeat0.y > 70, '我的座位锚定在底部中央（y≈' + (mySeat0 && mySeat0.y) + '）');
+const mySeatNow = dataStore.seats.filter(s => s.isMe)[0];
+ok(dataStore.seats.length >= 2, 'WPK 式布局：所有座位（含我）都在牌桌环上，实际 ' + dataStore.seats.length);
+ok(!!mySeatNow, '我的座位（自选的 3 号位）也在牌桌环上（isMe=true）');
+ok(mySeatNow && mySeatNow.y > 60, '我的座位锚定在底部中央（y≈' + (mySeatNow && mySeatNow.y) + '）');
 ok(Array.isArray(dataStore.myCards), '我的手牌渲染在 myCards');
 ok(typeof dataStore.myStack === 'number' && dataStore.myStack > 0, '我的筹码在 myStack，实际 ' + dataStore.myStack);
 ok(dataStore.board.length === 0, '翻牌前公共牌为空');
@@ -250,6 +262,13 @@ pageCtx.clearClock();
 /* ---------- 退出本局（站起）的准入条件 ---------- */
 pageCtx.onLoad();
 ok(dataStore.mode === 'ai' && dataStore.pageTitle === 'AI 对战', '无参数默认 AI 对战模式');
+ok(dataStore.phase === 'waiting', 'AI 对战同样是等待室起步（需选座 + 点开始）');
+// 选座开局后再验证「本手进行中」的站起准入
+pageCtx.chooseSeat({ currentTarget: { dataset: { seat: 2 } } });
+pageCtx.confirmBuyIn({ currentTarget: { dataset: { amt: '1000' } } });
+pageCtx.startGame();
+ok(dataStore.phase === 'playing', 'AI 桌选座并点开始后进入牌桌');
+ok(dataStore.coachShow === true, 'AI 练习模式首手显示教练提示（发牌时才置位）');
 ok(dataStore.myStanding === false, '默认坐在局内（未站起）');
 ok(dataStore.canStand === false, '本手进行中且未弃牌 → 不允许站起');
 toasts.length = 0;
@@ -310,8 +329,7 @@ ok(dataStore.chatLog[dataStore.chatLog.length - 1].text === '🔥', '表情可�
 for (let i = 0; i < 12; i++) pageCtx.pushChat(1, '林小满', '压测' + i);
 ok(dataStore.chatLog.length <= 8, '聊天日志最多保留 8 条，实际 ' + dataStore.chatLog.length);
 
-/* ---------- ④ 新手引导 + 首手教练 ---------- */
-ok(dataStore.coachShow === true, 'AI 练习模式首手显示教练提示');
+/* ---------- ④ 新手引导 ---------- */
 pageCtx.onHelp();
 ok(dataStore.helpShow === true, '帮助弹层可打开');
 pageCtx.onHelpClose();
@@ -598,8 +616,15 @@ while (guard++ < 400) {
     '弹窗按钮：房主/本地 = 下一手进就绪计票，镜像端 = 知道了仅关闭');
   ok(wxmlSrc.indexOf('wx:if="{{resultModal}}"') >= 0, 'WXML 新增独立结算弹窗（resultModal）');
   ok(wxmlSrc.indexOf('查看结算') >= 0, '亮牌展示期摘要条提供「查看结算」立即弹窗入口');
-  ok(wxmlSrc.indexOf("{{remoteMode ? '知道了' : '下一手'}}") >= 0,
-    '弹窗按钮文案按端区分（镜像端「知道了」/ 房主「下一手」）');
+  ok(wxmlSrc.indexOf("{{remoteMode || readyPhase ? '知道了' : '下一手'}}") >= 0,
+    '弹窗按钮文案按端/阶段区分（镜像端与就绪期「知道了」/ 亮牌期房主「下一手」）');
+  // 自动弹出时序：摊牌亮牌停留 RESULT_SHOW_MS 后自动开弹窗（用户明确要求）
+  ok(/this\.resultTimer = setTimeout\(\(\) => \{[\s\S]{0,200}this\.showResultModal\(\)/.test(tableSrc),
+    '结算弹窗在亮牌展示 RESULT_SHOW_MS 后**自动弹出**（非仅手动触发）');
+  ok(wxmlSrc.indexOf('sr-cards') >= 0 && wxssSrc.indexOf('.sr-cards') >= 0,
+    '结算弹窗行显示摊牌迷你手牌（弃牌者不亮牌，金边=参与最佳成手）');
+  ok(tableSrc.indexOf('buildResult') >= 0 && /d\.hi = !!\(bestSet && bestSet\.has\(code\)\)/.test(tableSrc),
+    'buildResult 为摊牌手牌打「参与最佳成手」高亮标记');
   ok(wxmlSrc.indexOf('sr-hand') >= 0 && wxssSrc.indexOf('.sr-hand') >= 0,
     '结算弹窗行显示牌型/状态列（sr-hand 样式齐备）');
   ok(wxmlSrc.indexOf('wx:elif="{{result}}"') >= 0,
@@ -652,19 +677,22 @@ while (guard++ < 400) {
   pageCtx.onFold();
   ok(pageCtx.data.foldConfirm === false, '确认态内再点「弃牌」才真正执行（确认态复位）');
 
-  /* ---------- 自定义下注金额（0 ~ MAX 全下） ---------- */
+  /* ---------- 自定义下注金额（最小 ~ MAX 全下，连续可调） ---------- */
   const tableWxss = require('fs').readFileSync(
     path.join(__dirname, 'pages', 'table', 'table.wxss'), 'utf8');
-  // 三层一致性守卫：本轮 bug 正是「JS/WXML 已改、WXSS 漏改」导致面板裸奔
+  // 三层一致性守卫：历史 bug 正是「JS/WXML 已改、WXSS 漏改」导致面板裸奔
   ok(/class="raise-custom"/.test(wxmlSrc), 'WXML：存在自定义下注面板容器 .raise-custom');
-  ['rc-head', 'rc-label', 'rc-input', 'rc-max', 'rc-slider', 'rc-quick', 'rc-q'].forEach(cls => {
+  ['rc-axis', 'rc-end', 'rc-num', 'rc-slider', 'rc-edit', 'rc-input', 'rc-q'].forEach(cls => {
     ok(new RegExp('\\.' + cls + '\\s*[,{]').test(tableWxss), 'WXSS：自定义面板样式齐全 .' + cls);
   });
-  // 面板必须独立成行（不能塞进固定高度的 mybar 里挤压手牌区）
-  ok(wxmlSrc.indexOf('</view>\n\n      <!-- 行动条') > 0 && wxmlSrc.indexOf('class="raise-custom"') > wxmlSrc.indexOf('class="mybar"'),
-    'WXML：自定义面板独立成行且位于 mybar 之后（不挤占手牌区高度）');
-  // 事件绑定与实现一一对应（onCustomTap 由「自定义」档经 onPresetTap 间接调用，故分开校验）
-  ['onRaiseSlider', 'onRaiseInput', 'onCustomMin', 'onCustomHalf', 'onCustomPot', 'onCustomMax'].forEach(fn => {
+  // 档位条与自定义面板互斥（并排会互相遮盖滑杆与轴标签）
+  ok(/class="presets" wx:if="\{\{isMyTurn && !raiseCustom\}\}"/.test(wxmlSrc),
+    'WXML：自定义面板展开时收起档位条（两者互斥，不并排挤在同一行）');
+  ok(/\.rc-end\s*\{[^}]*flex:\s*none/.test(tableWxss),
+    'WXSS：滑杆两端轴标签 flex:none（不与滑杆抢宽度，任意位数都不遮盖）');
+  // 事件绑定与实现一一对应（onCustomTap 由「自定义」档经 onPresetTap 间接调用）
+  ['onRaiseSlider', 'onRaiseInput', 'onRaiseBlur', 'onCustomMin', 'onCustomHalf', 'onCustomPot',
+    'onCustomMax', 'onCustomClose'].forEach(fn => {
     ok(wxmlSrc.indexOf(fn) >= 0 && new RegExp('\\n  ' + fn + '\\(').test(tableSrc),
       '自定义下注：WXML 绑定 ' + fn + ' 且 JS 已实现');
   });
@@ -672,15 +700,76 @@ while (guard++ < 400) {
     /\n  onPresetTap\(/.test(tableSrc) && /\n  onCustomTap\(/.test(tableSrc) &&
     /if \(v === 'custom'\) \{ this\.onCustomTap\(\); return; \}/.test(tableSrc),
     '自定义下注：「自定义」档经 onPresetTap → onCustomTap 展开面板');
-  ok(/onRaiseChange/.test(tableSrc) === false && /onRaiseChange/.test(wxmlSrc) === false,
-    '旧滑杆回调 onRaiseChange 已彻底移除（无死代码/无悬空绑定）');
-  // 滑杆范围 = 0 ~ raiseMax(全下)，且按钮文案与实际提交口径一致
-  ok(/min="0" max="\{\{raiseMax\}\}"/.test(wxmlSrc), 'WXML：滑杆范围 0 ~ 最大(全下金额)');
+  ok(/\n  onCustomClose\(\) \{[\s\S]{0,120}raiseCustom: false/.test(tableSrc),
+    '自定义下注：可「收起」面板回到档位条（两个入口并存不互斥死锁）');
+  // 输入过程不抬下限（否则想输 500 时打完第一个 5 就被改写），失焦才补正
+  ok(/onRaiseInput\(e\) \{[\s\S]{0,400}?if \(isNaN\(v\) \|\| v < 0\) v = 0;/.test(tableSrc) &&
+    /onRaiseInput[\s\S]{0,400}?\n  \},/.test(tableSrc),
+    '自定义下注：输入过程中只清洗与钳上限，不抢先抬到下限（否则无法连续输入目标值）');
+  ok(/\n  onRaiseBlur\(\)/.test(tableSrc) &&
+    /onRaiseBlur[\s\S]{0,300}?this\.data\.raiseTo < min[\s\S]{0,80}?raiseTo: min/.test(tableSrc),
+    '自定义下注：失焦时把低于最小加注的值补到下限（界面显示始终合法）');
+  // 滑杆范围 = 最小 ~ 全下上限，按钮文案与实际提交同口径
+  ok(/min="\{\{raiseMin\}\}" max="\{\{raiseMax\}\}"/.test(wxmlSrc),
+    'WXML：滑杆范围 最小加注 ~ 最大（全下金额）');
   ok(/raiseSubmit/.test(tableSrc) && /raiseAllIn/.test(tableSrc),
     'render 计算 raiseSubmit / raiseAllIn（按钮文案与实际提交同口径）');
   ok(/raiseAllIn \? '全下'/.test(wxmlSrc), 'WXML：加注按钮按 raiseAllIn 显示「全下」');
   ok(/Math\.max\(legal\.minRaiseTo, Math\.round\(this\.data\.raiseTo \|\| 0\)\)/.test(tableSrc),
-    'onRaise 钳制口径：低于最小加注按最小值提交（滑杆拖到 0 不会真的下 0）');
+    'onRaise 钳制口径：低于最小加注按最小值提交（输入框填 0 也不会真下 0）');
+
+  /* ---------- 微信昵称：牌桌默认显示微信名 ---------- */
+  ok(/meLabel\(withOwner\)/.test(tableSrc) &&
+    /meLabel\(withOwner\) \{[\s\S]{0,200}?auth\.myName\('你'\)/.test(tableSrc),
+    '牌桌显示名统一走 meLabel()（默认取微信昵称）');
+  ok(!/"你（房主）"|\? '你' : '好友'/.test(tableSrc) || /meLabel/.test(tableSrc),
+    '牌桌不再硬编码「你 / 房主 / 好友」占位名');
+  ok(/\(withOwner && this\.mode === 'friend'\)/.test(tableSrc),
+    '「（房主）」后缀只在好友房出现（AI 桌无房主概念）');
+  const authSrc = require('fs').readFileSync(
+    path.join(__dirname, 'utils', 'auth.js'), 'utf8');
+  ok(/myName\(fallback\)/.test(authSrc) && /saveNickname\(nick\)/.test(authSrc) &&
+    /isDefaultNickname\(nick\)/.test(authSrc),
+    'auth 提供 myName / saveNickname / isDefaultNickname 昵称读写能力');
+  ok(/DEFAULT_NICK/.test(authSrc) && /module\.exports = \{[^}]*DEFAULT_NICK/.test(authSrc),
+    'auth 导出 DEFAULT_NICK 占位昵称（与各页判定口径一致）');
+  const profSrc = require('fs').readFileSync(
+    path.join(__dirname, 'pages', 'profile', 'profile.js'), 'utf8');
+  ok(/type="nickname"/.test(require('fs').readFileSync(
+    path.join(__dirname, 'pages', 'profile', 'profile.wxml'), 'utf8')),
+    '我的页提供 <input type="nickname">（微信唯一合规的取真名方式）');
+
+  /* ---------- 引擎：10 显示为「10」，但机读码仍是单字符 T ---------- */
+  const coreSrc = require('fs').readFileSync(
+    path.join(__dirname, '..', 'core', 'poker-core.js'), 'utf8');
+  ok(/const RANK_DISPLAY = \[[^\]]*'10'[^\]]*\]/.test(coreSrc),
+    '引擎新增 RANK_DISPLAY：界面显示 10 而非 T');
+  ok(/const RANK_NAMES = \[[^\]]*'T'[^\]]*\]/.test(coreSrc),
+    '引擎 RANK_NAMES 保持单字符 T（机读码，参与编解码，不可改成 10）');
+  ok(coreSrc.indexOf('RANK_NAMES') !== coreSrc.indexOf('RANK_DISPLAY') &&
+    /RANK_NAMES, RANK_DISPLAY,/.test(coreSrc), 'RANK_DISPLAY 与机读码字母表一并导出');
+  ok(/rank: P\.RANK_DISPLAY\[/.test(tableSrc), '牌桌牌面渲染使用 RANK_DISPLAY（T 显示为 10）');
+
+  /* ---------- AI 桌：先选座坐下、点开始才发牌 ---------- */
+  ok(/AI 对战：与好友房共用同一间等待室/.test(tableSrc) &&
+    /this\.initWaiting\(\);/.test(tableSrc), 'AI 对战进入等待室而非直接开局');
+  ok(/fillBots\(\) \{/.test(tableSrc) &&
+    /while \(seats\.filter\(s => s\.occupied\)\.length < 2\)/.test(tableSrc),
+    'AI 桌坐下后自动补位到 2 人（保证「坐下即可开始」，不一次加满）');
+  ok(/roomSeat = \(this\.mode === 'friend' && this\.isOwner\) \? 0 : -1/.test(tableSrc),
+    'AI 桌不预占座位（roomSeat = -1，由玩家自己挑位置）');
+  ok(/AI_WAIT_HINT/.test(tableSrc) &&
+    /sitting: '点任一空位选座位坐下/.test(tableSrc),
+    'AI 等待室按是否已坐下切换引导文案');
+
+  /* ---------- 音效：引擎事件流 → 合成音 ---------- */
+  ok(require('fs').existsSync(path.join(__dirname, 'utils', 'sfx.js')),
+    '存在合成音效模块 utils/sfx.js（零音频资源）');
+  ok(/startSfxPump\(\)/.test(tableSrc) && /drainSfx\(\)/.test(tableSrc) &&
+    /this\.sfxPump = setInterval/.test(tableSrc),
+    'table 启动 300ms 音效事件泵（对手在计时器路径的动作也能发声）');
+  ok(/stopSfxPump\(\)/.test(tableSrc), '音效泵有明确的停止生命周期（onUnload 调用）');
+  ok(/this\.data\.soundOn/.test(tableSrc), '音效开关在事件泵内逐次判断（切换即时生效）');
 
   /* ---------- 输出 ---------- */
   console.log('\n' + '='.repeat(52));

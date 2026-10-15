@@ -414,6 +414,49 @@
   background: rgba(232,163,61,.2); border-color: rgba(232,163,61,.75); color: #ffd98a;
   box-shadow: 0 0 calc(1.8 * var(--uh)) rgba(232,163,61,.25);
 }
+
+/* ---------- 自定义下注面板（整行两行式） ----------
+ * 排版要点（旧版的病根就在这）：
+ *   - 旧版把「金额输入 + 最大 N」塞进同一行文本流，又和档位条并排挤在 mymid 里，
+ *     容器一窄就互相挤压 → 最大值/最小值被推出容器，压到筹码区与按钮上。
+ *   - 现在：最小 / 最大是滑杆两端的「固定列」（flex:none + nowrap），滑杆 flex:1
+ *     只吃剩余宽度。无论筹码是 3 位还是 7 位，两个数字都铆在两端，不可能被遮。
+ * 高度预算：两行合计 ≈ 12uh，收在 mybar 的 14.5uh 之内 ——
+ *   下半区总高不变，felt(flex:1) 不被压缩，座位环与公共牌不会因此被挤扁。
+ */
+.raise-custom {
+  width: 100%; display: flex; flex-direction: column; justify-content: center;
+}
+.rc-axis { display: flex; align-items: center; width: 100%; }
+.rc-end {
+  flex: none; display: flex; align-items: baseline; white-space: nowrap;
+  font-size: calc(2.6 * var(--uh)); color: var(--mut);
+  padding: 0 calc(1 * var(--uw));
+}
+.rc-end:active .rc-num { color: var(--gold); }
+.rc-num {
+  font-size: calc(3.2 * var(--uh)); font-weight: 700; color: var(--ink);
+  margin-left: calc(0.8 * var(--uw)); font-variant-numeric: tabular-nums;
+}
+.rc-slider { flex: 1; min-width: 0; height: calc(5.6 * var(--uh)); margin: 0 calc(1.4 * var(--uw)); }
+
+.rc-edit { display: flex; align-items: center; width: 100%; margin-top: calc(0.5 * var(--uh)); }
+.rc-input {
+  flex: none; box-sizing: border-box;
+  width: calc(13 * var(--uw)); height: calc(5.4 * var(--uh));
+  text-align: center; font-weight: 700; font-size: calc(3.2 * var(--uh));
+  color: #ffd98a; background: rgba(232,163,61,.1);
+  border: 1rpx solid rgba(232,163,61,.42); border-radius: calc(1.4 * var(--uh));
+}
+.rc-q {
+  flex: 1; text-align: center; white-space: nowrap; overflow: hidden;
+  font-size: calc(2.8 * var(--uh)); color: var(--ink);
+  line-height: calc(5.2 * var(--uh)); height: calc(5.2 * var(--uh));
+  background: rgba(255,255,255,.07); border: 1rpx solid rgba(255,255,255,.13);
+  border-radius: calc(1.4 * var(--uh));
+}
+.rc-q:active { background: rgba(232,163,61,.2); border-color: rgba(232,163,61,.62); }
+.rc-edit .rc-q { margin-left: calc(1.4 * var(--uw)); }
 .mytip {
   font-size: calc(3 * var(--uh)); color: var(--mut); line-height: 1.35; text-align: center;
   display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden;
@@ -423,59 +466,6 @@
 .mystk { flex: none; display: flex; flex-direction: column; align-items: flex-end; }
 .ms-v { font-size: calc(4.4 * var(--uh)); font-weight: 800; color: var(--gold); line-height: 1.1; }
 .ms-l { font-size: calc(2.4 * var(--uh)); color: var(--mut); }
-
-/* ---------- 自定义下注面板（0 ~ MAX=全下） ----------
- * 独立成行插在 mybar 与 actbar 之间，不占手牌区高度；牌桌 felt(flex:1) 自动让位。
- * 高度控制在 ~15uh 内，19.5:9 扁屏也不会把行动条顶出视口。 */
-.raise-custom {
-  flex-shrink: 0;
-  margin-top: calc(0.8 * var(--uh));
-  padding: calc(1.2 * var(--uh)) calc(2.4 * var(--uw)) calc(1.4 * var(--uh));
-  box-sizing: border-box;
-  background: linear-gradient(170deg, rgba(255,255,255,.06), rgba(255,255,255,.02));
-  border: 1rpx solid rgba(232,163,61,.28);
-  border-radius: calc(2.4 * var(--uh));
-}
-/* 标题行：标签 + 数字输入框 + 上下限说明 */
-.rc-head {
-  display: flex; align-items: center;
-  height: calc(4.4 * var(--uh));
-}
-.rc-label {
-  flex: none; font-size: calc(3 * var(--uh)); color: var(--mut); margin-right: calc(2 * var(--uw));
-}
-.rc-input {
-  flex: none;
-  width: calc(17 * var(--uw)); height: calc(4.4 * var(--uh));
-  box-sizing: border-box; padding: 0 calc(1.4 * var(--uw));
-  font-size: calc(3.4 * var(--uh)); font-weight: 700; color: var(--gold);
-  text-align: center;
-  background: rgba(0,0,0,.35);
-  border: 1rpx solid rgba(232,163,61,.5);
-  border-radius: calc(1.4 * var(--uh));
-}
-.rc-max {
-  flex: 1; min-width: 0; margin-left: calc(2 * var(--uw));
-  font-size: calc(2.5 * var(--uh)); color: var(--mut);
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-}
-/* 滑杆：0 ~ MAX 连续可调（MAX 即全下金额） */
-.rc-slider { margin: calc(0.4 * var(--uh)) 0 calc(0.2 * var(--uh)); }
-/* 快捷档：最小 / ½池 / 底池 / 全下 */
-.rc-quick { display: flex; align-items: center; }
-.rc-q {
-  flex: 1; text-align: center;
-  font-size: calc(2.8 * var(--uh)); color: var(--ink);
-  line-height: calc(4.4 * var(--uh));
-  background: rgba(255,255,255,.07);
-  border: 1rpx solid rgba(255,255,255,.13);
-  border-radius: calc(1.4 * var(--uh));
-  margin-right: calc(1.6 * var(--uw));
-}
-.rc-q:last-child { margin-right: 0; }
-.rc-q:active {
-  background: rgba(232,163,61,.22); border-color: rgba(232,163,61,.7); color: #ffd98a;
-}
 
 /* 行动条：三个大按钮 + 拉大间距（微扑克：防误触）。
  * 高度收紧：11.5uh 足够指尖点击，同时保证在 19.5:9 扁屏上也不把底部顶出视口。 */
@@ -672,7 +662,9 @@
 .summary-sub { font-size: calc(2.9 * var(--uh)); color: var(--mut); text-align: center; margin-top: calc(0.7 * var(--uh)); }
 .summary-rows { margin-top: calc(2 * var(--uh)); overflow-y: auto; min-height: 0; flex: 1; }
 .summary-row {
-  display: flex; align-items: center; padding: calc(1 * var(--uh)) calc(1.6 * var(--uw));
+  display: flex; align-items: center; box-sizing: border-box;
+  min-height: calc(10.2 * var(--uh));   /* 钉死行高：有牌/无牌的行等高，列表不参差 */
+  padding: calc(1 * var(--uh)) calc(1.6 * var(--uw));
   border-radius: calc(1.4 * var(--uh)); margin-bottom: calc(0.7 * var(--uh)); background: rgba(255,255,255,.04);
 }
 .summary-row.me { background: rgba(232,163,61,.14); border: 1rpx solid rgba(232,163,61,.36); }
@@ -682,9 +674,35 @@
 /* 单手结算弹窗：牌型/状态列（摊牌=牌型名，弃牌=「弃牌」） */
 .sr-hand {
   font-size: calc(2.8 * var(--uh)); color: var(--mut); flex: none;
-  margin: 0 calc(2 * var(--uw)); max-width: 240rpx;
+  margin: 0 calc(1.6 * var(--uw)); max-width: 190rpx;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+/* 摊牌手牌（迷你牌面）：亮牌者显示两张底牌，弃牌者 cards 为空 →
+   容器宽度固定（2 张牌 + 间距），列不会因有没有牌而左右错位。
+   尺寸按弹窗高度预算反推：牌高 8.6uh 时 5 行仍在 640rpx 弹窗内不滚动。 */
+.sr-cards {
+  flex: none; display: flex; align-items: center;
+  width: calc(12 * var(--uh) + 0.6 * var(--uw));
+  margin: 0 calc(1.6 * var(--uw));
+}
+.hc {
+  width: calc(6 * var(--uh)); height: calc(8.2 * var(--uh));
+  flex: none; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  border-radius: calc(1 * var(--uh));
+  background: linear-gradient(160deg, #fffdf7, #ece5d4);
+  border: 1rpx solid rgba(0,0,0,.16);
+  box-shadow: 0 calc(0.3 * var(--uh)) calc(0.8 * var(--uh)) rgba(0,0,0,.3);
+  color: #1a1a1a; line-height: 1;
+}
+.hc + .hc { margin-left: calc(0.6 * var(--uw)); }
+.hc-r { font-size: calc(2.8 * var(--uh)); font-weight: 800; }
+.hc-s { font-size: calc(2.4 * var(--uh)); margin-top: calc(0.2 * var(--uh)); }
+/* 参与最佳成手 5 张的底牌：金边高亮，一眼看出「为什么他赢」 */
+.hc.hi { border-color: var(--gold); box-shadow: 0 0 0 calc(0.5 * var(--uh)) rgba(232,163,61,.55); }
+.hc.s-diamond, .hc.s-heart { color: #d0342c; }
+/* 四色牌模式（根节点 .four-color）：♠黑 / ♣绿 / ♦蓝 / ♥红 */
+.four-color .hc.s-club { color: #1f9d55; }
+.four-color .hc.s-diamond { color: #2f6fd6; }
 .sr-net { font-size: calc(3.4 * var(--uh)); font-weight: 800; color: #cfe0d9; flex: none; min-width: 96rpx; text-align: right; }
 .sr-net.up { color: #ff6b5a; }
 .sr-net.down { color: #4caf7d; }

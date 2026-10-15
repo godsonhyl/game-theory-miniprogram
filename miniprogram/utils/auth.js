@@ -34,6 +34,16 @@ const CARD_RULES = {
 /** 不限时房间存活上限：24 小时（与本地续局快照 TTL 一致） */
 const ROOM_TTL_MS = 24 * 60 * 60 * 1000;
 
+/**
+ * 昵称相关常量
+ *  - DEFAULT_NICK：建档时的占位名。它同时是「用户还没设过昵称」的判据，
+ *    各处据此决定是否引导用户去设置，改动这两个值要保持同步。
+ *  - NICK_MAX：微信昵称本身最长 32 字节，取 16 可容纳纯汉字，同时保证牌桌
+ *    名牌（一行文本）不溢出。
+ */
+const DEFAULT_NICK = '玩家';
+const NICK_MAX = 16;
+
 const auth = {
   /**
    * 微信静默登录
@@ -92,9 +102,10 @@ const auth = {
     if (data) return data;
 
     // 首次登录：建档。owner_id 交给数据库 DEFAULT auth.uid() 填，客户端不传。
+    // 昵称留占位值，等用户在「我的」页用 <input type="nickname"> 设一次。
     const created = await cloud.database
       .from(T.profile)
-      .insert({ nickname: '玩家' })
+      .insert({ nickname: DEFAULT_NICK })
       .select()
       .single();
 
@@ -121,6 +132,47 @@ const auth = {
       throw new Error('没有改动任何数据，该资料可能不存在或不属于你');
     }
     return data[0];
+  },
+
+  // ---------- 昵称 ----------
+
+  /**
+   * 我的牌桌显示名：优先玩家档案里的昵称，没设过才回落 fallback。
+   *
+   * ⚠️ 微信拿不到真实昵称：wx.getUserProfile / getUserInfo 早已回收，返回的
+   * 是「微信用户」这类占位值。目前唯一合规且能拿到真名的是头像昵称填写能力
+   * —— <input type="nickname">，由用户点一下、再用微信弹出的「用微信昵称」
+   * 一键填入。所以昵称必须由玩家自己设一次并落进 poker_profiles.nickname，
+   * 别指望登录链路静默带回来。
+   */
+  myName(fallback) {
+    try {
+      const p = getApp().globalData.profile;
+      const n = p && p.nickname;
+      if (n && n !== DEFAULT_NICK) return n;
+    } catch (e) { /* globalData 未就绪：用兜底名，不阻断渲染 */ }
+    return fallback || DEFAULT_NICK;
+  },
+
+  /** 昵称是否还是建档时的占位值（用于决定是否引导用户去设置） */
+  isDefaultNickname(nick) {
+    return !nick || String(nick).trim() === '' || String(nick).trim() === DEFAULT_NICK;
+  },
+
+  /**
+   * 保存昵称：去空白 → 长度校验 → 落库。失败抛错，由调用方 toast。
+   * @returns {Promise<object>} 更新后的档案行
+   */
+  async saveNickname(nick) {
+    const v = String(nick == null ? '' : nick).trim().replace(/\s+/g, ' ');
+    if (!v) throw new Error('昵称不能为空');
+    if (v.length > NICK_MAX) throw new Error('昵称最多 ' + NICK_MAX + ' 个字');
+    const row = await this.updateProfile({ nickname: v });
+    try {
+      const g = getApp().globalData;
+      g.profile = Object.assign({}, g.profile, { nickname: v });
+    } catch (e) { /* 非致命：档案已在库，下次登录自然同步 */ }
+    return row;
   },
 
   /**
@@ -359,4 +411,4 @@ const auth = {
   }
 };
 
-module.exports = { auth, TABLES: T };
+module.exports = { auth, TABLES: T, DEFAULT_NICK, NICK_MAX };

@@ -2,7 +2,27 @@
   <view class="head">
     <view class="head-badge ic ic-spade"></view>
     <view class="head-avatar">{{initial}}</view>
-    <text class="head-name">{{nickname}}</text>
+
+    <!-- 昵称：未进入编辑 → 显示当前名字 + 改名入口 -->
+    <view class="head-row" wx:if="{{!editing}}">
+      <text class="head-name">{{nickname}}</text>
+      <view class="nick-edit" bindtap="onEditNick">改名</view>
+    </view>
+
+    <!--
+      编辑态：微信官方「头像昵称填写能力」的昵称输入框。
+      用户点一下输入框，键盘上方会弹出「用微信昵称」，一键填入本人的微信昵称
+      —— 这是目前唯一合规且能拿到真实昵称的途径（wx.getUserProfile 早已回收）。
+    -->
+    <input wx:else class="nick-input" type="nickname" value="{{nickInput}}"
+           placeholder="点此填入微信昵称" placeholder-class="nick-ph"
+           maxlength="{{nickMax}}" bindinput="onNickInput" bindconfirm="onSaveNick" />
+    <view class="nick-ops" wx:if="{{editing}}">
+      <view class="nick-btn" bindtap="onCancelNick">取消</view>
+      <view class="nick-btn primary" bindtap="onSaveNick">保存</view>
+    </view>
+    <text class="head-tip" wx:if="{{editing || nickDefault}}">牌桌上按这个名字显示，同桌好友可见</text>
+
     <text class="head-sub">玩家画像与历史战绩</text>
   </view>
 

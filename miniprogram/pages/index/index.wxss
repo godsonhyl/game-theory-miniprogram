@@ -38,6 +38,19 @@
 }
 .hero-cards { position: relative; }
 
+/* 昵称未设置时的引导条 */
+.nick-tip {
+  display: flex; align-items: center;
+  background: rgba(217,164,65,.1); border: 1rpx solid rgba(217,164,65,.28);
+  border-radius: 20rpx; padding: 20rpx 24rpx; margin: -12rpx 0 32rpx;
+}
+.nick-tip-i { font-size: 26rpx; color: #d9a441; margin-right: 14rpx; }
+.nick-tip-t { flex: 1; min-width: 0; font-size: 22rpx; color: #cfe0d9; line-height: 1.4; }
+.nick-tip-a {
+  flex: none; margin-left: 16rpx; padding: 8rpx 26rpx; border-radius: 999rpx;
+  background: #d9a441; color: #1a1a1a; font-size: 22rpx; font-weight: 700;
+}
+
 /* 房卡弹窗：三条获取途径 */
 .card-row {
   display: flex; align-items: center; justify-content: space-between;
@@ -122,28 +135,39 @@
 .state-err .state-title { color: #e05c4b; }
 .state-btn { margin-top: 40rpx; width: 300rpx; }
 
-/* 加入房间弹窗 */
+/* 弹窗：遮罩 + 面板（加入房间 / 创建房间 / 房卡 / 设置 共用一套外壳） */
 .join-mask {
   position: fixed; top: 0; left: 0; right: 0; bottom: 0;
-  background: rgba(0,0,0,.6);
+  background: rgba(6,14,12,.74);
   display: flex; align-items: center; justify-content: center;
   z-index: 50;
 }
 .join-dialog {
-  width: 560rpx; background: #12261f;
-  border: 1rpx solid rgba(217,164,65,.35); border-radius: 24rpx;
-  padding: 40rpx 36rpx; display: flex; flex-direction: column; align-items: center;
+  width: 620rpx; max-height: 88vh;
+  background: linear-gradient(180deg, #17322b 0%, #0f2a23 100%);
+  border: 1rpx solid rgba(217,164,65,.3); border-radius: 28rpx;
+  padding: 36rpx 36rpx 30rpx;
+  box-shadow: 0 24rpx 64rpx rgba(0,0,0,.55);
+  display: flex; flex-direction: column; align-items: center;
 }
-.join-title { font-size: 34rpx; font-weight: 700; color: #d9a441; }
-.join-sub { font-size: 22rpx; color: #8fa8a0; margin-top: 10rpx; }
+.join-title { font-size: 34rpx; font-weight: 800; color: #e8c273; letter-spacing: 1rpx; }
+.join-sub {
+  font-size: 22rpx; color: #8fa8a0; margin-top: 10rpx;
+  text-align: center; line-height: 1.45;
+}
 .join-input {
   width: 100%; height: 88rpx; margin-top: 30rpx;
   background: rgba(255,255,255,.06); border: 1rpx solid rgba(255,255,255,.14);
   border-radius: 14rpx; text-align: center; font-size: 40rpx; font-weight: 800;
   color: #eaf2ee; letter-spacing: 8rpx;
 }
-.join-btns { display: flex; width: 100%; margin-top: 30rpx; }
-.join-btn { flex: 1; margin-right: 20rpx; }
+.join-btns { display: flex; width: 100%; margin-top: 28rpx; }
+/* padding/height/line-height 显式钉死：button 自带内边距会把长文案挤到第二行 */
+.join-btn {
+  flex: 1; margin-right: 20rpx; padding: 0;
+  height: 92rpx; line-height: 92rpx; font-size: 29rpx;
+  white-space: nowrap; overflow: visible;
+}
 .join-btn:last-child { margin-right: 0; }
 
 /* 我的房间 */
@@ -211,20 +235,56 @@
 .switch.on { background: linear-gradient(160deg, #f4d78a, #d9a441); }
 .switch.on .knob { transform: translateX(38rpx); }
 
-/* 创建房间：人数 / 时长选项 */
-.opt-label {
-  display: block; font-size: 26rpx; font-weight: 700; color: #eaf2ee;
-  margin: 28rpx 0 14rpx;
+/* 创建房间：人数 / 时长（步进器 + 预设胶囊） */
+.field { width: 100%; margin-top: 26rpx; }
+.field-head {
+  display: flex; align-items: baseline; justify-content: space-between;
+  margin-bottom: 14rpx;
 }
-.opt-row { display: flex; flex-wrap: wrap; }
-.opt {
-  font-size: 25rpx; color: #a9c2b9; padding: 14rpx 26rpx; margin: 0 16rpx 16rpx 0;
-  border-radius: 14rpx; background: rgba(255,255,255,.07);
-  border: 1rpx solid rgba(255,255,255,.12);
+.field-name { font-size: 27rpx; font-weight: 700; color: #eaf2ee; }
+.field-hint { font-size: 20rpx; color: #7e968e; }
+
+.stepper {
+  display: flex; align-items: center;
+  background: rgba(255,255,255,.045); border: 1rpx solid rgba(255,255,255,.1);
+  border-radius: 999rpx; padding: 8rpx;
 }
-.opt.on {
+.step-btn {
+  width: 68rpx; height: 68rpx; flex: none; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 38rpx; font-weight: 700; line-height: 1; color: #eaf2ee;
+  background: rgba(255,255,255,.08); border: 1rpx solid rgba(255,255,255,.12);
+}
+.step-btn:active { background: rgba(217,164,65,.22); border-color: rgba(217,164,65,.55); }
+.step-btn.off { opacity: .3; }
+.step-val { flex: 1; display: flex; align-items: baseline; justify-content: center; }
+.sv-num { font-size: 48rpx; font-weight: 800; color: #d9a441; line-height: 1; }
+.sv-unit { font-size: 24rpx; color: #a9c2b9; margin-left: 8rpx; }
+.sv-word { font-size: 36rpx; font-weight: 700; color: #d9a441; }
+
+.chips { display: flex; margin-top: 16rpx; }
+.chip {
+  flex: 1; text-align: center; white-space: nowrap;
+  font-size: 22rpx; color: #a9c2b9; line-height: 1;
+  padding: 16rpx 0; border-radius: 12rpx;
+  background: rgba(255,255,255,.06); border: 1rpx solid rgba(255,255,255,.1);
+  margin-right: 12rpx;
+}
+.chip:last-child { margin-right: 0; }
+.chip:active { background: rgba(255,255,255,.14); }
+.chip.on {
   color: #2a1c05; font-weight: 700;
   background: linear-gradient(160deg, #f4d78a, #d9a441);
   border-color: #d9a441;
 }
-.opt-note { display: block; font-size: 21rpx; color: #8fa8a0; line-height: 1.5; margin-top: 4rpx; }
+
+/* 弹窗底部的摘要与说明 */
+.dlg-note {
+  display: block; width: 100%; margin-top: 24rpx; text-align: center;
+  font-size: 23rpx; font-weight: 600; color: #d9a441;
+}
+.dlg-note-sub {
+  display: block; width: 100%; margin-top: 8rpx; text-align: center;
+  font-size: 20rpx; color: #7e968e; line-height: 1.5;
+}
+.opt-note { display: block; font-size: 21rpx; color: #8fa8a0; line-height: 1.5; margin-top: 22rpx; }

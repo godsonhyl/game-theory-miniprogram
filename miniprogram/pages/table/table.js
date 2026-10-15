@@ -13,6 +13,7 @@ const app = getApp();
 const { auth } = require('../../utils/auth');
 const { settings } = require('../../utils/settings');
 const roomSync = require('../../utils/room-sync');
+const sfx = require('../../utils/sfx');   // 合成音效（发牌/下注/加注/全下/获胜…）
 
 /**
  * 单次行动倒计时（秒）：计时环按此值计算进度。
@@ -58,7 +59,15 @@ function ringPositions(seatSet, mySeat) {
   return pos;
 }
 
-const NAMES = ['你', '林小满', '陈默', '苏晴', '赵岩', '周叙'];
+/** 电脑玩家名（AI 桌的预设对手；NAMES[0] 是「我」的占位，组局时按 mySeat 覆盖） */
+const BOT_NAMES = ['林小满', '陈默', '苏晴', '赵岩', '周叙'];
+const NAMES = ['你'].concat(BOT_NAMES);
+
+/** AI 桌等待室提示：按是否已坐下切换（好友房用的是 seatHint，互不干扰） */
+const AI_WAIT_HINT = {
+  sitting: '点任一空位选座位坐下，坐下后自动安排 AI 对手',
+  seated: '点「开始游戏」发牌；想多人混战可继续「添加电脑玩家」'
+};
 const QUICK_TALK = ['打得不错', '运气真好', '好牌！', '跟一手', '谢谢', '再想想'];
 const EMOJIS = ['👍', '😂', '😮', '🔥', '💰', '😢'];
 
@@ -76,10 +85,12 @@ const READY_TIMEOUT_SEC = 60;
 
 /**
  * 结算展示时序（毫秒）：一手结束（摊牌亮牌）后，先在牌桌上停留亮牌
- * RESULT_SHOW_MS ≈ 5 秒（看各家底牌与赢家），再弹出「每人盈亏」结算弹窗；
- * 弹窗停留 RESULT_MODAL_MS 后自动关闭进入就绪阶段（防无人操作卡局）。
- * 点「查看结算」可跳过亮牌等待，点「下一手」可提前关弹窗。
- * 镜像端弹窗时序跟随本地调度，就绪阶段以房主广播为准。
+ * RESULT_SHOW_MS ≈ 5 秒（看各家底牌与赢家），随后**直接进就绪阶段**——
+ * 「每人盈亏」结算弹窗不自动弹出，由用户点「查看结算」主动打开
+ * （摘要条 / 就绪条都有入口，与「准备就绪」并存）。
+ * 弹窗打开后 RESULT_MODAL_MS 自动关闭（防挂屏）；亮牌展示期内打开的，
+ * 关闭时顺带进就绪；就绪期内打开的只关弹窗、不重置就绪计票。
+ * 镜像端就绪阶段以房主广播为准。
  */
 const RESULT_SHOW_MS = 5000;
 const RESULT_MODAL_MS = 10000;
@@ -135,7 +146,8 @@ Page({
     ownerSeat: 0,         // 房主默认坐 0 号位（可在等待室换座）
     isOwner: true,        // 是否房主（访客从分享卡片进入时只有观看/等待权限）
     syncLive: false,      // 跨设备同步是否可用（false = 本地引擎模拟降级）
-    seatHint: '',         // 等待室选座提示
+    seatHint: '',         // 等待室选座提示（好友房）
+    waitHint: '',         // 等待室选座提示（AI 桌：引导挑座位后才发牌）
     rootStyle: '',        // JS 实测视口变量（--uh/--uw），注入页面根节点
 
     // 用户设置（参考主流 App 的 Table Appearance 自定义）
@@ -198,7 +210,7 @@ Page({
     raiseCustom: false,
     raiseMin: 0,
     raiseMax: 0,
-    // 实际会提交的加注额 / 是否等价于全下（与 onRaise 钳制口径一致，仅用于按钮文案）
+    // 实际会提交的加注额 / 是否等价于全下（与 onRaise 同口径，仅用于按钮文案）
     raiseSubmit: 0,
     raiseAllIn: false,
 
@@ -239,7 +251,9 @@ Page({
     // 跨设备同步状态（好友房）：mySeat = 本地渲染座位（好友镜像端恒 0）；
     // roomSeat = 云端座位号（自选座位，-1 = 未选座）
     this.mySeat = 0;
-    this.roomSeat = this.isOwner ? 0 : -1;
+    // 好友房房主沿用 0 号位（房间是自己的）；AI 桌与好友访客一样不预占，
+    // 进等待室后由玩家自己挑位置坐下
+    this.roomSeat = (this.mode === 'friend' && this.isOwner) ? 0 : -1;
     this.remoteMode = false;   // 好友端镜像模式：不跑引擎，只渲染房主广播
     this.syncLive = false;
     this.roomRows = [];        // 最近一次轮询到的座位行
@@ -283,6 +297,10 @@ Page({
       animOn: s.animation
     });
     this.updateViewport();
+    // 音效事件泵：300ms 轮询消化引擎事件流（game.events）→ 播音效。
+    // 与渲染解耦——对手在计时器/看门狗路径里的动作也能及时发声。
+    this.sfxSeq = 0;          // 已消费的事件序号（首手从 0 开始，天然不播历史音）
+    this.startSfxPump();
     if (this.mode === 'friend' && wx.showShareMenu) {
       wx.showShareMenu({ withShareTicket: false, menus: ['shareAppMessage', 'shareTimeline'] });
     }
@@ -292,16 +310,9 @@ Page({
       this.bootstrapSync();
       if (!this.restoreRoom()) this.initWaiting();
     } else {
-      // AI 对战：直接进入牌桌（开局异常也不无声卡死，给出明确提示）
-      try {
-        const started = this.initGame();
-        if (!started) wx.showToast({ title: '开局失败，请退出重进', icon: 'none' });
-      } catch (e) {
-        console.error('[table] AI 开局异常', JSON.stringify({
-          stage: 'init-ai', message: e && e.message, stack: e && e.stack
-        }));
-        wx.showToast({ title: '开局失败，请退出重进', icon: 'none' });
-      }
+      // AI 对战：与好友房共用同一间等待室——先挑座位坐下、点「开始游戏」才发牌，
+      // 不再一进就自动开局。差别只在：无房间号、不跨设备同步、坐下后自动补 AI 对手。
+      this.initWaiting();
     }
   },
 
@@ -349,6 +360,15 @@ Page({
   },
 
   /**
+   * 我这一位的显示名：默认取我的昵称（微信名），没设过才回落「你」。
+   * 「（房主）」只在好友房里才有意义——AI 桌没有房主，别往名字后面堆后缀。
+   */
+  meLabel(withOwner) {
+    const n = auth.myName('你');
+    return (withOwner && this.mode === 'friend') ? n + '（房主）' : n;
+  },
+
+  /**
    * 等待室座位 → 牌桌座位环渲染数据：给每个座位算出环形坐标（与游戏中共用
    * ringPositions，锚定在我的座位 → 开局时座位位置连续无跳变），并补齐渲染字段。
    */
@@ -361,7 +381,7 @@ Page({
     return list.map(s => {
       const p = pos[s.seat] || { x: 50, y: 20 };
       const empty = !s.occupied;
-      const name = s.isMe ? (s.isOwner ? '你（房主）' : '你') : (s.name || '');
+      const name = s.isMe ? this.meLabel(s.isOwner) : (s.name || '');
       return {
         seat: s.seat,
         seatNo: s.seat + 1,
@@ -392,10 +412,13 @@ Page({
     const owner = this.data.ownerSeat;
     const guestSeat = 1;
     const ws = [];
+    // 好友房：房主坐 0 号位、访客自动落 1 号位。
+    // AI 桌：一张空桌——没有人预占，玩家自己挑哪个位置坐下（选座是这里的核心）。
+    const presetByRole = this.mode === 'friend';
     // 按房间设定的限定人数生成座位（2 / 4 / 6）
     for (let i = 0; i < this.maxSeats; i++) {
-      const isOwnerSeat = i === owner;
-      const isGuestSeat = !this.isOwner && i === guestSeat;
+      const isOwnerSeat = presetByRole && i === owner;
+      const isGuestSeat = presetByRole && !this.isOwner && i === guestSeat;
       if (isOwnerSeat || isGuestSeat) this.buyInStack[i] = DEFAULT_BUY_IN;
       ws.push({
         seat: i,
@@ -403,21 +426,51 @@ Page({
         isOwner: isOwnerSeat,
         isMe: isOwnerSeat ? this.isOwner : isGuestSeat,
         isBot: false,
-        name: isOwnerSeat ? (this.isOwner ? '你（房主）' : '房主') : (isGuestSeat ? '你' : ''),
+        name: isOwnerSeat ? (this.isOwner ? this.meLabel(true) : '房主') : (isGuestSeat ? this.meLabel(false) : ''),
         isHost: isOwnerSeat,
         stack: (isOwnerSeat || isGuestSeat) ? DEFAULT_BUY_IN : 0
       });
     }
-    const occupiedCount = ws.filter(s => s.occupied).length;
     this.setData({
       phase: 'waiting',
       waitSeats: ws,
       seats: this.buildWaitSeats(ws),
-      canStart: this.isOwner && occupiedCount >= 2,
+      canStart: this.canStartOf(ws),
       syncLive: this.syncLive,
-      seatHint: this.syncLive && !this.isOwner && this.roomSeat < 0 ? '点击空位入座' : ''
+      seatHint: this.syncLive && !this.isOwner && this.roomSeat < 0 ? '点击空位入座' : '',
+      waitHint: this.mode === 'friend' ? '' : AI_WAIT_HINT.sitting
     });
     if (this.isOwner) this.armExpire();   // 仅房主侧计时：30 分钟无人加入自动销毁
+  },
+
+  /** 可开始条件：必须自己是房主（AI 桌即本人），且至少 2 人坐下 */
+  canStartOf(seats) {
+    return this.isOwner && (seats || []).filter(s => s.occupied).length >= 2;
+  },
+
+  /**
+   * AI 桌自动补位：玩家坐下后把同桌补到能开局的最少人数（2 人）。
+   * 不替玩家一次加满——想打多人桌由他自己点「添加电脑玩家」逐步加，
+   * 但至少保证「坐下即可开始」，不会卡在按钮是灰的状态。
+   */
+  fillBots() {
+    if (this.mode === 'friend') return;
+    const seats = (this.data.waitSeats || []).slice();
+    let botNo = seats.filter(s => s.isBot).length;
+    while (seats.filter(s => s.occupied).length < 2) {
+      const empty = seats.find(s => !s.occupied);
+      if (!empty) break;   // 座位数为 1 的极端情况：无法补位
+      empty.occupied = true;
+      empty.isBot = true;
+      empty.name = this.botLabel(botNo);
+      empty.stack = DEFAULT_BUY_IN;
+      botNo++;
+    }
+    this.setData({
+      waitSeats: seats,
+      seats: this.buildWaitSeats(seats),
+      canStart: this.canStartOf(seats)
+    });
   },
 
   // ---------- 跨设备同步（poker_room_seats：每人行 + 房主广播） ----------
@@ -441,12 +494,13 @@ Page({
         // 房主重进房间：把历史动作序号先推到最新，避免重放离开期间积压的动作
         this.appliedSeq = roomSync.pendingActions(rows, 0).nextSeq;
       }
-      // 昵称：优先取玩家档案，失败用兜底名
-      let name = this.isOwner ? '房主' : '好友';
+      // 名字：广播给同桌好友看的那份，默认用我的微信昵称；
+      // ensureProfile 顺带把登录态里的档案补齐（否则 myName 只能回落兜底名）
       try {
         const p = await auth.ensureProfile();
-        if (p && p.nickname) name = this.isOwner ? (p.nickname || '房主') : (p.nickname || '好友');
+        if (p) app.globalData.profile = p;
       } catch (e) { /* 档案读取失败用兜底名，不阻断同步 */ }
+      const name = auth.myName(this.isOwner ? '房主' : '好友');
       // 买入额：房主沿用上次选择（重进房间不重置），好友入座时再选
       const mineRow = rows.filter(r => r.is_host)[0];
       const joinStack = this.isOwner && mineRow && mineRow.stack ? mineRow.stack : DEFAULT_BUY_IN;
@@ -651,7 +705,7 @@ Page({
       if (s.seat === seat) {
         return {
           seat: s.seat, occupied: true, isBot: false, isMe: true, isOwner: this.isOwner,
-          name: this.isOwner ? '你（房主）' : '你', isHost: this.isOwner, stack: buyIn
+          name: this.meLabel(this.isOwner), isHost: this.isOwner, stack: buyIn
         };
       }
       if (s.seat === prev) {
@@ -659,7 +713,14 @@ Page({
       }
       return s;
     });
-    this.setData({ waitSeats: seats, seats: this.buildWaitSeats(seats), seatHint: '' });
+    this.setData({
+      waitSeats: seats,
+      seats: this.buildWaitSeats(seats),
+      seatHint: '',
+      waitHint: this.mode === 'friend' ? '' : AI_WAIT_HINT.seated
+    });
+    // AI 桌：坐下后立刻补一个对手，保证「开始游戏」直接可点
+    this.fillBots();
     if (!this.syncLive) return;   // 本地模式：仅本地生效，不走云端换座
     roomSync.moveSeat(this.roomNo, seat, buyIn)
       .then(() => { if (this.isOwner) this.publishWait(); })
@@ -918,9 +979,10 @@ Page({
     this.myStanding = !!snap.standing;   // 站起观战状态随续局恢复
     this.pendingSit = !!snap.pendingSit; // 「已坐下待入局」状态随续局恢复
 
-    const players = snap.seats.map(s => ({
-      id: s.isMe ? 'me' : 'p' + s.seat,
-      name: s.name || '玩家',
+      const players = snap.seats.map(s => ({
+        id: s.isMe ? 'me' : 'p' + s.seat,
+        // 续局：我的名字始终用当前昵称（快照里存的是上一局的名字，可能已改过）
+        name: s.isMe ? auth.myName('你') : (s.name || '玩家'),
       seat: s.seat,
       stack: s.stack > 0 ? s.stack : 1000,
       isHuman: !!s.isMe,
@@ -987,9 +1049,15 @@ Page({
     const botNo = seats.filter(s => s.isBot).length + 1;
     empty.occupied = true;
     empty.isBot = true;
-    empty.name = '好友' + botNo;
+    // 好友房沿用「好友N」（等真人来了换号的占位叫法）；AI 桌用预设对手名
+    empty.name = this.botLabel(botNo - 1);
+    empty.stack = Number(empty.stack) || DEFAULT_BUY_IN;
     const occupiedCount = seats.filter(s => s.occupied).length;
-    this.setData({ waitSeats: seats, seats: this.buildWaitSeats(seats), canStart: occupiedCount >= 2 });
+    this.setData({
+      waitSeats: seats,
+      seats: this.buildWaitSeats(seats),
+      canStart: this.canStartOf(seats)
+    });
     // 第一位好友坐下 → 房间「有人进去了」，取消自动销毁
     if (occupiedCount >= 2) this.clearExpire();
     this.publishWait();   // 广播机器人布局，好友端同步可见
@@ -1006,10 +1074,19 @@ Page({
     t.isBot = false;
     t.name = '';
     let n = 0;
-    seats.forEach(s => { if (s.isBot) s.name = '好友' + (++n); });
+    seats.forEach(s => { if (s.isBot) s.name = this.botLabel(n++); });
     const occupiedCount = seats.filter(s => s.occupied).length;
-    this.setData({ waitSeats: seats, seats: this.buildWaitSeats(seats), canStart: occupiedCount >= 2 });
+    this.setData({
+      waitSeats: seats,
+      seats: this.buildWaitSeats(seats),
+      canStart: this.canStartOf(seats)
+    });
     this.publishWait();
+  },
+
+  /** 电脑玩家的名字：AI 桌用预设对手名，好友房叫「好友N」 */
+  botLabel(idx) {
+    return this.mode === 'friend' ? ('好友' + (idx + 1)) : BOT_NAMES[idx % BOT_NAMES.length];
   },
 
   /** 复制房间号 */
@@ -1085,6 +1162,7 @@ Page({
       return;
     }
     this._starting = true;
+    if (this.data.soundOn) sfx.play('click');
     try {
       // 开局前先拉一次最新座位布局（加机器人/好友入座后可能还没轮到轮询）
       if (this.syncLive) {
@@ -1092,8 +1170,8 @@ Page({
       }
       const toPlayer = s => ({
         id: s.isMe ? 'me' : (s.isBot ? 'bot' + s.seat : 'p' + s.seat),
-        // 房主用自己的昵称/「房主」（好友端能看到；房主自己界面不显示自己的名字）
-        name: s.isMe ? (s.name || '你') : (s.name || '玩家'),
+        // 我的名字用微信昵称（好友端能看到）；他人沿用云端广播/等待室里的名字
+        name: s.isMe ? (s.name || this.meLabel(false)) : (s.name || '玩家'),
         seat: s.seat,
         // 按各自买入额发筹码（未指定者回落到默认买入）
         stack: Number(s.stack) || DEFAULT_BUY_IN,
@@ -1284,6 +1362,7 @@ Page({
     this.clearResultModalTimer();
     this.clearFoldTimer();
     this.stopEngineWatch();
+    this.stopSfxPump();
     this.stopSync();
     // 系统返回手势 / 页面被直接销毁时静默存快照，保证下次进入能续局
     this.saveSnapshot();
@@ -1292,7 +1371,8 @@ Page({
   initGame(players, snap) {
     const ps = players || NAMES.map((name, i) => ({
       id: 'u' + i,
-      name,
+      // AI 桌：我的座位用微信昵称，其余沿用预设对手名（NAMES[0] 是「我」的占位）
+      name: i === this.mySeat ? auth.myName('你') : name,
       seat: i,
       stack: 1000,
       isHuman: i === this.mySeat,
@@ -1422,7 +1502,7 @@ Page({
     }
     this.myStanding = true;
     this.pendingSit = false;
-    this.pushChat(this.mySeat, '你', '站起观战');
+    this.pushChat(this.mySeat, this.meLabel(false), '站起观战');
     if (this.remoteMode) {
       // 镜像端：站起动作上行，房主把该座位标记 sittingOut
       roomSync.pushAction(this.roomNo, { type: 'stand', seat: this.roomSeat }).catch(() => {});
@@ -1453,7 +1533,7 @@ Page({
     if (!this.myStanding && !this.pendingSit) return;   // 已在局内
     this.pendingSit = true;
     this.myStanding = true;    // 本手仍观战，startHand 时才转为入局
-    this.pushChat(this.mySeat, '你', '重新入局');
+    this.pushChat(this.mySeat, this.meLabel(false), '重新入局');
     if (this.remoteMode) {
       // 镜像端：坐下的上行由房主记 pendingSitMap，下一手 startHand 才生效
       roomSync.pushAction(this.roomNo, { type: 'sit', seat: this.roomSeat }).catch(() => {});
@@ -1570,8 +1650,8 @@ Page({
       const raiseMax = (isMyTurn && legal) ? legal.maxRaiseTo : 0;
       // 非我回合 / 不可加注时收起自定义面板，避免残留数值误导
       const raiseCustom = isMyTurn && legal && legal.canRaise ? this.data.raiseCustom : false;
-      // 实际会提交的加注额：与 onRaise 的钳制口径保持一致（低于最小→按最小；到达上限→全下），
-      // 避免滑杆拖到 0 时按钮显示「加注 0」但实际按最小加注执行的「显示与行为不一致」。
+      // 实际会提交的加注额（与 onRaise 钳制同口径，仅用于按钮文案）：
+      // 数字输入框能填出低于下限的值，而失焦补正未必先触发；到达上限则等价全下。
       let raiseSubmit = 0, raiseAllIn = false;
       if (isMyTurn && legal && legal.canRaise) {
         raiseSubmit = Math.max(legal.minRaiseTo, Math.round(this.data.raiseTo || 0));
@@ -1633,17 +1713,18 @@ Page({
         });
       } catch (e2) { /* 连降级都失败时放弃本帧 */ }
     }
-    // 结算弹窗调度（本地端与镜像端统一走这里）：
-    // 摊牌亮牌先在牌桌上停留 RESULT_SHOW_MS，之后弹出每人盈亏弹窗。
-    // 每手只调度一次（resultModalHand 守卫），已弹过/已关闭不再重弹，
-    // 避免镜像端每 2s 轮询重复挂表、弹窗关了又弹。
+    // 结算展示调度（本地端与镜像端统一走这里）：
+    // 摊牌亮牌先在牌桌上停留 RESULT_SHOW_MS 让各家牌面完整可见，之后**自动弹出**
+    // 「每人盈亏」结算弹窗；弹窗停留 RESULT_MODAL_MS 自动关闭并进入就绪阶段
+    // （防无人操作卡局）。就绪条上另留「查看结算」入口可随时回看明细。
+    // 每手只调度一次（resultModalHand 守卫，防镜像端 2s 轮询重复挂表、重弹）。
     if (game && game.result && !this.data.readyPhase && !this.data.timeUp &&
         this.resultModalHand !== game.handNo) {
       this.resultModalHand = game.handNo;
       this.clearResultTimer();
       this.resultTimer = setTimeout(() => {
         this.resultTimer = null;
-        this.showResultModal();
+        this.showResultModal();   // 镜像端仅开弹窗，就绪阶段以房主广播为准
       }, this.resultShowMs || RESULT_SHOW_MS);
     }
     // 房主端：每次渲染后节流广播最新状态，好友端 1.5s 内看到
@@ -1655,9 +1736,9 @@ Page({
     const s = P.suitOf(card);
     return {
       idx: idx || 0,                 // 供 wx:key 使用的稳定键
-      code: P.cardToCode(card),      // 摊牌时用于判断是否属于最佳成手 5 张
+      code: P.cardToCode(card),      // 摊牌时用于判断是否属于最佳成手 5 张（机读码，恒为 "Th" 形式）
       hi: false,                     // 是否属于最佳 5 张（摊牌高亮）
-      rank: P.RANK_NAMES[P.rankOf(card)],
+      rank: P.RANK_DISPLAY[P.rankOf(card)],   // 界面显示文本（10 显示 "10"，非 "T"）
       suit: P.SUIT_CHARS[s],
       cls: SUIT_CLS[s]
     };
@@ -1672,9 +1753,66 @@ Page({
     });
   },
 
-  /** 操作反馈：震动 + 音效开关（音效暂以震动表达，避免引入音频资源） */
+  /** 操作反馈：震动（音效由 sfx 事件泵按动作类型精确发声，这里不再叠 click） */
   feedback() {
     if (this.data.soundOn && wx.vibrateShort) wx.vibrateShort({ type: 'light' });
+  },
+
+  // ---------- 音效：引擎事件流 → 合成音（utils/sfx.js） ----------
+
+  /** 启动音效事件泵（300ms 轮询；声音开关在 drainSfx 内逐次判断，切换即时生效） */
+  startSfxPump() {
+    this.stopSfxPump();
+    this.sfxPump = setInterval(() => {
+      try { this.drainSfx(); } catch (e) { /* 音效绝不影响牌局 */ }
+    }, 300);
+  },
+
+  stopSfxPump() {
+    if (this.sfxPump) { clearInterval(this.sfxPump); this.sfxPump = null; }
+  },
+
+  /**
+   * 消化引擎事件流（game.events，seq 单调递增）→ 音效：
+   *   hand_start/deal → 发牌　action(fold/check/call/raise/allin) → 对应动作音
+   *   hand_end → 我赢 = 胜利琶音，否则中性收尾音。
+   * 「轮到我」提示不依赖 turn 事件（镜像端事件流为空），统一用 isMyTurn
+   * 的 false→true 边沿检测——本地端与镜像端行为一致。
+   * 快照续局/镜像重建会把 events 重置，序号超界时回收敛到当前长度（不补播历史音）。
+   */
+  drainSfx() {
+    if (this.data.phase !== 'playing') return;
+    const events = (game && game.events) || [];
+    if (this.sfxSeq > events.length) this.sfxSeq = events.length;   // 重建后收敛
+    if (this.data.soundOn) {
+      while (this.sfxSeq < events.length) {
+        const e = events[this.sfxSeq++];
+        switch (e.type) {
+          case 'hand_start':
+          case 'deal':
+            sfx.play('deal');
+            break;
+          case 'action':
+            if (e.action === 'fold') sfx.play('fold');
+            else if (e.action === 'check') sfx.play('check');
+            else if (e.action === 'allin') sfx.play('allin');
+            else if (e.action === 'raise') sfx.play('raise');
+            else sfx.play('bet');          // call / 其他下注类
+            break;
+          case 'hand_end':
+            sfx.play((e.winners || []).indexOf(this.mySeat) >= 0 ? 'win' : 'end');
+            break;
+          // turn 事件不在此处理：统一走下方 isMyTurn 边沿（镜像端也有）
+        }
+      }
+      // 轮到我行动：false→true 边沿播提示音（含镜像端；只在游戏中且无结算时）
+      const myTurn = !!this.data.isMyTurn;
+      if (myTurn && !this.sfxWasMyTurn && !(game && game.result)) sfx.play('turn');
+      this.sfxWasMyTurn = myTurn;
+    } else {
+      this.sfxSeq = events.length;         // 静音模式也要推进序号，开声音后不补播
+      this.sfxWasMyTurn = !!this.data.isMyTurn;
+    }
   },
 
   /** 发送一条聊天 / 表情 */
@@ -1686,12 +1824,12 @@ Page({
   },
 
   onQuickChat(e) {
-    this.pushChat(this.mySeat, '你', e.currentTarget.dataset.t);
+    this.pushChat(this.mySeat, this.meLabel(false), e.currentTarget.dataset.t);
     this.feedback();
   },
 
   onEmoji(e) {
-    this.pushChat(this.mySeat, '你', e.currentTarget.dataset.e);
+    this.pushChat(this.mySeat, this.meLabel(false), e.currentTarget.dataset.e);
     this.feedback();
   },
 
@@ -1754,11 +1892,26 @@ Page({
         const holeTxt = rv
           ? rv.hole.map(code => this.codeToStr(code)).join(' ')
           : p.hole.map(c => P.cardToStr(c)).join(' ');
+        // 摊牌结算弹窗里的「手牌牌面」：只亮真正摊牌（rv 存在）的座位，
+        // 弃牌者的牌不公开（muck 不亮牌，扑克通行礼仪），此时 cards 为空数组、
+        // 由 .sr-cards 的固定宽度占位保持各行「牌型 / 盈亏」两列仍对齐。
+        // hi 标记 = 该底牌参与了最佳成手 5 张（摊牌时金边高亮，便于看懂为什么赢）。
+        const bestSet = (rv && rv.hand) ? new Set(rv.hand) : null;
+        const cards = ((rv && rv.hole) ? rv.hole : [])
+          .map((code, ci) => {
+            const id = P.codeToCard(code);
+            if (id < 0) return null;
+            const d = this.cardData(id, ci);
+            d.hi = !!(bestSet && bestSet.has(code));
+            return d;
+          })
+          .filter(Boolean);
         return {
           seat: p.seat,
           name: p.name,
           icon: win ? '🏆 ' : '',
           hand: rv ? holeTxt + ' → ' + rv.name : holeTxt,
+          cards,                    // 结算弹窗的迷你手牌（弃牌为空）
           // 结算条胶囊用的短文本：摊牌显示牌型名；弃牌/未摊牌给状态文案
           short: rv ? rv.name : (p.folded ? '弃牌' : (holeTxt || '未摊牌')),
           committed: p.committed,   // 本手总投入（飞筹动画的筹码量）
@@ -1811,11 +1964,12 @@ Page({
     }
   },
 
-  /** 'As' → 'A♠' */
+  /** 'As' → 'A♠'；'Th' → '10♥' */
   codeToStr(code) {
+    // 解析仍按机读码（单字符点数）走，只有输出改用显示文本
     const r = P.RANK_NAMES.indexOf(code[0]);
     const s = P.SUIT_NAMES.indexOf(code[1]);
-    return (r < 0 || s < 0) ? code : P.RANK_NAMES[r] + P.SUIT_CHARS[s];
+    return (r < 0 || s < 0) ? code : P.RANK_DISPLAY[r] + P.SUIT_CHARS[s];
   },
 
   renderAdvice(isMyTurn) {
@@ -1857,6 +2011,10 @@ Page({
     this.setData({ raiseTo: Math.round(target), raisePreset: v });
   },
 
+  onRaiseChange(e) {
+    this.setData({ raiseTo: e.detail.value, raisePreset: '' });
+  },
+
   // 展开/收起自定义下注面板
   onCustomTap() {
     const legal = this.data.legal;
@@ -1872,12 +2030,28 @@ Page({
     this.setData({ raiseTo: Math.round(e.detail.value), raisePreset: 'custom' });
   },
 
-  // 数字输入：解析并钳制到 [0, raiseMax]
+  // 数字输入：只做清洗与上限。不在输入过程中抬到下限 —— 否则想输「500」时
+  // 刚打完第一个「5」就会被改写成最小加注，后面根本没法接着输。
+  // 上下限直接读 legal（唯一真源），不依赖 render 派生的 raiseMin/raiseMax 快照。
   onRaiseInput(e) {
+    const l = this.data.legal || {};
+    const max = l.maxRaiseTo || this.data.raiseMax || 0;
     let v = parseInt(e.detail.value, 10);
     if (isNaN(v) || v < 0) v = 0;
-    if (this.data.raiseMax && v > this.data.raiseMax) v = this.data.raiseMax;
+    if (max && v > max) v = max;
     this.setData({ raiseTo: v, raisePreset: 'custom' });
+  },
+
+  // 失焦：把低于最小加注的值补到下限，保证界面上显示的数字始终合法
+  onRaiseBlur() {
+    const l = this.data.legal || {};
+    const min = l.minRaiseTo || this.data.raiseMin || 0;
+    if (min && this.data.raiseTo < min) this.setData({ raiseTo: min, raisePreset: 'custom' });
+  },
+
+  // 收起自定义面板 → 恢复档位条（两者互斥，收起即回到「最小/½池/底池/全下」）
+  onCustomClose() {
+    this.setData({ raiseCustom: false });
   },
 
   onCustomMin() { const l = this.data.legal; if (l) this.setData({ raiseTo: l.minRaiseTo, raisePreset: 'custom' }); },
@@ -1921,8 +2095,9 @@ Page({
   onRaise() {
     const legal = this.data.legal;
     if (!legal || !legal.canRaise) return;
-    // 与 render 中 raiseSubmit/raiseAllIn 完全同口径的钳制：
-    // 滑杆/输入允许先拖到 0，但真正提交时至少为最小加注、达到上限即全下。
+    // 提交前把金额钳到合法区间 [minRaiseTo, maxRaiseTo]。
+    // 滑杆本身 min=raiseMin 不会拖出非法值，但数字输入框能（清空后键入 0），
+    // 且 bindblur 的补正只在失焦时发生——点「加注」按钮可能先走这里，故必须兜底。
     const amt = Math.max(legal.minRaiseTo, Math.round(this.data.raiseTo || 0));
     if (amt >= legal.maxRaiseTo) {
       this.doAct('allin', 0, '全下', 'act-a');
@@ -1992,12 +2167,14 @@ Page({
   },
 
   /**
-   * 弹出单手结算弹窗（每人净盈亏）。弹窗打开后 RESULT_MODAL_MS 自动关闭
-   * 并进入就绪阶段（镜像端仅关闭弹窗，就绪状态等房主广播）。
+   * 弹出单手结算弹窗（每人净盈亏 + 摊牌手牌）。只由用户点「查看结算」触发，
+   * 不再自动弹出（摊牌亮牌期与就绪期都可点）。打开后 RESULT_MODAL_MS 自动关闭；
+   * 若关闭时尚未进就绪阶段（亮牌展示期内点开），顺带进入就绪；
+   * 已在就绪阶段则只关弹窗——enterReadyPhase 会清空就绪计票，绝不能误调。
    */
   showResultModal() {
     this.clearResultTimer();
-    if (!this.data.result || this.data.readyPhase || this.data.timeUp) return;
+    if (!this.data.result || this.data.timeUp) return;
     if (this.data.resultModal) return;
     this.setData({ resultModal: this.data.result });
     this.clearResultModalTimer();
@@ -2008,22 +2185,22 @@ Page({
   },
 
   /**
-   * 关闭结算弹窗。proceed=true 时进入就绪阶段（跳过剩余展示）；
-   * 镜像端只关弹窗——就绪阶段由房主广播驱动。
+   * 关闭结算弹窗。proceed=true 且尚未进就绪阶段时，顺带进入就绪（跳过剩余展示）；
+   * 已在就绪阶段只关弹窗。镜像端只关弹窗——就绪阶段由房主广播驱动。
    */
   closeResultModal(proceed) {
     this.clearResultTimer();
     this.clearResultModalTimer();
     if (this.data.resultModal) this.setData({ resultModal: null });
-    if (proceed && !this.remoteMode) this.enterReadyPhase();
+    if (proceed && !this.remoteMode && !this.data.readyPhase) this.enterReadyPhase();
   },
 
-  /** 结算摘要条上的「查看结算」：跳过剩余亮牌等待，立即弹窗 */
+  /** 「查看结算」入口（结算摘要条 / 就绪条上的按钮）：手动打开结算弹窗 */
   onShowResult() {
     this.showResultModal();
   },
 
-  /** 结算弹窗按钮：房主/本地 = 下一手（进就绪计票）；镜像端 = 知道了（仅关闭） */
+  /** 结算弹窗按钮：亮牌展示期内 = 下一手（进就绪计票）；就绪期/镜像端 = 知道了（仅关闭） */
   onResultNext() {
     this.closeResultModal(!this.remoteMode);
   },
@@ -2155,7 +2332,7 @@ Page({
       if (x.seat === this.mySeat) {
         this.myStanding = true;
         this.pendingSit = false;
-        this.pushChat(this.mySeat, '你', '超时未准备，已自动站起');
+        this.pushChat(this.mySeat, this.meLabel(false), '超时未准备，已自动站起');
         wx.showToast({ title: '超时未准备，已自动站起', icon: 'none' });
       } else {
         this.standingMap[x.seat] = true;
@@ -2180,6 +2357,7 @@ Page({
   /** 我点「准备就绪」（未坐下时先提示坐下） */
   onReadyTap() {
     if (!this.data.readyPhase) return;
+    if (this.data.soundOn) sfx.play('click');
     if (this.remoteMode) {
       // 镜像端：写自己行的 ready_hand（下一手手数），房主轮询合入计票
       if (!game) return;

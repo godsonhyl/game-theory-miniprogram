@@ -98,7 +98,41 @@ const pageCtx = Object.assign({}, cfg, {
   /* ---------- 创建房间：人数与时长 ---------- */
   pageCtx.onCreateTap();
   ok(dataStore.createShow === true, '创建房间弹窗可打开');
-  ok(dataStore.cMax === 6 && dataStore.cDur === 0, '默认 6 人桌 · 不限时');
+  ok(dataStore.cMax === 6 && dataStore.cDur === 30, '默认 6 人桌 · 30 分钟（建档默认时长，不再是不限时）');
+  // 人数 2–9 逐人可调（± 按钮），越界自动夹取
+  pageCtx.onMaxStep({ currentTarget: { dataset: { step: '1' } } });
+  ok(dataStore.cMax === 7, '人数可逐人 +1');
+  pageCtx.onMaxStep({ currentTarget: { dataset: { step: '-1' } } });
+  ok(dataStore.cMax === 6, '人数可逐人 −1');
+  pageCtx.onMaxStep({ currentTarget: { dataset: { step: '1' } } });
+  pageCtx.onMaxStep({ currentTarget: { dataset: { step: '1' } } });
+  pageCtx.onMaxStep({ currentTarget: { dataset: { step: '1' } } });
+  ok(dataStore.cMax === 9, '人数上限夹到 9');
+  pageCtx.onMaxStep({ currentTarget: { dataset: { step: '-1' } } });
+  pageCtx.onMaxStep({ currentTarget: { dataset: { step: '-1' } } });
+  pageCtx.onMaxStep({ currentTarget: { dataset: { step: '-1' } } });
+  pageCtx.onMaxStep({ currentTarget: { dataset: { step: '-1' } } });
+  pageCtx.onMaxStep({ currentTarget: { dataset: { step: '-1' } } });
+  pageCtx.onMaxStep({ currentTarget: { dataset: { step: '-1' } } });
+  pageCtx.onMaxStep({ currentTarget: { dataset: { step: '-1' } } });
+  pageCtx.onMaxStep({ currentTarget: { dataset: { step: '-1' } } });
+  ok(dataStore.cMax === 2, '人数下限夹到 2（连点 − 不会越界）');
+  // 时长 10 分钟一档 + 不限时开关
+  pageCtx.onDurStep({ currentTarget: { dataset: { step: '1' } } });
+  ok(dataStore.cDur === 40, '时长可 ±10 分钟');
+  pageCtx.onToggleUnlimited();
+  ok(dataStore.cDur === 0 && dataStore.durLabel === '不限时', '「不限时」开关：切到不限时');
+  pageCtx.onDurStep({ currentTarget: { dataset: { step: '1' } } });
+  ok(dataStore.cDur === 50, '从不限时 +1：接续上次的 40 再 +10（而非从 10 起算）');
+  pageCtx.onToggleUnlimited();
+  ok(dataStore.cDur === 0 && dataStore.cDurLast === 50, '「不限时」→ 再点开关：cDurLast 仍保留 50');
+  pageCtx.onToggleUnlimited();
+  ok(dataStore.cDur === 50 && dataStore.durLabel === '50 分钟', '再点开关：恢复上次的有限时长 50');
+  ok(pageCtx.durText(90) === '1 小时 30 分钟', '90 分钟显示为「1 小时 30 分钟」');
+  for (let i = 0; i < 40; i++) pageCtx.onDurStep({ currentTarget: { dataset: { step: '1' } } });
+  ok(dataStore.cDur === 300, '时长上限夹到 300 分钟（连点 + 不会越界）');
+  for (let i = 0; i < 40; i++) pageCtx.onDurStep({ currentTarget: { dataset: { step: '-1' } } });
+  ok(dataStore.cDur === 10, '时长下限夹到 10 分钟（连点 − 不会越界）');
   pageCtx.onPickMax({ currentTarget: { dataset: { max: '9' } } });
   ok(dataStore.cMax === 9, '可选 9 人（上限）');
   pageCtx.onPickMax({ currentTarget: { dataset: { max: '2' } } });

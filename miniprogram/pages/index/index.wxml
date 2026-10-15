@@ -32,6 +32,13 @@
     </view>
   </view>
 
+  <!-- 牌桌显示名还是建档占位值 → 引导用微信昵称（设一次，牌桌与同桌好友都跟着变） -->
+  <view class="nick-tip" wx:if="{{nickDefault}}" bindtap="onGoProfile">
+    <text class="nick-tip-i">✎</text>
+    <text class="nick-tip-t">牌桌显示名还是默认的「{{nickname}}」，用微信昵称更方便同桌认人</text>
+    <text class="nick-tip-a">设置</text>
+  </view>
+
   <!-- 游戏模式 -->
   <view class="modes">
     <!-- 好友房 -->
@@ -134,32 +141,58 @@
     </view>
   </view>
 
-  <!-- 创建好友房：限定人数 + 游戏时长 -->
+  <!-- 创建好友房：人数 2–9 逐人可调；时长 10 分钟为一档（可切不限时） -->
   <view class="join-mask" wx:if="{{createShow}}" bindtap="onCreateClose">
     <view class="join-dialog" catchtap>
       <text class="join-title">创建好友房</text>
       <text class="join-sub">消耗 1 张房卡 · 创建后规则不可修改</text>
 
-      <text class="opt-label">限定人数</text>
-      <view class="opt-row">
-        <view class="opt {{cMax === 2 ? 'on' : ''}}" data-max="2" bindtap="onPickMax">2 人</view>
-        <view class="opt {{cMax === 4 ? 'on' : ''}}" data-max="4" bindtap="onPickMax">4 人</view>
-        <view class="opt {{cMax === 6 ? 'on' : ''}}" data-max="6" bindtap="onPickMax">6 人</view>
-        <view class="opt {{cMax === 9 ? 'on' : ''}}" data-max="9" bindtap="onPickMax">9 人</view>
+      <!-- 限定人数 -->
+      <view class="field">
+        <view class="field-head">
+          <text class="field-name">限定人数</text>
+          <text class="field-hint">2 – 9 人，2 人即可开局</text>
+        </view>
+        <view class="stepper">
+          <view class="step-btn {{cMax <= 2 ? 'off' : ''}}" data-step="-1" bindtap="onMaxStep">−</view>
+          <view class="step-val">
+            <text class="sv-num">{{cMax}}</text><text class="sv-unit">人</text>
+          </view>
+          <view class="step-btn {{cMax >= 9 ? 'off' : ''}}" data-step="1" bindtap="onMaxStep">+</view>
+        </view>
+        <view class="chips">
+          <view class="chip {{cMax === item ? 'on' : ''}}" wx:for="{{maxPresets}}" wx:key="*this"
+                data-max="{{item}}" bindtap="onPickMax">{{item}} 人</view>
+        </view>
       </view>
 
-      <text class="opt-label">游戏时长</text>
-      <view class="opt-row">
-        <view class="opt {{cDur === 30 ? 'on' : ''}}" data-d="30" bindtap="onPickDur">30 分钟</view>
-        <view class="opt {{cDur === 60 ? 'on' : ''}}" data-d="60" bindtap="onPickDur">1 小时</view>
-        <view class="opt {{cDur === 120 ? 'on' : ''}}" data-d="120" bindtap="onPickDur">2 小时</view>
-        <view class="opt {{cDur === 0 ? 'on' : ''}}" data-d="0" bindtap="onPickDur">不限时</view>
+      <!-- 游戏时长 -->
+      <view class="field">
+        <view class="field-head">
+          <text class="field-name">游戏时长</text>
+          <text class="field-hint">10 分钟为一档</text>
+        </view>
+        <view class="stepper">
+          <view class="step-btn" data-step="-1" bindtap="onDurStep">−</view>
+          <view class="step-val">
+            <block wx:if="{{cDur > 0}}"><text class="sv-num">{{cDur}}</text><text class="sv-unit">分钟</text></block>
+            <text class="sv-word" wx:else>不限时</text>
+          </view>
+          <view class="step-btn" data-step="1" bindtap="onDurStep">+</view>
+        </view>
+        <view class="chips">
+          <view class="chip {{cDur === item.v ? 'on' : ''}}" wx:for="{{durPresets}}" wx:key="v"
+                data-d="{{item.v}}" bindtap="onPickDur">{{item.t}}</view>
+          <view class="chip chip-unl {{cDur === 0 ? 'on' : ''}}" bindtap="onToggleUnlimited">不限时</view>
+        </view>
       </view>
-      <text class="opt-note">倒计时结束时自动结束本局，并统计所有参与人的盈亏</text>
+
+      <text class="dlg-note">{{cMax}} 人桌 · {{durLabel}}</text>
+      <text class="dlg-note-sub">倒计时结束时自动结算本局，并统计所有参与人的盈亏</text>
 
       <view class="join-btns">
         <button class="btn-ghost join-btn" bindtap="onCreateClose">取消</button>
-        <button class="btn-primary join-btn" bindtap="onCreateConfirm">创建（1 房卡）</button>
+        <button class="btn-primary join-btn" bindtap="onCreateConfirm">创建 · 1 房卡</button>
       </view>
     </view>
   </view>
@@ -204,7 +237,7 @@
 
       <view class="join-btns">
         <button class="btn-ghost join-btn" bindtap="onCardsClose">关闭</button>
-        <button class="btn-primary join-btn" bindtap="onAIMode">先玩 AI 桌（0 房卡）</button>
+        <button class="btn-primary join-btn" bindtap="onAIMode">先玩 AI 桌</button>
       </view>
     </view>
   </view>

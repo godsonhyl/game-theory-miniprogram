@@ -1,14 +1,35 @@
 const app = getApp();
-const { auth } = require('../../utils/auth');
+const { auth, DEFAULT_NICK } = require('../../utils/auth');
 const { settings } = require('../../utils/settings');
 const snapshot = require('../../utils/room-snapshot');
+
+/**
+ * 创建好友房的可调范围。
+ * 人数：2–9 逐人可调（9 是引擎与座位环的实际上限，牌桌侧会再夹一次）。
+ * 时长：10 分钟为一档，10–300 分钟；0 表示不限时。
+ */
+const C_MAX_MIN = 2;
+const C_MAX_MAX = 9;
+const C_MAX_DEF = 6;
+const MAX_PRESETS = [2, 4, 6, 9];
+const DUR_STEP = 10;
+const DUR_MIN = 10;
+const DUR_MAX = 300;
+const DUR_DEF = 30;
+const DUR_PRESETS = [
+  { v: 10, t: '10 分' },
+  { v: 30, t: '30 分' },
+  { v: 60, t: '1 小时' },
+  { v: 120, t: '2 小时' }
+];
 
 Page({
   data: {
     loading: true,
     loginError: '',
-    nickname: '玩家',
+    nickname: DEFAULT_NICK,
     initial: '玩',
+    nickDefault: true,    // 昵称仍是建档占位值 → 顶部显示引导条
     roomCards: 0,
     rankEnabled: false,   // 快速匹配默认关闭，待合规确认
     joinShow: false,      // 加入房间弹窗
@@ -16,8 +37,12 @@ Page({
     stats: { hands: 0, wins: 0, net: 0, netText: '0', rate: '0%' },
     myRooms: [],        // 我创建的、仍在进行中的房间
     createShow: false,  // 创建房间弹窗（人数 + 时长）
-    cMax: 6,            // 限定人数：2 / 4 / 6
-    cDur: 0,            // 游戏时长（分钟）：30 / 60 / 120 / 0=不限时
+    cMax: C_MAX_DEF,    // 限定人数：2–9，逐人可调
+    cDur: DUR_DEF,      // 游戏时长（分钟）：10 的倍数，0 = 不限时
+    cDurLast: DUR_DEF,  // 关掉「不限时」时恢复的时长
+    durLabel: '30 分钟', // 时长展示文案（WXML 不能调方法，故随 cDur 一起维护）
+    maxPresets: MAX_PRESETS,
+    durPresets: DUR_PRESETS,
     setShow: false,     // 设置弹窗（参考主流 App 的 Table Appearance）
     cardsShow: false,   // 房卡弹窗（免费获取途径）
     claim: { dailyReady: true, dailyCount: 2, handCards: 0, handsPerCard: 10, handsToNext: 10 },
@@ -50,7 +75,7 @@ Page({
     this.setData({ sFourColor: s.fourColor, sSound: s.sound, sAnim: s.animation });
   },
 
-  /** 打开创建房间弹窗（先选人数与时长，再建房） */
+  /** 打开创建房间弹窗（人数与时长均可自定义） */
   onCreateTap() {
     this.setData({ createShow: true });
   },
@@ -59,14 +84,55 @@ Page({
     this.setData({ createShow: false });
   },
 
-  /** 选择限定人数 */
-  onPickMax(e) {
-    this.setData({ cMax: Number(e.currentTarget.dataset.max) });
+  /** 设定限定人数，夹到 2–9 */
+  setMax(n) {
+    const v = Number(n);
+    const clamped = Math.min(C_MAX_MAX, Math.max(C_MAX_MIN, isNaN(v) ? C_MAX_DEF : Math.round(v)));
+    this.setData({ cMax: clamped });
   },
 
-  /** 选择游戏时长（分钟，0 = 不限时） */
+  /** 预设人数（2 / 4 / 6 / 9） */
+  onPickMax(e) {
+    this.setMax(e.currentTarget.dataset.max);
+  },
+
+  /** 人数 ±1（dataset.step = 1 / -1） */
+  onMaxStep(e) {
+    this.setMax(this.data.cMax + (Number(e.currentTarget.dataset.step) || 0));
+  },
+
+  /**
+   * 设定时长（分钟）：对齐到 10 分钟一档，夹到 10–300。
+   * 注意 0 是合法入参（步进到下限时的边界值），只有 NaN 才回落到默认档。
+   */
+  setDur(min) {
+    const raw = Number(min);
+    const base = isNaN(raw) ? DUR_DEF : raw;
+    const m = Math.min(DUR_MAX, Math.max(DUR_MIN, Math.round(base / DUR_STEP) * DUR_STEP));
+    this.setData({ cDur: m, cDurLast: m, durLabel: this.durText(m) });
+  },
+
+  /** 切到「不限时」（保留 cDurLast，便于切回） */
+  setUnlimited() {
+    this.setData({ cDur: 0, durLabel: '不限时' });
+  },
+
+  /** 预设时长 */
   onPickDur(e) {
-    this.setData({ cDur: Number(e.currentTarget.dataset.d) });
+    this.setDur(e.currentTarget.dataset.d);
+  },
+
+  /** 时长 ±10 分钟（从「不限时」起步时，按上次的有限时长接续） */
+  onDurStep(e) {
+    const step = Number(e.currentTarget.dataset.step) || 0;
+    const base = this.data.cDur > 0 ? this.data.cDur : (this.data.cDurLast || DUR_DEF);
+    this.setDur(base + step * DUR_STEP);
+  },
+
+  /** 「不限时」开关：关掉时恢复上一次的有限时长 */
+  onToggleUnlimited() {
+    if (this.data.cDur === 0) this.setDur(this.data.cDurLast || DUR_DEF);
+    else this.setUnlimited();
   },
 
   /** 确认创建：带上人数与时长 */
@@ -75,12 +141,14 @@ Page({
     this.onCreateRoom(this.data.cMax, this.data.cDur);
   },
 
-  /** 时长（分钟）→ 展示文案 */
+  /** 时长（分钟）→ 展示文案（90 → 「1 小时 30 分钟」） */
   durText(min) {
     const m = Number(min) || 0;
     if (!m) return '不限时';
-    if (m < 60) return m + ' 分钟';
-    return (m / 60) + ' 小时';
+    const h = Math.floor(m / 60);
+    const r = m % 60;
+    if (!h) return m + ' 分钟';
+    return r ? (h + ' 小时 ' + r + ' 分钟') : (h + ' 小时');
   },
 
   /** 打开设置弹窗 */
@@ -125,7 +193,7 @@ Page({
     const p = g.profile;
     if (!p) { this.setData({ loading: false }); return; }
 
-    const nickname = p.nickname || '玩家';
+    const nickname = p.nickname || DEFAULT_NICK;
     const hands = p.total_hands || 0;
     const wins = p.total_wins || 0;
     const net = p.total_net || 0;
@@ -135,6 +203,7 @@ Page({
       loginError: '',
       nickname,
       initial: nickname.slice(0, 1),
+      nickDefault: auth.isDefaultNickname(nickname),
       roomCards: p.room_cards || 0,
       claim: auth.claimStatus(p),
       stats: {

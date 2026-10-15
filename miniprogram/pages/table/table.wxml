@@ -114,19 +114,21 @@
         <view class="sit-btn" wx:if="{{item.empty}}">坐下</view>
         <!-- 房主可请出电脑玩家（仅等待室） -->
         <text class="wtag kick" wx:elif="{{item.isBot && isOwner && phase === 'waiting'}}" catchtap="kickBot" data-seat="{{item.seat}}">请出</text>
-        <text class="wtag owner" wx:elif="{{item.isOwner || (item.isMe && isOwner)}}">房主</text>
+        <text class="wtag owner" wx:elif="{{mode === 'friend' && (item.isOwner || (item.isMe && isOwner))}}">房主</text>
       </view>
     </block>
   </view>
   <!-- /felt（就绪/结算摘要条必须位于牌桌区之后，走文档流，不得用绝对定位浮层遮牌） -->
 
-  <!-- 就绪条：牌桌下沿的横向紧凑条。就绪状态已上座位徽章，这里只留提示与操作 -->
+  <!-- 就绪条：牌桌下沿的横向紧凑条。就绪状态已上座位徽章，这里只留提示与操作。
+       「查看结算」与「准备就绪」并存（结算弹窗不自动弹，想看明细随时点）。 -->
   <view class="resultbar" wx:if="{{readyPhase}}">
     <text class="rb-title">等待就绪</text>
     <text class="rb-sub">各座位已亮出准备状态</text>
     <view class="rb-right">
       <text class="rb-hint">{{readyHint}}</text>
       <view class="rb-btns">
+        <button class="rb-btn ghost" wx:if="{{result}}" bindtap="onShowResult">查看结算</button>
         <button class="rb-btn ghost" wx:if="{{canStand}}" bindtap="onMenuStand">站起退出本局</button>
         <button class="rb-btn ghost" wx:if="{{myStanding && !mySeated}}" bindtap="onMenuSit">坐下加入游戏</button>
         <button class="rb-btn" wx:if="{{mySeated && !myReady}}" bindtap="onReadyTap">
@@ -137,7 +139,8 @@
     </view>
   </view>
   <!-- 结算摘要条（摊牌亮牌展示期）：只留标题 + 我的盈亏 + 查看结算入口；
-       每人盈亏明细在独立结算弹窗（resultModal）中，亮牌展示后弹出 -->
+       结算弹窗不自动弹出，由用户点「查看结算」查看；亮牌展示结束后进就绪阶段，
+       就绪条上同样保留「查看结算」入口（两个按钮并存） -->
   <view class="resultbar" wx:elif="{{result}}">
     <text class="rb-title">{{result.title}}</text>
     <text class="rb-net">{{result.netText}}</text>
@@ -154,12 +157,12 @@
   <block wx:if="{{phase === 'waiting'}}">
     <view class="wait-info">
       <text class="wi-set">{{maxSeats}} 人桌 · {{durationMin > 0 ? ('时长 ' + durationMin + ' 分钟') : '不限时'}}</text>
-      <text class="wi-hint" wx:if="{{isOwner}}">{{seatHint || '把房间号发给好友，坐下后点「开始游戏」发牌（30 分钟内无人加入自动解散）'}}</text>
-      <text class="wi-hint" wx:else>已入座，等待房主开始游戏…</text>
+      <text class="wi-hint" wx:if="{{mode === 'friend'}}">{{isOwner ? (seatHint || '把房间号发给好友，坐下后点「开始游戏」发牌（30 分钟内无人加入自动解散）') : '已入座，等待房主开始游戏…'}}</text>
+      <text class="wi-hint" wx:else>{{waitHint}}</text>
     </view>
     <view class="waitbar">
       <view class="wait-actions">
-        <button class="wbtn ghost" open-type="share"><view class="ic ic-share inv-ico"></view><text>邀请</text></button>
+        <button class="wbtn ghost" wx:if="{{mode === 'friend'}}" open-type="share"><view class="ic ic-share inv-ico"></view><text>邀请</text></button>
         <button class="wbtn ghost" wx:if="{{isOwner}}" bindtap="addBot">添加电脑玩家</button>
         <button class="wbtn primary" wx:if="{{isOwner}}" bindtap="startGame" disabled="{{!canStart}}">开始游戏{{canStart ? '' : '（至少 2 人）'}}</button>
       </view>
@@ -182,12 +185,34 @@
         </view>
 
         <view class="mymid">
-          <!-- 轮到我：加注档位（微扑克式 sizing chips，替代占位大的滑杆） -->
-          <view class="presets" wx:if="{{isMyTurn}}">
+          <!-- 轮到我：加注档位（微扑克式 sizing chips，替代占位大的滑杆）
+               自定义面板展开时收起档位条：两者曾并排挤在同一行，导致滑杆、
+               「最小/最大」被压到容器外互相遮盖 —— 现在改成互斥，各占整行。 -->
+          <view class="presets" wx:if="{{isMyTurn && !raiseCustom}}">
             <view class="pr {{raisePreset === item.k ? 'on' : ''}}" wx:for="{{raisePresets}}" wx:key="k"
                   data-v="{{item.k}}" bindtap="onPresetTap">{{item.t}}</view>
           </view>
-          <view class="mytip" wx:if="{{timeUp}}">本局已结束 · 可在菜单退出房间</view>
+          <!-- 自定义下注面板：两行布局
+               第 1 行 = 最小 / 滑杆 / 最大。两端数字是滑杆的「固定轴标签」（flex:none），
+                        滑杆只吃剩余宽度 → 任意筹码位数下都不会被遮盖。
+               第 2 行 = 精确输入 + ½池 / 底池 快捷额 + 收起（收起后回到档位条）。 -->
+          <view class="raise-custom" wx:if="{{raiseCustom && legal && legal.canRaise}}">
+            <view class="rc-axis">
+              <view class="rc-end" bindtap="onCustomMin">最小<text class="rc-num">{{raiseMin}}</text></view>
+              <slider class="rc-slider" min="{{raiseMin}}" max="{{raiseMax}}" value="{{raiseTo}}"
+                      block-size="14" activeColor="#e8a33d" backgroundColor="rgba(255,255,255,.16)"
+                      bindchanging="onRaiseSlider" bindchange="onRaiseSlider" />
+              <view class="rc-end" bindtap="onCustomMax">最大<text class="rc-num">{{raiseMax}}</text></view>
+            </view>
+            <view class="rc-edit">
+              <input class="rc-input" type="number" value="{{raiseTo}}"
+                     bindinput="onRaiseInput" bindblur="onRaiseBlur" />
+              <view class="rc-q" bindtap="onCustomHalf">½池</view>
+              <view class="rc-q" bindtap="onCustomPot">底池</view>
+              <view class="rc-q" bindtap="onCustomClose">收起</view>
+            </view>
+          </view>
+          <view class="mytip" wx:elif="{{timeUp}}">本局已结束 · 可在菜单退出房间</view>
           <view class="mytip" wx:elif="{{myStanding && !mySeated}}">观战中</view>
           <view class="mytip" wx:elif="{{myStanding && mySeated}}">已坐下 · 下一手开始入局</view>
           <view class="mytip" wx:elif="{{readyPhase}}">{{myReady ? '已准备 · 等待其他人就绪…' : '上一手已结束 · 点「准备就绪」继续'}}</view>
@@ -210,25 +235,6 @@
           </view>
           <text class="ms-v">{{myStack}}</text>
           <text class="ms-l">筹码</text>
-        </view>
-      </view>
-
-      <!-- 自定义下注面板（0 ~ MAX=全下）：滑杆 + 数字输入 + 最小/½池/底池/最大 快捷。
-           独立成行放在 mybar 与 actbar 之间，不挤占手牌区；牌桌 felt 为 flex:1 会自动让出高度。 -->
-      <view class="raise-custom" wx:if="{{raiseCustom && legal && legal.canRaise}}">
-        <view class="rc-head">
-          <text class="rc-label">下注金额</text>
-          <input class="rc-input" type="number" value="{{raiseTo}}" bindinput="onRaiseInput" />
-          <text class="rc-max">最小 {{raiseMin}} · 最大 {{raiseMax}}</text>
-        </view>
-        <slider class="rc-slider" min="0" max="{{raiseMax}}" value="{{raiseTo}}"
-                block-size="16" activeColor="#e8a33d" backgroundColor="rgba(255,255,255,.15)"
-                bindchanging="onRaiseSlider" bindchange="onRaiseSlider" />
-        <view class="rc-quick">
-          <view class="rc-q" bindtap="onCustomMin">最小</view>
-          <view class="rc-q" bindtap="onCustomHalf">½池</view>
-          <view class="rc-q" bindtap="onCustomPot">底池</view>
-          <view class="rc-q" bindtap="onCustomMax">全下</view>
         </view>
       </view>
 
@@ -304,8 +310,9 @@
     </view>
   </view>
 
-  <!-- 单手结算弹窗：摊牌亮牌在牌桌上展示约 5 秒后弹出，逐人显示本手净盈亏。
-       弹窗打开前牌面完整可见（先亮牌后弹窗，不遮摊牌）；停留 10s 自动关闭进入就绪。 -->
+  <!-- 单手结算弹窗：只在用户点「查看结算」时弹出（不自动打扰看牌）。
+       逐人显示摊牌手牌 + 牌型 + 本手净盈亏；关闭后停留在当前阶段
+       （亮牌展示期 → 进就绪；就绪期 → 留在就绪条，不重置计票）。 -->
   <view class="help-mask" wx:if="{{resultModal}}">
     <view class="summary-dialog" catchtap>
       <text class="summary-title">{{resultModal.title}}</text>
@@ -314,6 +321,15 @@
       <view class="summary-rows">
         <view class="summary-row {{item.isMe ? 'me' : ''}}" wx:for="{{resultModal.rows}}" wx:key="seat">
           <text class="sr-name">{{item.icon}}{{item.name}}</text>
+          <!-- 摊牌手牌：亮牌者的两张底牌（迷你牌面）。
+               弃牌者不亮牌 → item.cards 为空，占位宽度靠 .sr-cards 固定住，列不错位。
+               金边 = 该牌参与了最佳成手 5 张，一眼看出赢在哪。 -->
+          <view class="sr-cards">
+            <view class="hc {{c.cls}} {{c.hi ? 'hi' : ''}}" wx:for="{{item.cards}}" wx:for-item="c" wx:key="idx">
+              <text class="hc-r">{{c.rank}}</text>
+              <text class="hc-s">{{c.suit}}</text>
+            </view>
+          </view>
           <text class="sr-hand">{{item.short}}</text>
           <text class="sr-net {{item.net > 0 ? 'up' : (item.net < 0 ? 'down' : '')}}">
             {{item.net > 0 ? '+' + item.net : (item.net < 0 ? item.net : '±0')}}
@@ -322,7 +338,7 @@
       </view>
 
       <view class="summary-btns">
-        <button class="btn-primary sbtn" bindtap="onResultNext">{{remoteMode ? '知道了' : '下一手'}}</button>
+        <button class="btn-primary sbtn" bindtap="onResultNext">{{remoteMode || readyPhase ? '知道了' : '下一手'}}</button>
       </view>
     </view>
   </view>

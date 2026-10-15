@@ -33,6 +33,18 @@
   const SUIT_CHARS = ['♠', '♣', '♦', '♥'];
   const SUIT_NAMES = ['s', 'c', 'd', 'h'];
 
+  /**
+   * 界面渲染用的点数文本：唯一区别是 10 显示成「10」而不是「T」。
+   *
+   * ⚠️ 务必分清它和 RANK_NAMES 的职责，两者不可合并：
+   *   - RANK_NAMES 是**机读码**字母表，参与 cardToCode / codeToCard 的编解码。
+   *     它必须固定单字符，否则 "Th" 会变成变长的 "10h"，
+   *     codeToCard 的 code[0] 定长解析、profile 页 formatCards 的逐字符切分、
+   *     以及跨设备快照里已落库的牌面数据会全部失效。
+   *   - RANK_DISPLAY 纯粹是给人看的表示层，改它不影响任何存储与传输格式。
+   */
+  const RANK_DISPLAY = ['2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K', 'A'];
+
   const HAND = {
     HIGH_CARD: 0, PAIR: 1, TWO_PAIR: 2, TRIPS: 3, STRAIGHT: 4,
     FLUSH: 5, FULL_HOUSE: 6, QUADS: 7, STRAIGHT_FLUSH: 8
@@ -1274,7 +1286,7 @@
 
   return {
     HAND, STREET, STREET_CN, ACTION, ACTION_CN,
-    RANK_NAMES, SUIT_CHARS, SUIT_NAMES,
+    RANK_NAMES, RANK_DISPLAY, SUIT_CHARS, SUIT_NAMES,
     rankOf, suitOf, cardId, cardToStr, cardToCode, codeToCard,
     createRng, shuffle,
     evaluate, compare, rankEval,
