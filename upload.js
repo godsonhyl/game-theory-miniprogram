@@ -110,15 +110,15 @@ async function main() {
     type: 'miniProgram',
     projectPath: CONFIG.projectPath,
     privateKeyPath: keyPath,
-    // node_modules 由微信「构建 npm」编译成 miniprogram_npm/，源目录不需携带
+    // node_modules 不进包（体积红线），但 miniprogram_npm 是「构建 npm」的编译产物，
+    // 云 SDK 运行时靠它解析 —— 排除它会导致体验版 require 失败、白屏（C 级回归，勿再排除）。
+    // 测试文件按前缀统一排除，与 pack.js / project.config.json 保持一致口径。
     ignores: [
       'README-体验版上传.md',
-      'test-miniprogram-logic.js',
-      'test-cloud-integration.js',
+      'test-*.js',
       'package.json',
       'package-lock.json',
-      'node_modules/**',
-      'miniprogram_npm/**'
+      'node_modules/**'
     ]
   });
 

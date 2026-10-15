@@ -29,10 +29,15 @@
   "packOptions": {
     "ignore": [
       { "type": "file", "value": "README-体验版上传.md" },
-      { "type": "file", "value": "test-miniprogram-logic.js" },
+      { "type": "file", "value": "test-cards.js" },
       { "type": "file", "value": "test-cloud-integration.js" },
+      { "type": "file", "value": "test-index-logic.js" },
+      { "type": "file", "value": "test-miniprogram-logic.js" },
+      { "type": "file", "value": "test-room-sync.js" },
       { "type": "file", "value": "package.json" },
-      { "type": "folder", "value": "node_modules" }
+      { "type": "file", "value": "package-lock.json" },
+      { "type": "folder", "value": "node_modules" },
+      { "type": "folder", "value": "dist" }
     ],
     "include": []
   },
