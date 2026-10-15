@@ -1418,6 +1418,8 @@ Page({
       this.setData({ timeUp: true, remainSec: 0, remainText: '00:00' });
       return;
     }
+    // 续局从断点恢复时，若已过最后 1 分钟阈值则不再补播钟音
+    this.sfxClockWarned = left <= 60;
     this.setData({ timeUp: false, remainSec: left, remainText: this.fmtRemain(left) });
     clock = setInterval(() => {
       left--;
@@ -1425,6 +1427,11 @@ Page({
         this.clearClock();
         this.endGame();
         return;
+      }
+      // 限时局最后 1 分钟：与 UI 变橙（remainSec <= 60）同阈值，钟音一声
+      if (left === 60 && !this.sfxClockWarned) {
+        this.sfxClockWarned = true;
+        if (this.data.soundOn) sfx.play('clock');
       }
       this.setData({ remainSec: left, remainText: this.fmtRemain(left) });
     }, 1000);
@@ -2010,12 +2017,14 @@ Page({
     }
   },
 
-  /** 发送一条聊天 / 表情 */
+  /** 发送一条聊天 / 表情（seat === mySeat = 我主动发，不响提示音） */
   pushChat(seat, name, text) {
     const log = this.data.chatLog.slice();
     log.push({ id: ++this.chatSeq, seat: seat, name: name, text: text });
     while (log.length > 8) log.shift();
     this.setData({ chatLog: log });
+    // 收到他人/AI 消息时轻提示；我自己发的（快捷聊天/表情、我的站起/入局系统消息）不响
+    if (this.data.soundOn && seat !== this.mySeat) sfx.play('chat');
   },
 
   onQuickChat(e) {
@@ -2576,6 +2585,7 @@ Page({
         this.pendingSit = false;
         this.pushChat(this.mySeat, this.meLabel(false), '超时未准备，已自动站起');
         wx.showToast({ title: '超时未准备，已自动站起', icon: 'none' });
+        if (this.data.soundOn) sfx.play('timeout');   // 被动站起提示（区别于主动站起）
       } else {
         this.standingMap[x.seat] = true;
         this.pushChat(x.seat, x.name, '超时未准备，已自动站起');
@@ -2717,6 +2727,7 @@ Page({
   startTimer() {
     if (timer) clearInterval(timer);
     tick = TICK_MAX;
+    this.sfxWarnedTick = 0;   // 倒计时警告已播到的 tick 值（0=未播），防每秒重复
     timer = setInterval(() => {
       tick--;
       if (game.actionSeat === this.mySeat) {
@@ -2725,11 +2736,17 @@ Page({
           myTimer: tick,
           myTimerPct: Math.max(0, Math.round(tick / TICK_MAX * 100))
         });
+        // 行动倒计时警告：剩余 5s/3s 各滴答一声，避免误超时代弃
+        if ((tick === 5 || tick === 3) && this.sfxWarnedTick !== tick) {
+          this.sfxWarnedTick = tick;
+          if (this.data.soundOn) sfx.play('warn');
+        }
       }
       if (tick <= 0) {
         clearInterval(timer);
         const legal = game.legalActions(this.mySeat);
         if (legal && game.actionSeat === this.mySeat && !game.result) {
+          if (this.data.soundOn) sfx.play('timeout');   // 被动代弃提示
           if (legal.toCall > 0) this.doAct('call', 0, '跟注', 'act-c');
           else this.doAct('check', 0, '过牌', 'act-c');
         }

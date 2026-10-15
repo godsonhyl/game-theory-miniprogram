@@ -920,6 +920,46 @@ while (guard++ < 400) {
     delete require.cache[require.resolve(sfxPath)];
   }
 
+  /* ---------- 提示音效补全：四类无声场景（2026-10-15） ----------
+   * 此前牌桌只对「实际发生的动作」发声（发牌/下注/轮到我/输赢…），四类
+   * 提示性场景完全无声，用户只能靠盯屏幕：
+   *   ① 我 20s 行动计时环走到末段没有听觉警告 → 一走神就 20s 到点被代弃；
+   *   ② 限时局最后 1 分钟 UI 变橙但无声 → 错过收尾决策窗口；
+   *   ③ 我被系统被动处理（超时代弃 / 就绪超时自动站起）没有任何声音区分
+   *     「这是系统替我做的，不是我点的」；
+   *   ④ 收到对手/AI 聊天消息无提示 → 折叠状态下完全错过社交互动。
+   * 补 4 个 PRESETS 音色（warn/clock/timeout/chat）+ 4 处触发点。 */
+  {
+    const sfxPath = path.join(__dirname, 'utils', 'sfx.js');
+    const sfxSrc = require('fs').readFileSync(sfxPath, 'utf8');
+    ['warn', 'clock', 'timeout', 'chat'].forEach(k => {
+      ok(new RegExp('^\\s{2}' + k + '\\(c, t\\) \\{', 'm').test(sfxSrc),
+        'PRESETS 含新音色「' + k + '」（play() 按 PRESETS[name] 自动识别，无需改 play）');
+    });
+    // 静态守卫：4 处触发点 + 防重播标志位（全部在 soundOn 判断内）
+    ok(/tick === 5 \|\| tick === 3/.test(tableSrc) && /sfx\.play\('warn'\)/.test(tableSrc),
+      '行动计时环剩 5s/3s 滴答警告（防误超时代弃）');
+    ok(/sfxWarnedTick = 0/.test(tableSrc) && /this\.sfxWarnedTick !== tick/.test(tableSrc),
+      '警告音有防重播标志（同 tick 值只播一声，且回合重置清零）');
+    ok(/left === 60 && !this\.sfxClockWarned/.test(tableSrc) &&
+      /if \(this\.data\.soundOn\) sfx\.play\('clock'\)/.test(tableSrc),
+      '限时局最后 60s 钟音（与 UI 变橙 remainSec<=60 同阈值）');
+    ok(/this\.sfxClockWarned = left <= 60/.test(tableSrc),
+      '续局从断点恢复时若已过 60s 阈值不再补播钟音');
+    ok((tableSrc.match(/if \(this\.data\.soundOn\) sfx\.play\('timeout'\)/g) || []).length === 2,
+      '被动代弃与自动站起各播一声 timeout（中性偏负下行音，共 2 处且都在 soundOn 内）');
+    ok(tableSrc.indexOf('被动代弃提示') > 0 && tableSrc.indexOf('被动站起提示') > 0,
+      '两处 timeout 各有注释锚点（代弃 vs 站起，防止将来误删一处）');
+    ok(/this\.data\.soundOn && seat !== this\.mySeat\) sfx\.play\('chat'\)/.test(tableSrc),
+      '收到他人/AI 消息播 chat 轻提示；我主动发的（seat===mySeat）不响');
+    ok(/pushChat\(this\.mySeat/.test(tableSrc) && tableSrc.indexOf('我主动发，不响提示音') > 0,
+      'pushChat 头注释锁定「我发的不响」语义（聊天消息传 mySeat 快捷发送 + 系统消息除外）');
+    // 行为级的 sfx 拦截在此不可行：上方 WebAudio 解锁回归块会删 sfx.js 的
+    // require 缓存重载新实例，而 table.js 闭包持有的是最初那份单例——本块
+    // 拿到的模块对象不是 pushChat 实际调用的那份，spy 永远等不到调用。
+    // 退守静态守卫（方案原文：若 sfx 模块拦截成本高则退守静态守卫）。
+  }
+
   /* ---------- 回归：自定义金额必须同步加注按钮文案 ----------
    * 现象（真机）：自定义滑杆拉到 346，底部按钮仍显示「加注 20」。
    * 根因：raiseSubmit / raiseAllIn 只在 render() 里派生，而滑杆/输入框/快捷档
