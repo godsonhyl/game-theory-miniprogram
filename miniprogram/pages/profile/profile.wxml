@@ -1,4 +1,20 @@
 <view class="profile">
+  <!-- 加载态：档案与战绩读取中，骨架屏避免全空闪烁 -->
+  <view class="loading-box" wx:if="{{loading}}">
+    <view class="skel skel-circle"></view>
+    <view class="skel skel-line w40"></view>
+    <view class="skel skel-line w30"></view>
+    <view class="loading-sum">
+      <view class="skel skel-num"></view>
+      <view class="skel skel-num"></view>
+      <view class="skel skel-num"></view>
+    </view>
+    <view class="skel skel-block"></view>
+    <view class="skel skel-block"></view>
+    <text class="loading-tip">正在读取战绩…</text>
+  </view>
+
+  <block wx:else>
   <view class="head">
     <view class="head-badge ic ic-spade"></view>
     <view class="head-avatar">{{initial}}</view>
@@ -81,5 +97,11 @@
         </view>
       </view>
     </view>
+    <!-- 触底加载更多：加载中显示加载条，已到底显示「没有更多」 -->
+    <view class="rec-more" wx:if="{{records.length > 0}}">
+      <text class="rec-loading" wx:if="{{recordsLoading}}">正在加载更多…</text>
+      <text class="rec-end" wx:elif="{{recordsEnd}}">没有更多战绩了</text>
+    </view>
   </view>
+  </block>
 </view>

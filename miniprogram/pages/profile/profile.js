@@ -1,6 +1,8 @@
 const app = getApp();
 const { auth, DEFAULT_NICK, NICK_MAX } = require('../../utils/auth');
 
+const PAGE_SIZE = 20;   // 战绩每页条数（游标分页，触底加载下一页）
+
 Page({
   data: {
     loading: true,
@@ -12,7 +14,9 @@ Page({
     nickMax: NICK_MAX,
     stats: { hands: 0, wins: 0, net: 0, netText: '0' },
     style: '稳健型',
-    records: []
+    records: [],
+    recordsLoading: false,   // 战绩加载中（区分首屏 loading 与翻页 loading）
+    recordsEnd: false        // 已加载到底（无更多战绩），隐藏触底加载条
   },
 
   onShow() {
@@ -42,24 +46,50 @@ Page({
       });
     }
 
-    // 历史战绩从云端拉取
+    // 历史战绩从云端拉取（首页，从最新开始）
+    this._recordCursor = null;   // 翻页游标：上一页最后一条的 created_at
+    this.setData({ records: [], recordsEnd: false });
+    await this.loadRecords(true);
+  },
+
+  /**
+   * 拉取战绩（游标分页）。first=true 为首屏加载（带 loading 骨架），
+   * 否则为触底加载下一页（带底部加载条，不清空已有列表）。
+   */
+  async loadRecords(first) {
+    if (this.data.recordsLoading) return;     // 防连点：上一页还没回不来
+    if (!first && this.data.recordsEnd) return; // 已到底，不再请求
+    this.setData({ recordsLoading: true, loading: first });
     try {
-      const rows = await auth.listRecords(20);
+      const rows = await auth.listRecords(PAGE_SIZE, this._recordCursor);
+      const mapped = rows.map(r => ({
+        id: r.id,
+        handNo: r.hand_no,
+        net: r.net,
+        hole: this.formatCards(r.hole_cards),
+        board: this.formatCards(r.board),
+        handType: r.hand_type || (r.won ? '获胜' : '未中牌')
+      }));
+      // 游标推进：用本页最后一条的 created_at 作为下一页起点
+      const last = rows[rows.length - 1];
+      this._recordCursor = last ? last.created_at : null;
+      const merged = first ? mapped : this.data.records.concat(mapped);
       this.setData({
         loading: false,
-        records: rows.map((r, i) => ({
-          id: r.id,
-          handNo: r.hand_no,
-          net: r.net,
-          hole: this.formatCards(r.hole_cards),
-          board: this.formatCards(r.board),
-          handType: r.hand_type || (r.won ? '获胜' : '未中牌')
-        }))
+        recordsLoading: false,
+        records: merged,
+        // 不足一页 = 已到底（云端按 created_at 倒序，返回 < PAGE_SIZE 即无更多）
+        recordsEnd: rows.length < PAGE_SIZE
       });
     } catch (err) {
-      this.setData({ loading: false });
+      this.setData({ loading: false, recordsLoading: false });
       wx.showToast({ title: err.message || '读取战绩失败', icon: 'none' });
     }
+  },
+
+  /** 列表触底：加载下一页战绩 */
+  onReachBottom() {
+    this.loadRecords(false);
   },
 
   onEditNick() {

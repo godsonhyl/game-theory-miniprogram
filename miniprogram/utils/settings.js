@@ -9,12 +9,21 @@
  * 设置仅存本地（wx storage），不进云端。
  */
 const KEY = 'poker_settings';
-const DEFAULTS = { fourColor: true, sound: true, animation: true };
+/**
+ * 默认值。vibrate 为后加项：读取旧设置时若没有该字段，回退为与旧 sound 一致
+ * （即默认开震动），保证老用户升级后体验不跳变；新安装默认全部开。
+ */
+const DEFAULTS = { fourColor: true, sound: true, vibrate: true, animation: true };
 
 function get() {
   try {
     const saved = wx.getStorageSync(KEY) || {};
-    return Object.assign({}, DEFAULTS, saved);
+    const merged = Object.assign({}, DEFAULTS, saved);
+    // 老用户升级：从未存过 vibrate → 与 sound 保持一致（不改变原有体验）
+    if (saved && saved.vibrate === undefined && saved.sound !== undefined) {
+      merged.vibrate = saved.sound;
+    }
+    return merged;
   } catch (e) {
     return Object.assign({}, DEFAULTS);
   }

@@ -19,6 +19,7 @@
   <!-- 折叠菜单：次要操作收纳于此（等待室仅保留规则说明/退出房间） -->
   <view class="menu-pop" wx:if="{{menuOpen}}">
     <view class="mi" bindtap="onMenuHelp">规则说明</view>
+    <view class="mi" bindtap="onMenuSettings">牌桌设置</view>
     <button class="mi" open-type="share" wx:if="{{mode === 'friend'}}">邀请好友</button>
     <view class="mi" wx:if="{{phase === 'playing' && myStanding && !mySeated}}" bindtap="onMenuSit">坐下加入游戏</view>
     <view class="mi" wx:elif="{{phase === 'playing' && canStand}}" bindtap="onMenuStand">站起退出本局</view>
@@ -68,8 +69,8 @@
           <text wx:if="{{item.empty}}">＋</text>
           <text wx:else>{{item.initial}}</text>
           <view class="dealer" wx:if="{{item.isDealer}}">D</view>
-          <view class="timer" wx:if="{{item.active}}"
-                style="background:conic-gradient(#e8a33d {{item.timerPct}}%, rgba(255,255,255,.16) 0)">
+          <view class="timer {{item.timerUrgent ? 'urgent' : ''}}" wx:if="{{item.active}}"
+                style="background:conic-gradient({{item.timerUrgent ? '#e05c4b' : '#e8a33d'}} {{item.timerPct}}%, rgba(255,255,255,.16) 0)">
             <view class="timer-num">{{item.timer}}</view>
           </view>
         </view>
@@ -160,6 +161,7 @@
       <text class="wi-set">{{maxSeats}} 人桌 · {{durationMin > 0 ? ('时长 ' + durationMin + ' 分钟') : '不限时'}}</text>
       <text class="wi-hint" wx:if="{{mode === 'friend'}}">{{isOwner ? (seatHint || '把房间号发给好友，坐下后点「开始游戏」发牌（30 分钟内无人加入自动解散）') : '已入座，等待房主开始游戏…'}}</text>
       <text class="wi-hint" wx:else>{{waitHint}}</text>
+      <text class="wi-idle" wx:if="{{isOwner && idleRemainText}}">{{idleRemainText}}，拉好友或加电脑玩家续房</text>
     </view>
     <view class="waitbar">
       <view class="wait-actions">
@@ -239,8 +241,8 @@
         </view>
       </view>
 
-      <!-- 行动条：三个大按钮，间距拉大避免误触 -->
-      <view class="actbar">
+      <!-- 行动条：三个大按钮，间距拉大避免误触；最后 5s 整条紧迫脉冲提示 -->
+      <view class="actbar {{myTimerUrgent ? 'urgent' : ''}}">
         <button class="ab ab-fold {{foldConfirm ? 'confirm' : ''}}" bindtap="onFold" disabled="{{!isMyTurn}}">{{foldConfirm ? '再点弃牌' : '弃牌'}}</button>
         <button class="ab ab-call" bindtap="onCheckOrCall" disabled="{{!isMyTurn}}">
           {{legal.toCall > 0 ? ('跟注 ' + legal.toCall) : '过牌'}}
@@ -354,6 +356,30 @@
       </view>
       <text class="help-tip">提示：牌力越强、赔率越合适越值得加注；不确定时先过牌或弃牌。</text>
       <button class="help-btn" bindtap="onHelpClose">知道了</button>
+    </view>
+  </view>
+
+  <!-- 牌桌设置（菜单入口）：四色牌 / 音效 / 震动 / 动画，即时生效 -->
+  <view class="help-mask" wx:if="{{settingsShow}}" bindtap="onSettingsClose">
+    <view class="help-dialog settings-dialog" catchtap="onBlockTap">
+      <text class="help-title">牌桌设置</text>
+      <view class="set-row" bindtap="onToggleSetting" data-k="fourColor">
+        <text class="set-name">四色牌</text>
+        <view class="switch {{sFourColor ? 'on' : ''}}"><view class="knob"></view></view>
+      </view>
+      <view class="set-row" bindtap="onToggleSetting" data-k="sound">
+        <text class="set-name">音效</text>
+        <view class="switch {{sSound ? 'on' : ''}}"><view class="knob"></view></view>
+      </view>
+      <view class="set-row" bindtap="onToggleSetting" data-k="vibrate">
+        <text class="set-name">震动反馈</text>
+        <view class="switch {{sVibrate ? 'on' : ''}}"><view class="knob"></view></view>
+      </view>
+      <view class="set-row" bindtap="onToggleSetting" data-k="animation">
+        <text class="set-name">牌桌动画</text>
+        <view class="switch {{sAnim ? 'on' : ''}}"><view class="knob"></view></view>
+      </view>
+      <button class="help-btn" bindtap="onSettingsClose">完成</button>
     </view>
   </view>
 </view>

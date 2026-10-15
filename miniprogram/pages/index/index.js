@@ -27,6 +27,8 @@ Page({
   data: {
     loading: true,
     loginError: '',
+    roomsLoading: false,  // 我的房间：加载中
+    roomsError: false,    // 我的房间：加载失败（区分「真的没有」与「加载失败」）
     nickname: DEFAULT_NICK,
     initial: '玩',
     nickDefault: true,    // 昵称仍是建档占位值 → 顶部显示引导条
@@ -47,8 +49,13 @@ Page({
     cardsShow: false,   // 房卡弹窗（免费获取途径）
     claim: { dailyReady: true, dailyCount: 2, handCards: 0, handsPerCard: 10, handsToNext: 10 },
     sFourColor: true,   // 四色牌
-    sSound: true,       // 音效 + 震动
-    sAnim: true,        // 牌桌动画
+    sSound: true,       // 音效
+    sVibrate: true,      // 震动反馈
+    sAnim: true,         // 牌桌动画
+    createdShow: false,  // 创建房间成功弹窗
+    createdRoomNo: '',
+    createdRoomUrl: '',
+    createdDesc: '',
     handRanks: [
       { name: '皇家同花顺', desc: 'A K Q J 10 同花色' },
       { name: '同花顺', desc: '同花色的连续 5 张' },
@@ -77,7 +84,7 @@ Page({
   onShow() {
     this.syncFromCloud();
     const s = settings.get();
-    this.setData({ sFourColor: s.fourColor, sSound: s.sound, sAnim: s.animation });
+    this.setData({ sFourColor: s.fourColor, sSound: s.sound, sVibrate: s.vibrate, sAnim: s.animation });
   },
 
   /** 打开创建房间弹窗（人数与时长均可自定义） */
@@ -165,7 +172,7 @@ Page({
   /** 打开设置弹窗 */
   onSettingsTap() {
     const s = settings.get();
-    this.setData({ setShow: true, sFourColor: s.fourColor, sSound: s.sound, sAnim: s.animation });
+    this.setData({ setShow: true, sFourColor: s.fourColor, sSound: s.sound, sVibrate: s.vibrate, sAnim: s.animation });
   },
 
   onSettingsClose() {
@@ -178,11 +185,13 @@ Page({
     const patch = {};
     if (key === 'fourColor') patch.fourColor = !this.data.sFourColor;
     if (key === 'sound') patch.sound = !this.data.sSound;
+    if (key === 'vibrate') patch.vibrate = !this.data.sVibrate;
     if (key === 'animation') patch.animation = !this.data.sAnim;
     const next = settings.set(patch);
     this.setData({
       sFourColor: next.fourColor,
       sSound: next.sound,
+      sVibrate: next.vibrate,
       sAnim: next.animation
     });
   },
@@ -281,29 +290,13 @@ Page({
 
       const roomUrl = '/pages/table/table?room=' + room.room_no + '&own=1' +
         '&max=' + max + '&dur=' + dur;
-      wx.showModal({
-        title: '房间已创建',
-        content: '房间号 ' + room.room_no + '\n' + max + ' 人桌 · ' + this.durText(dur) +
-          '\n\n把房间号发给好友即可一起对战',
-        confirmText: '进入房间',
-        cancelText: '复制房号',   // 微信限制：按钮文案 ≤ 4 个字
-        success: res => {
-          if (res.confirm) {
-            wx.navigateTo({ url: roomUrl });
-          } else if (res.cancel) {
-            wx.setClipboardData({
-              data: room.room_no,
-              success: () => wx.showToast({ title: '房间号已复制', icon: 'success' })
-            });
-          }
-        },
-        fail: () => {
-          // 兜底：弹窗本身失败时，也要让用户拿到房间号并进入
-          wx.setClipboardData({
-            data: room.room_no,
-            success: () => wx.navigateTo({ url: roomUrl })
-          });
-        }
+      // 创建成功：用自定义弹窗（wx.showModal 只有两个按钮，放不下「分享」），
+      // 直接给「邀请好友（原生分享）/ 复制房号 / 进入房间」三个出口，少一次跳转。
+      this.setData({
+        createdShow: true,
+        createdRoomNo: room.room_no,
+        createdRoomUrl: roomUrl,
+        createdDesc: max + ' 人桌 · ' + this.durText(dur)
       });
     } catch (err) {
       wx.hideLoading();
@@ -316,6 +309,38 @@ Page({
     } finally {
       this.creatingRoom = false;
     }
+  },
+
+  /** 转发内容：从创建成功弹窗点「邀请好友」时，分享卡片带房间号，好友点开自动填入并加入 */
+  onShareAppMessage() {
+    const no = this.data.createdRoomNo;
+    if (no) {
+      return {
+        title: '来「博弈论」和我打一局，房间号 ' + no,
+        path: '/pages/index/index?room=' + no
+      };
+    }
+    return { title: '博弈论 · 好友房德州扑克', path: '/pages/index/index' };
+  },
+
+  /** 创建成功弹窗：关闭 */
+  onCreatedClose() {
+    this.setData({ createdShow: false });
+  },
+
+  /** 创建成功弹窗：进入房间 */
+  onCreatedEnter() {
+    const url = this.data.createdRoomUrl;
+    this.setData({ createdShow: false });
+    if (url) wx.navigateTo({ url });
+  },
+
+  /** 创建成功弹窗：复制房号 */
+  onCreatedCopy() {
+    wx.setClipboardData({
+      data: this.data.createdRoomNo,
+      success: () => wx.showToast({ title: '房间号已复制', icon: 'success' })
+    });
   },
 
   /**
@@ -486,6 +511,9 @@ Page({
    * 退出页面后无人兜底，这里就是兜底入口）。
    */
   async loadMyRooms() {
+    // 列表为非首屏必需，但需区分「加载中 / 加载失败 / 真的没有」三种状态，
+    // 否则用户分不清是网络挂了还是没有进行中的房间。
+    this.setData({ roomsLoading: true, roomsError: false });
     try {
       const rooms = await auth.listMyRooms();
       const now = Date.now();
@@ -500,6 +528,8 @@ Page({
         auth.closeRoom(no).catch(() => {});
       });
       this.setData({
+        roomsLoading: false,
+        roomsError: false,
         myRooms: kept.map(r => {
           // 本地若有该房间的牌局快照，说明中途退出过，进入后可续局
           const snap = snapshot.load(r.room_no);
@@ -517,7 +547,8 @@ Page({
         })
       });
     } catch (e) {
-      // 房间列表非首屏必需，错误不阻塞首页
+      // 房间列表非首屏必需，错误不阻塞首页，但要告诉用户「加载失败」可重试
+      this.setData({ roomsLoading: false, roomsError: true });
     }
   },
 
@@ -525,6 +556,10 @@ Page({
    * 删除房间：关闭云端房间 + 清除本地续局快照。
    * catchtap 阻止冒泡，不会触发卡片的进入房间。
    */
+  onRetryRooms() {
+    this.loadMyRooms();
+  },
+
   onCloseRoom(e) {
     const room = e.currentTarget.dataset.room;
     if (!room) return;

@@ -366,13 +366,18 @@ const auth = {
     return data;
   },
 
-  /** 读取历史战绩（当前用户） */
-  async listRecords(limit = 20) {
-    const { data, error } = await cloud.database
+  /**
+   * 读取历史战绩（当前用户）。支持游标分页：传 cursor（上一页最后一条的 created_at）
+   * 与 limit，返回该游标之前的 limit 条（按 created_at 倒序）。不传 cursor 从最新开始。
+   * 用 created_at 游标而非数字 offset，避免深翻页时随页数增长的性能退化。
+   */
+  async listRecords(limit = 20, cursor) {
+    let q = cloud.database
       .from(T.record)
       .select('*')
-      .order('created_at', { ascending: false })
-      .limit(limit);
+      .order('created_at', { ascending: false });
+    if (cursor) q = q.lt('created_at', cursor);
+    const { data, error } = await q.limit(limit);
 
     if (error) throw new Error(error.message || '读取战绩失败');
     return data || [];

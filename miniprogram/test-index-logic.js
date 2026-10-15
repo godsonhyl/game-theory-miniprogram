@@ -103,6 +103,18 @@ const pageCtx = Object.assign({}, cfg, {
   const waitRoom = dataStore.myRooms.find(r => r.roomNo === '654321');
   ok(waitRoom && waitRoom.live === false && waitRoom.liveText === '等待中', '无快照的房间显示等待中');
 
+  // 加载失败态：listMyRooms reject → roomsError=true，用户可重试
+  const goodListMyRooms = authMod.auth.listMyRooms;
+  authMod.auth.listMyRooms = () => Promise.reject(new Error('net'));
+  await pageCtx.loadMyRooms();
+  ok(dataStore.roomsError === true && dataStore.roomsLoading === false,
+    '房间列表加载失败标记 roomsError（区分「没有房间」与「加载失败」）');
+  authMod.auth.listMyRooms = goodListMyRooms;
+  pageCtx.onRetryRooms();
+  await new Promise(r => setTimeout(r, 250));
+  ok(dataStore.roomsError === false && dataStore.myRooms.length === 2,
+    '重试后恢复正常列表');
+
   /* ---------- 创建房间：人数与时长 ---------- */
   pageCtx.onCreateTap();
   ok(dataStore.createShow === true, '创建房间弹窗可打开');
@@ -151,25 +163,43 @@ const pageCtx = Object.assign({}, cfg, {
   ok(dataStore.cDur === 120, '可选 2 小时（120 分钟）');
   ok(pageCtx.durText(30) === '30 分钟' && pageCtx.durText(60) === '1 小时' && pageCtx.durText(0) === '不限时',
     '时长文案转换正确');
-  // 确认创建：带参数建房并跳转牌桌
+  // 确认创建：建房后弹自定义成功弹窗（分享/复制/进入），不再用 wx.showModal
   global.__nav = null;
   global.__lastModal = null;
-  global.__modalMode = 'confirm';   // 模拟在成功弹窗上点「进入房间」
+  global.__clipboard = null;
   await pageCtx.onCreateConfirm();
   await new Promise(r => setTimeout(r, 60));
-  ok(dataStore.createShow === false, '确认后关闭弹窗');
-  ok(global.__lastModal && global.__lastModal.content.indexOf('2 人桌') > 0,
-    '建房成功弹窗显示人数设置: ' + (global.__lastModal && global.__lastModal.content));
-  ok(global.__lastModal && global.__lastModal.content.indexOf('2 小时') > 0, '弹窗显示时长设置');
-  ok(global.__nav && global.__nav.indexOf('max=2') > 0 && global.__nav.indexOf('dur=120') > 0,
-    '进入牌桌时带上人数与时长: ' + global.__nav);
+  ok(dataStore.createShow === false, '确认后关闭创建弹窗');
+  ok(dataStore.createdShow === true, '建房成功弹出自定义成功弹窗');
+  ok(dataStore.createdRoomNo === '888888', '成功弹窗带房间号');
+  ok(dataStore.createdDesc.indexOf('2 人桌') >= 0,
+    '成功弹窗显示人数设置: ' + dataStore.createdDesc);
+  ok(dataStore.createdDesc.indexOf('2 小时') > 0, '成功弹窗显示时长设置');
+  ok(dataStore.createdRoomUrl.indexOf('max=2') > 0 && dataStore.createdRoomUrl.indexOf('dur=120') > 0,
+    '成功弹窗的进入 URL 带人数与时长: ' + dataStore.createdRoomUrl);
   ok(global.__created && global.__created.maxPlayers === 2 && global.__created.durationMin === 120,
     '创建房间把人数与时长写入云端: ' + JSON.stringify(global.__created));
+  // 分享卡片：onShareAppMessage 用成功弹窗的房间号
+  const share = pageCtx.onShareAppMessage();
+  ok(share && share.path.indexOf('room=888888') > 0, '分享路径带房间号: ' + (share && share.path));
+  // 复制房号
+  global.wx.setClipboardData = o => { global.__clipboard = o.data; if (o.success) o.success(); };
+  pageCtx.onCreatedCopy();
+  ok(global.__clipboard === '888888', '复制房号写入剪贴板');
+  // 进入房间
+  global.__nav = null;
+  pageCtx.onCreatedEnter();
+  ok(global.__nav && global.__nav.indexOf('room=888888') > 0, '进入房间跳转牌桌: ' + global.__nav);
+  ok(dataStore.createdShow === false, '进入后关闭成功弹窗');
+  // 关闭弹窗
+  dataStore.createdShow = true;
+  pageCtx.onCreatedClose();
+  ok(dataStore.createdShow === false, '稍后按钮关闭成功弹窗');
   ok(dataStore.myRooms[0].durText === '不限时', '房间列表显示时长文案');
 
   /* ---------- 牌桌设置（四色牌 / 反馈 / 动画）---------- */
   ok(dataStore.sFourColor === true, '设置：默认启用四色牌');
-  ok(dataStore.sSound === true && dataStore.sAnim === true, '设置：默认开启反馈与动画');
+  ok(dataStore.sSound === true && dataStore.sVibrate === true && dataStore.sAnim === true, '设置：默认开启音效、震动与动画');
   pageCtx.onSettingsTap();
   ok(dataStore.setShow === true, '设置弹窗可打开');
   pageCtx.onToggle({ currentTarget: { dataset: { k: 'fourColor' } } });
@@ -177,7 +207,11 @@ const pageCtx = Object.assign({}, cfg, {
   ok(global.__storage.poker_settings && global.__storage.poker_settings.fourColor === false,
     '设置已持久化到 storage');
   pageCtx.onToggle({ currentTarget: { dataset: { k: 'sound' } } });
-  ok(dataStore.sSound === false, '操作反馈可关闭');
+  ok(dataStore.sSound === false, '音效可关闭');
+  pageCtx.onToggle({ currentTarget: { dataset: { k: 'vibrate' } } });
+  ok(dataStore.sVibrate === false, '震动可独立关闭');
+  ok(global.__storage.poker_settings && global.__storage.poker_settings.vibrate === false,
+    '震动开关已持久化');
   pageCtx.onToggle({ currentTarget: { dataset: { k: 'animation' } } });
   ok(dataStore.sAnim === false, '牌桌动画可关闭');
   pageCtx.onToggle({ currentTarget: { dataset: { k: 'fourColor' } } });

@@ -80,6 +80,9 @@ const SUIT_CLS = ['s-spade', 's-club', 's-diamond', 's-heart'];
 
 /** 好友房空闲超时：创建后超过该时长仍无人加入（仅房主一人），自动销毁 */
 const ROOM_TTL_MS = 30 * 60 * 1000;
+/** 空闲超时提示提前量：最后 5 分钟开始逐秒显示「X 分钟后自动解散」，
+ *  让房主知道房间快被回收了，赶紧拉好友或加电脑玩家，而不是到点突然被踢。 */
+const IDLE_WARN_MS = 5 * 60 * 1000;
 
 /**
  * 就绪超时（秒）：上一手结束后，所有人需点「准备就绪」才发下一手；
@@ -113,6 +116,7 @@ let game = null;
 let timer = null;
 let clock = null;         // 游戏时长倒计时（房间设定，到点自动结束本局）
 let expireTimer = null;   // 好友房超时销毁计时器
+let expireWarnTimer = null; // 好友房空闲超时提示计时器（提前 5 分钟显示倒计时）
 let readyTimer = null;    // 「准备就绪」倒计时（超时未准备自动站起）
 let tick = 20;
 let aiStep = 0;
@@ -152,11 +156,13 @@ Page({
     syncLive: false,      // 跨设备同步是否可用（false = 本地引擎模拟降级）
     seatHint: '',         // 等待室选座提示（好友房）
     waitHint: '',         // 等待室选座提示（AI 桌：引导挑座位后才发牌）
+    idleRemainText: '',   // 好友房空闲超时倒计时文案（「5:00 后自动解散」，仅房主等待室最后 5 分钟显示）
     rootStyle: '',        // JS 实测视口变量（--uh/--uw），注入页面根节点
 
     // 用户设置（参考主流 App 的 Table Appearance 自定义）
     fourColor: true,      // 四色牌
-    soundOn: true,        // 音效 + 震动反馈
+    soundOn: true,        // 音效（合成音效）
+    vibrateOn: true,      // 震动反馈（与音效独立）
     animOn: true,         // 牌桌动画
 
     // 房间参数（创建时设定，不可中途修改）
@@ -196,6 +202,7 @@ Page({
     myActive: false,      // 轮到我行动
     myTimer: '',
     myTimerPct: 0,
+    myTimerUrgent: false,  // 轮到我最后 5s：行动条紧迫脉冲
     myDealer: false,
     mySB: false,
     myBB: false,
@@ -229,6 +236,9 @@ Page({
 
     // 新手引导 / 教学
     helpShow: false,
+    // 牌桌内设置弹窗（⋯ 菜单入口）
+    settingsShow: false,
+    sFourColor: true, sSound: true, sVibrate: true, sAnim: true,
     helpRows: [
       { name: '翻牌前', desc: '每人两张底牌，大小盲先行下注' },
       { name: '翻牌', desc: '发出 3 张公共牌，开始第二轮下注' },
@@ -301,6 +311,7 @@ Page({
       pageTitle: this.mode === 'friend' ? '好友房' : 'AI 对战',
       fourColor: s.fourColor,
       soundOn: s.sound,
+      vibrateOn: s.vibrate,
       animOn: s.animation
     });
     this.updateViewport();
@@ -319,7 +330,9 @@ Page({
       // 好友房：先尝试跨设备同步（入座 + 轮询/心跳）；失败则保持本地引擎模拟。
       // 本地快照续局（房主）与同步引导并行，互不影响。
       this.bootstrapSync();
-      if (!this.restoreRoom()) this.initWaiting();
+      // 续局恢复：有快照时先问一句「恢复 / 重开」，用户确认后才 restoreRoom，
+      // 避免故意退出想重开却被自动拉回旧牌局。无快照直接进等待室。
+      if (!this.promptRestore()) this.initWaiting();
     } else {
       // AI 对战：与好友房共用同一间等待室——先挑座位坐下、点「开始游戏」才发牌，
       // 不再一进就自动开局。差别只在：无房间号、不跨设备同步、坐下后自动补 AI 对手。
@@ -1147,6 +1160,34 @@ Page({
   },
 
   /**
+   * 续局恢复入口（onLoad 调用）：有快照时弹确认，用户选「恢复」才 restoreRoom，
+   * 选「重新开始」则清快照进等待室。无快照返回 false 由调用方走 initWaiting。
+   * 返回 true 表示已处理（无论恢复还是重开），返回 false 表示无快照、调用方自行 initWaiting。
+   */
+  promptRestore() {
+    if (this.mode !== 'friend' || !this.roomNo || !this.isOwner) return false;
+    const snap = snapshot.load(this.roomNo);
+    if (!snap) return false;
+    wx.showModal({
+      title: '继续上一局？',
+      content: '你在第 ' + snap.handNo + ' 手退出，筹码与座位已保留，可继续或重新开局。',
+      confirmText: '继续',
+      cancelText: '重开',
+      success: res => {
+        if (res.confirm) {
+          // 用户选择继续：恢复牌局（失败则回退等待室）
+          if (!this.restoreRoom()) this.initWaiting();
+        } else {
+          // 用户选择重开：清掉旧快照，进等待室
+          this.clearSnapshot();
+          this.initWaiting();
+        }
+      }
+    });
+    return true;
+  },
+
+  /**
    * 重新进入房间时恢复牌局：用快照里的座位与筹码重建牌桌，重发当前这一手。
    * 仅房主侧生效（访客本地无该房间的牌局数据）。
    */
@@ -1157,10 +1198,10 @@ Page({
     this.myStanding = !!snap.standing;   // 站起观战状态随续局恢复
     this.pendingSit = !!snap.pendingSit; // 「已坐下待入局」状态随续局恢复
 
-      const players = snap.seats.map(s => ({
-        id: s.isMe ? 'me' : 'p' + s.seat,
-        // 续局：我的名字始终用当前昵称（快照里存的是上一局的名字，可能已改过）
-        name: s.isMe ? auth.myName('你') : (s.name || '玩家'),
+    const players = snap.seats.map(s => ({
+      id: s.isMe ? 'me' : 'p' + s.seat,
+      // 续局：我的名字始终用当前昵称（快照里存的是上一局的名字，可能已改过）
+      name: s.isMe ? auth.myName('你') : (s.name || '玩家'),
       seat: s.seat,
       stack: s.stack > 0 ? s.stack : 1000,
       isHuman: !!s.isMe,
@@ -1186,10 +1227,17 @@ Page({
     return true;
   },
 
-  /** 启动/重置空闲销毁倒计时（仅好友房、房间号存在时生效） */
+  /**
+   * 启动/重置空闲销毁倒计时（仅好友房、房间号存在时生效）。
+   * 30 分钟到点销毁；提前 5 分钟逐秒显示「X 后自动解散」，让房主有时间拉人，
+   * 而不是到点突然被踢。两个计时器：expireTimer 管销毁，expireWarnTimer 管提示。
+   */
   armExpire() {
     this.clearExpire();
+    this.clearExpireWarn();
     if (this.mode === 'friend' && this.roomNo) {
+      this._expireDeadline = Date.now() + ROOM_TTL_MS;
+      expireWarnTimer = setTimeout(() => this.tickExpireWarn(), ROOM_TTL_MS - IDLE_WARN_MS);
       expireTimer = setTimeout(() => this.destroyRoom(), ROOM_TTL_MS);
     }
   },
@@ -1198,11 +1246,32 @@ Page({
     if (expireTimer) { clearTimeout(expireTimer); expireTimer = null; }
   },
 
+  /** 提前 5 分钟起逐秒刷新「X 后自动解散」倒计时文案 */
+  tickExpireWarn() {
+    if (!this.roomNo || this.data.phase !== 'waiting' || !this.isOwner) {
+      this.setData({ idleRemainText: '' });
+      return;
+    }
+    const left = Math.max(0, Math.round((expireTimer ? this._expireDeadline : 0) - Date.now()));
+    if (left <= 0) {
+      this.setData({ idleRemainText: '' });
+      return;
+    }
+    this.setData({ idleRemainText: this.fmtRemain(Math.round(left / 1000)) + ' 后自动解散' });
+    expireWarnTimer = setTimeout(() => this.tickExpireWarn(), 1000);
+  },
+
+  clearExpireWarn() {
+    if (expireWarnTimer) { clearTimeout(expireWarnTimer); expireWarnTimer = null; }
+    this.setData({ idleRemainText: '' });
+  },
+
   /** 超时无人加入：关闭云端房间并退到首页 */
   destroyRoom() {
     if (this.data.phase !== 'waiting') return;
     this.roomClosed = true;
     this.clearExpire();
+    this.clearExpireWarn();
     this.clearClock();
     if (this.roomNo) {
       auth.closeRoom(this.roomNo).catch(() => {});   // 销毁云端房间，不影响本地退出
@@ -1335,6 +1404,7 @@ Page({
       return;
     }
     this.clearExpire();   // 已开始对局，停止空闲销毁倒计时
+    this.clearExpireWarn();  // 开局后隐藏空闲倒计时文案
     if (!this.data.canStart) {
       wx.showToast({ title: '至少 2 人才能开始', icon: 'none' });
       return;
@@ -1545,6 +1615,7 @@ Page({
     if (aiTimer) clearTimeout(aiTimer);
     this.clearClock();
     this.clearExpire();
+    this.clearExpireWarn();
     this.clearReadyClock();
     this.clearResultTimer();
     this.clearResultModalTimer();
@@ -1826,6 +1897,8 @@ Page({
           winGain: isWinner ? result.awards.filter(a => a.seat === p.seat).reduce((s, a) => s + a.amount, 0) : 0,
           timer: !readyPhase && game.actionSeat === p.seat ? tick : '',
           timerPct: !readyPhase && game.actionSeat === p.seat ? Math.round(tick / TICK_MAX * 100) : 0,
+          // 最后 5s 计时环转红脉冲（仅当前行动座位，与我回合 actbar.urgent 同阈值）
+          timerUrgent: !readyPhase && game.actionSeat === p.seat && tick <= 5 && tick > 0,
           actText: !readyPhase && p.seat === this.mySeat ? myActText : '',
           actCls: !readyPhase && p.seat === this.mySeat ? myActCls : ''
         };
@@ -1891,6 +1964,8 @@ Page({
         myActive: game.actionSeat === this.mySeat && !result,
         myTimer: game.actionSeat === this.mySeat ? tick : '',
         myTimerPct: game.actionSeat === this.mySeat ? Math.round(tick / TICK_MAX * 100) : 0,
+        // 轮到我最后 5s：行动条整体紧迫脉冲（与座位计时环 timerUrgent 同阈值）
+        myTimerUrgent: game.actionSeat === this.mySeat && !result && tick <= 5 && tick > 0,
         myDealer: game.dealerSeat === this.mySeat,
         mySB: game.sbSeat === this.mySeat,
         myBB: game.bbSeat === this.mySeat,
@@ -1957,7 +2032,7 @@ Page({
 
   /** 操作反馈：震动（音效由 sfx 事件泵按动作类型精确发声，这里不再叠 click） */
   feedback() {
-    if (this.data.soundOn && wx.vibrateShort) wx.vibrateShort({ type: 'light' });
+    if (this.data.vibrateOn && wx.vibrateShort) wx.vibrateShort({ type: 'light' });
   },
 
   // ---------- 音效：引擎事件流 → 合成音（utils/sfx.js） ----------
@@ -2053,6 +2128,45 @@ Page({
 
   onMenuHelp() {
     this.setData({ menuOpen: false, helpShow: true });
+  },
+
+  /** 牌桌内设置入口（⋯ 菜单）：即时生效，四色牌/音效/震动/动画 */
+  onMenuSettings() {
+    const s = settings.get();
+    this.setData({
+      menuOpen: false,
+      settingsShow: true,
+      sFourColor: s.fourColor,
+      sSound: s.sound,
+      sVibrate: s.vibrate,
+      sAnim: s.animation
+    });
+  },
+
+  onSettingsClose() {
+    this.setData({ settingsShow: false });
+  },
+
+  /** 切换设置项并即时生效（四色牌/音效/震动/动画） */
+  onToggleSetting(e) {
+    const key = e.currentTarget.dataset.k;
+    const patch = {};
+    if (key === 'fourColor') patch.fourColor = !this.data.sFourColor;
+    if (key === 'sound') patch.sound = !this.data.sSound;
+    if (key === 'vibrate') patch.vibrate = !this.data.sVibrate;
+    if (key === 'animation') patch.animation = !this.data.sAnim;
+    const next = settings.set(patch);
+    this.setData({
+      sFourColor: next.fourColor,
+      sSound: next.sound,
+      sVibrate: next.vibrate,
+      sAnim: next.animation,
+      // 即时生效：渲染用的派生字段同步刷新
+      fourColor: next.fourColor,
+      soundOn: next.sound,
+      vibrateOn: next.vibrate,
+      animOn: next.animation
+    });
   },
 
   onMenuStand() {
@@ -2734,12 +2848,26 @@ Page({
         // 我已移出 seats 数组（渲染在底部 myzone），计时写到我的专属字段
         this.setData({
           myTimer: tick,
-          myTimerPct: Math.max(0, Math.round(tick / TICK_MAX * 100))
+          myTimerPct: Math.max(0, Math.round(tick / TICK_MAX * 100)),
+          // 最后 5s：行动条紧迫脉冲（与座位计时环 timerUrgent、5s/3s 警告音同阈值）
+          myTimerUrgent: tick <= 5 && tick > 0
         });
         // 行动倒计时警告：剩余 5s/3s 各滴答一声，避免误超时代弃
         if ((tick === 5 || tick === 3) && this.sfxWarnedTick !== tick) {
           this.sfxWarnedTick = tick;
           if (this.data.soundOn) sfx.play('warn');
+        }
+      } else if (game.actionSeat >= 0 && !this.data.readyPhase && !game.result) {
+        // 对手回合：每秒局部更新该行动座位的计时环，避免「整帧 render 才刷新 → 跳秒」。
+        // 关键：只写当前行动座位（game.actionSeat）的值，不碰 myTimer/myTimerPct，
+        // 故不会重演「对手环显示我的残值」旧 bug（评审 2026-10-15 MEDIUM）。
+        const actIdx = game.players.findIndex(p => p.seat === game.actionSeat);
+        if (actIdx >= 0) {
+          this.setData({
+            ['seats[' + actIdx + '].timer']: tick,
+            ['seats[' + actIdx + '].timerPct']: Math.max(0, Math.round(tick / TICK_MAX * 100)),
+            ['seats[' + actIdx + '].timerUrgent']: tick <= 5 && tick > 0
+          });
         }
       }
       if (tick <= 0) {

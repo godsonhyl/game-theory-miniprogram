@@ -138,6 +138,16 @@ ok(dataStore.pot === 30, '开局底池 30（盲注 10+20），实际 ' + dataSto
 pageCtx.onLoad({ room: '987654', own: '1' });   // 仅房主，进入等待室
 ok(dataStore.phase === 'waiting', '超时场景：重新进入等待室（仅房主）');
 ok(typeof pageCtx.armExpire === 'function', '定义了 armExpire（启动空闲倒计时）');
+// 空闲超时提示：armExpire 启动后 idleRemainText 初始为空（最后 5 分钟才出现）
+ok(dataStore.idleRemainText === '', '空闲超时提示初始为空（未到最后 5 分钟）');
+// 模拟到期前 5 分钟：tickExpireWarn 按 _expireDeadline 计算「X 后自动解散」文案
+ok(typeof pageCtx.tickExpireWarn === 'function', '定义了 tickExpireWarn（提前 5 分钟提示）');
+pageCtx._expireDeadline = Date.now() + 5 * 60 * 1000;
+pageCtx.tickExpireWarn();
+ok(dataStore.idleRemainText.indexOf('后自动解散') > 0, '空闲提示显示倒计时文案: ' + dataStore.idleRemainText);
+// clearExpireWarn 清掉文案
+pageCtx.clearExpireWarn();
+ok(dataStore.idleRemainText === '', 'clearExpireWarn 清空空闲提示文案');
 global.__navBack = false; global.__reLaunched = false;
 pageCtx.destroyRoom();
 ok(global.__reLaunched || global.__navBack, '超时无人在 → 调用 onBack 离开页面');
@@ -178,13 +188,24 @@ const snap = global.__storage['poker_room_snap_246810'];
 ok(!!snap && snap.seats.length === 2, '退出时写入牌局快照（保留 2 个座位）');
 ok(!!snap && typeof snap.handNo === 'number' && snap.handNo >= 1, '快照记录当前第几手: ' + (snap && snap.handNo));
 
-// 重新进入同一房间 → 自动续局，不再退回空等待室
+// 重新进入同一房间 → 弹「继续/重开」确认，确认继续才续局（不再静默自动恢复）
 const handBefore = snap.handNo;
+global.__lastModal = null;
+global.__modalMode = 'confirm';
 pageCtx.onLoad({ room: '246810', own: '1' });
-ok(dataStore.phase === 'playing', '再次进入房间直接回到牌桌（不再退回等待室）');
+ok(!!global.__lastModal && global.__lastModal.title === '继续上一局？', '再次进入有快照的房间弹出续局确认');
+ok(!!global.__lastModal && global.__lastModal.confirmText === '继续' && global.__lastModal.cancelText === '重开',
+  '续局确认按钮：继续 / 重开');
+ok(dataStore.phase === 'playing', '选择「继续」后回到牌桌');
 ok(dataStore.seats.length === 2, '续局保留原座位数（2 个座位都在环上），实际 ' + dataStore.seats.length);
 ok(dataStore.handNo === handBefore, '续局从第 ' + handBefore + ' 手继续，实际 ' + dataStore.handNo);
 ok(toasts.indexOf('已回到房间 · 第 ' + handBefore + ' 手') >= 0, '续局提示文案正确: ' + toasts.slice(-1)[0]);
+
+// 选择「重开」→ 清掉快照进等待室（故意退出想重开不被自动拉回）
+global.__modalMode = 'cancel';
+pageCtx.onLoad({ room: '246810', own: '1' });
+ok(dataStore.phase === 'waiting', '选择「重开」后进等待室，不再续局');
+ok(!global.__storage['poker_room_snap_246810'], '重开清掉旧快照');
 
 // 访客（无 own 参数）进入：自动落座并等待房主
 pageCtx.onLoad({ room: '246810' });
@@ -314,7 +335,8 @@ pageCtx.updateViewport();
 
 /* ---------- ① 四色牌 + 设置 ---------- */
 ok(dataStore.fourColor === true, '默认启用四色牌（设置项已加载）');
-ok(dataStore.soundOn === true, '默认开启操作反馈');
+ok(dataStore.soundOn === true, '默认开启音效');
+ok(dataStore.vibrateOn === true, '默认开启震动（与音效独立）');
 ok(dataStore.animOn === true, '默认开启牌桌动画');
 const hole0 = dataStore.myCards && dataStore.myCards[0];
 ok(hole0 && ['s-spade', 's-club', 's-diamond', 's-heart'].indexOf(hole0.cls) >= 0,
@@ -348,6 +370,33 @@ ok(dataStore.helpShow === false, '帮助弹层可关闭');
 ok(Array.isArray(dataStore.helpRows) && dataStore.helpRows.length === 5, '规则讲解 5 个下注轮次');
 pageCtx.onCoachClose();
 ok(dataStore.coachShow === false, '教练提示可手动收起');
+
+/* ---------- ⑤ 牌桌内设置（⋯ 菜单入口）---------- */
+pageCtx.onMenuSettings();
+ok(dataStore.settingsShow === true, '牌桌内设置弹窗可从菜单打开');
+ok(dataStore.sFourColor === true && dataStore.sSound === true &&
+   dataStore.sVibrate === true && dataStore.sAnim === true, '打开时读入当前设置');
+// 关音效：soundOn 即时生效
+pageCtx.onToggleSetting({ currentTarget: { dataset: { k: 'sound' } } });
+ok(dataStore.sSound === false && dataStore.soundOn === false, '关音效即时生效（soundOn 同步刷新）');
+// 关震动：vibrateOn 即时生效，且不影响音效
+pageCtx.onToggleSetting({ currentTarget: { dataset: { k: 'vibrate' } } });
+ok(dataStore.sVibrate === false && dataStore.vibrateOn === false && dataStore.soundOn === false,
+  '震动独立关闭，音效不受影响');
+// 关四色牌：fourColor 即时生效
+pageCtx.onToggleSetting({ currentTarget: { dataset: { k: 'fourColor' } } });
+ok(dataStore.sFourColor === false && dataStore.fourColor === false, '关四色牌即时生效');
+// 关动画
+pageCtx.onToggleSetting({ currentTarget: { dataset: { k: 'animation' } } });
+ok(dataStore.sAnim === false && dataStore.animOn === false, '关动画即时生效');
+// 持久化到 storage
+ok(global.__storage.poker_settings && global.__storage.poker_settings.vibrate === false,
+  '牌桌内设置已持久化');
+pageCtx.onSettingsClose();
+ok(dataStore.settingsShow === false, '设置弹窗可关闭');
+// 复原：重开音效
+pageCtx.onToggleSetting({ currentTarget: { dataset: { k: 'sound' } } });
+ok(dataStore.soundOn === true, '重开音效生效');
 
 // 座位坐标必须覆盖 0~100 且落在合理范围
 let seatOk = true;
@@ -812,6 +861,24 @@ while (guard++ < 400) {
     path.join(__dirname, 'pages', 'profile', 'profile.wxml'), 'utf8')),
     '我的页提供 <input type="nickname">（微信唯一合规的取真名方式）');
 
+  /* ---------- 战绩游标分页 / 触底加载更多 ---------- */
+  ok(/listRecords\(limit = 20, cursor\)/.test(authSrc),
+    'auth.listRecords 支持 cursor 游标参数（分页查询）');
+  ok(/\.lt\('created_at', cursor\)/.test(authSrc),
+    'listRecords 用 .lt(created_at) 推进游标（深翻页不退化）');
+  ok(/PAGE_SIZE/.test(profSrc) && /loadRecords\(first\)/.test(profSrc),
+    'profile.js 抽出 loadRecords(first) 分页方法 + PAGE_SIZE 常量');
+  ok(/onReachBottom\(\)/.test(profSrc), 'profile.js 监听 onReachBottom 触底加载下一页');
+  ok(/recordsEnd/.test(profSrc) && /recordsLoading/.test(profSrc),
+    'profile.js 维护 recordsEnd / recordsLoading 状态（区分首屏与翻页加载）');
+  ok(/onReachBottomDistance/.test(require('fs').readFileSync(
+    path.join(__dirname, 'pages', 'profile', 'profile.json'), 'utf8')),
+    'profile.json 配置 onReachBottomDistance（提前触发触底加载）');
+  const profWxml = require('fs').readFileSync(
+    path.join(__dirname, 'pages', 'profile', 'profile.wxml'), 'utf8');
+  ok(/rec-more/.test(profWxml) && /rec-end/.test(profWxml),
+    'WXML 战绩列表底部有「加载更多 / 没有更多战绩」节点');
+
   /* ---------- 引擎：10 显示为「10」，但机读码仍是单字符 T ---------- */
   const coreSrc = require('fs').readFileSync(
     path.join(__dirname, '..', 'core', 'poker-core.js'), 'utf8');
@@ -1148,13 +1215,37 @@ while (guard++ < 400) {
 
   /* ---------- 对手计时环不显示我的残值（评审 MEDIUM UI 细节回归）---------- */
   {
-    // startTimer 的每秒回调只写 myTimer/myTimerPct；对手环的 seats[].timer 依赖
-    // render 的 tick 快照，且仅行动座位有值——保证不会把我的残值 setData 给对手环
+    // startTimer 每秒回调：我回合写 myTimer；对手回合按行动座位局部 setData（不写整条 seats，
+    // 也不碰 myTimer）。整帧 render 仍按行动座位写 tick 快照——保证不会把我的残值 setData 给对手环
     const stBody = (tableSrc.match(/startTimer\(\)\s*\{[\s\S]*?1000\);\r?\n  \}/) || [''])[0];
     ok(/myTimer: tick/.test(stBody), 'startTimer 回调写我的计时字段');
-    ok(!/seats:/.test(stBody), 'startTimer 每秒回调不写对手座位数组（对手环等 render 刷新，不吃我的残值）');
+    ok(!/seats:/.test(stBody), 'startTimer 每秒回调不写整条 seats 数组（局部路径更新单座位，不吃我的残值）');
+    // 对手回合的局部更新只写当前行动座位的 timer，不碰 myTimer
+    ok(/seats\[' \+ actIdx \+ '\]\.timer/.test(stBody),
+      '对手回合按行动座位局部 setData seats[actIdx].timer（消除跳秒）');
     ok(/timer: !readyPhase && game\.actionSeat === p\.seat \? tick : ''/.test(tableSrc),
       '对手环只在行动座位显示 tick（非行动座位为空串，环隐藏）');
+  }
+
+  /* ---------- 行动计时最后 5s 视觉强化（红+脉冲，与警告音同阈值）---------- */
+  {
+    // 整帧 render 写 seats[].timerUrgent（对手环）与 myTimerUrgent（我的行动条）
+    ok(/timerUrgent: !readyPhase && game\.actionSeat === p\.seat && tick <= 5 && tick > 0/.test(tableSrc),
+      '对手行动座位最后 5s 标记 timerUrgent（计时环转红脉冲）');
+    ok(/myTimerUrgent: game\.actionSeat === this\.mySeat && !result && tick <= 5 && tick > 0/.test(tableSrc),
+      '我轮到时最后 5s 标记 myTimerUrgent（行动条脉冲）');
+    // startTimer 每秒回调也同步刷新 myTimerUrgent（不只在整帧 render 生效）
+    const stBody = (tableSrc.match(/startTimer\(\)\s*\{[\s\S]*?1000\);\r?\n  \}/) || [''])[0];
+    ok(/myTimerUrgent: tick <= 5 && tick > 0/.test(stBody),
+      'startTimer 每秒回调同步刷新 myTimerUrgent（最后 5s 持续脉冲）');
+    // WXML：计时环 urgent class + 行动条 urgent class
+    ok(/class="timer \{\{item\.timerUrgent \? 'urgent' : ''\}\}"/.test(wxmlSrc),
+      'WXML 计时环按 timerUrgent 切换 urgent class');
+    ok(/class="actbar \{\{myTimerUrgent \? 'urgent' : ''\}\}"/.test(wxmlSrc),
+      'WXML 行动条按 myTimerUrgent 切换 urgent class');
+    // WXSS：urgent 态有脉冲动画
+    ok(/\.timer\.urgent[\s\S]*?animation: timerPulse/.test(wxssSrc), 'WXSS 计时环 urgent 态有 timerPulse 动画');
+    ok(/\.actbar\.urgent[\s\S]*?animation: actbarPulse/.test(wxssSrc), 'WXSS 行动条 urgent 态有 actbarPulse 动画');
   }
 
   /* ---------- 结算弹窗注释与行为一致（评审 MEDIUM：注释曾写「只由用户触发、不自动弹出」）---------- */
@@ -1239,6 +1330,16 @@ while (guard++ < 400) {
         pageCtx._lastRemoteFp = null;
       }
     }
+  }
+
+  /* ---------- 空闲超时提示静态守卫（提前 5 分钟显示倒计时） ---------- */
+  {
+    ok(tableSrc.indexOf('IDLE_WARN_MS') > 0, '定义了空闲提示提前量 IDLE_WARN_MS');
+    ok(tableSrc.indexOf('tickExpireWarn') > 0, '定义了逐秒刷新倒计时文案方法 tickExpireWarn');
+    ok(tableSrc.indexOf('clearExpireWarn') > 0, '定义了清掉空闲提示方法 clearExpireWarn');
+    ok(/idleRemainText: '',/.test(tableSrc), 'data 声明空闲倒计时文案字段 idleRemainText');
+    ok(wxmlSrc.indexOf('wi-idle') > 0, 'WXML 等待室空闲倒计时提示节点 wi-idle');
+    ok(/\.wi-idle[\s\S]*?idlePulse/.test(wxssSrc), 'WXSS 空闲提示有 idlePulse 脉冲动画');
   }
 
   /* ---------- 输出 ---------- */

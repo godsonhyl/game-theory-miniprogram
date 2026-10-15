@@ -4,6 +4,20 @@
   padding: 40rpx 32rpx;
 }
 
+/* 加载骨架屏：档案与战绩读取中，占位避免全空闪烁 */
+.loading-box { display: flex; flex-direction: column; align-items: center; padding-top: 20rpx; }
+.loading-box .skel {
+  background: rgba(255,255,255,.06); border-radius: 12rpx;
+}
+.loading-box .skel-circle { width: 120rpx; height: 120rpx; border-radius: 50%; margin-bottom: 16rpx; }
+.loading-box .skel-line { height: 28rpx; margin-bottom: 12rpx; border-radius: 999rpx; }
+.loading-box .skel-line.w40 { width: 40%; }
+.loading-box .skel-line.w30 { width: 30%; }
+.loading-box .loading-sum { display: flex; gap: 24rpx; width: 100%; margin-bottom: 40rpx; }
+.loading-box .skel-num { flex: 1; height: 80rpx; border-radius: 24rpx; }
+.loading-box .skel-block { width: 100%; height: 120rpx; border-radius: 24rpx; margin-bottom: 24rpx; }
+.loading-tip { font-size: 22rpx; color: #6b7f78; margin-top: 12rpx; }
+
 /* 头部 */
 .head { display: flex; flex-direction: column; align-items: center; margin-bottom: 40rpx; }
 .head-badge { width: 56rpx; height: 56rpx; margin-bottom: 12rpx; opacity: .9; }
@@ -102,3 +116,8 @@
 .rec-label { font-size: 22rpx; color: #8fa8a0; width: 90rpx; }
 .rec-val { font-size: 24rpx; color: #eaf2ee; }
 .rec-val.gold { color: #d9a441; }
+
+/* 触底加载更多：加载条 / 已到底提示 */
+.rec-more { text-align: center; padding: 20rpx 0 8rpx; }
+.rec-loading { font-size: 22rpx; color: #8fa8a0; }
+.rec-end { font-size: 22rpx; color: #6b7f78; }

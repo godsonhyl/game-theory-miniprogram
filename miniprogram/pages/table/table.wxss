@@ -254,6 +254,17 @@
   border: 2rpx solid rgba(15,47,39,.9);
   display: flex; align-items: center; justify-content: center; overflow: hidden;
   box-shadow: 0 0 calc(1.8 * var(--uh)) rgba(232,163,61,.35);
+  transition: box-shadow .2s;
+}
+/* 行动计时最后 5s：计时环转红 + 脉冲（与 5s/3s 滴答警告音同步，视觉+听觉双提示） */
+.timer.urgent {
+  border-color: rgba(224,92,75,.9);
+  box-shadow: 0 0 calc(2.4 * var(--uh)) rgba(224,92,75,.6);
+  animation: timerPulse 1s ease-in-out infinite;
+}
+@keyframes timerPulse {
+  0%, 100% { box-shadow: 0 0 calc(2.4 * var(--uh)) rgba(224,92,75,.5); }
+  50%      { box-shadow: 0 0 calc(5 * var(--uh)) rgba(224,92,75,.9); }
 }
 .timer-num {
   width: 76%; height: 76%; border-radius: 50%;
@@ -479,6 +490,12 @@
 .ab:last-child { margin-right: 0; }
 .ab:active { transform: scale(.97); }
 .ab[disabled] { opacity: .3; }
+/* 轮到我最后 5s：行动条整体轻微脉冲，强化紧迫感（与计时环/警告音同阈值） */
+.actbar.urgent { animation: actbarPulse 1s ease-in-out infinite; }
+@keyframes actbarPulse {
+  0%, 100% { transform: scale(1); }
+  50%      { transform: scale(1.015); }
+}
 .ab-fold { background: linear-gradient(160deg, #5f6874, #3f4854); }
 /* 弃牌二次确认态：高亮警示，避免误触一键弃牌 */
 .ab-fold.confirm {
@@ -652,6 +669,27 @@
 }
 .help-btn::after { border: none; }
 
+/* ---------- 牌桌内设置弹窗 ---------- */
+.settings-dialog { width: 560rpx; }
+.set-row {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: calc(1 * var(--uh)) 0; border-bottom: 1rpx solid rgba(255,255,255,.06);
+}
+.set-row:last-of-type { border-bottom: none; }
+.set-name { font-size: calc(3 * var(--uh)); color: var(--ink); }
+/* 开关（与首页设置弹窗一致的视觉口径） */
+.switch {
+  width: calc(7.2 * var(--uh)); height: calc(4.2 * var(--uh)); border-radius: 999rpx;
+  background: rgba(255,255,255,.14); position: relative; transition: background .2s;
+}
+.switch .knob {
+  position: absolute; width: calc(3.4 * var(--uh)); height: calc(3.4 * var(--uh));
+  border-radius: 50%; background: #fff; top: calc(0.4 * var(--uh)); left: calc(0.4 * var(--uh));
+  transition: left .2s;
+}
+.switch.on { background: linear-gradient(145deg, #2f9e6e, #1d6b4a); }
+.switch.on .knob { left: calc(3.4 * var(--uh)); }
+
 .summary-dialog {
   width: 640rpx; max-height: calc(86 * var(--uh));
   background: #12261f; border: 1rpx solid rgba(232,163,61,.36);
@@ -757,6 +795,12 @@
   font-size: calc(2.8 * var(--uh)); color: var(--mut); text-align: center;
   margin-top: calc(0.8 * var(--uh)); line-height: 1.35; max-width: 680rpx;
 }
+/* 空闲超时倒计时提示：最后 5 分钟才出现，金色脉冲提醒房主拉人续房 */
+.wi-idle {
+  font-size: calc(2.6 * var(--uh)); color: #e8a33d; text-align: center;
+  margin-top: calc(0.6 * var(--uh)); animation: idlePulse 1.6s ease-in-out infinite;
+}
+@keyframes idlePulse { 0%,100% { opacity: .55; } 50% { opacity: 1; } }
 .waitbar {
   flex-shrink: 0; margin-top: calc(0.8 * var(--uh));
   display: flex; align-items: center; justify-content: center;

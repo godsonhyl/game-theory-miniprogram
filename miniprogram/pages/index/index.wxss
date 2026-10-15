@@ -170,6 +170,22 @@
 }
 .join-btn:last-child { margin-right: 0; }
 
+/* 创建成功弹窗：房间号展示 + 三键分享/复制/进入 */
+.created-no {
+  width: 100%; margin-top: 30rpx; padding: 24rpx 0;
+  background: rgba(255,255,255,.06); border: 1rpx solid rgba(217,164,65,.28);
+  border-radius: 18rpx; text-align: center;
+}
+.created-label { display: block; font-size: 20rpx; color: #8fa8a0; letter-spacing: 2rpx; }
+.created-num {
+  display: block; margin-top: 8rpx; font-size: 56rpx; font-weight: 800;
+  color: #e8c273; letter-spacing: 12rpx;
+}
+/* 三键一行：分享是主按钮，复制/稍后为次按钮 */
+.created-btns .join-btn { font-size: 26rpx; }
+.created-btns { margin-top: 32rpx; }
+.enter-btn { margin-top: 20rpx; }
+
 /* 我的房间 */
 .myrooms { margin-bottom: 32rpx; }
 .sec-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 18rpx; }
@@ -177,6 +193,24 @@
   font-size: 28rpx; font-weight: 700; color: #eaf2ee;
 }
 .sec-count { font-size: 20rpx; color: #8fa8a0; }
+/* 房间加载骨架占位 */
+.room-skel {
+  height: 108rpx; border-radius: 20rpx; margin-bottom: 16rpx;
+  background: rgba(255,255,255,.05); border: 1rpx solid rgba(255,255,255,.08);
+}
+/* 加载失败态 */
+.room-state {
+  text-align: center; padding: 48rpx 0;
+  background: rgba(255,255,255,.04); border: 1rpx solid rgba(255,255,255,.08);
+  border-radius: 20rpx;
+}
+.room-state-t { display: block; font-size: 26rpx; color: #cfe0d9; }
+.room-state-s { display: block; font-size: 20rpx; color: #8fa8a0; margin-top: 8rpx; }
+.room-retry {
+  display: inline-block; margin-top: 20rpx; padding: 12rpx 48rpx;
+  border-radius: 999rpx; font-size: 24rpx; color: #fff;
+  background: linear-gradient(145deg, #2f9e6e, #1d6b4a);
+}
 .room-card {
   display: flex; align-items: center;
   background: rgba(255,255,255,.05); border: 1rpx solid rgba(217,164,65,.22);
