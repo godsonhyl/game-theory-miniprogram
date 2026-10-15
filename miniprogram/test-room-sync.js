@@ -424,6 +424,59 @@ eq(roomSync.readySeats([mkRow(1, 99999, { ready_hand: 4 })], 4, now), {}, '离�
     ok(!!friend.data.result && friend.data.result.rows.length > 0, '好友：结算条有数据');
   }
 
+  /* ---- 表情通道（设计 2026-10-15 §1）：emote 上行 → 房主消化冒泡 → 随快照广播 ---- */
+  {
+    currentUid = 'uid_host';
+    // ① 好友（行座位 2）发表情 → 房主 pendingActions 取出 + applyFriendAction 冒泡
+    const beforeEmotes = (host.data.emotes || []).length;
+    const emoRows = [{
+      seat: 2,
+      action: { seq: Date.now() + 10, type: 'emote', seat: 2, emoji: '🎉', rowSeat: 2 }
+    }];
+    const emo = roomSync.pendingActions(emoRows, {});
+    ok(emo.actions.length === 1 && emo.actions[0].type === 'emote',
+      'emote 动作可被 pendingActions 正常取出（分道复用既有机制）');
+    host.data.emoteShow = false;
+    host.applyFriendAction(emo.actions[0]);
+    ok((host.data.emotes || []).some(e => e.seat === 2 && e.emoji === '🎉'),
+      '房主消化合法 emote → 好友座位冒出表情气泡');
+
+    // ② 伪冒：payload seat 与 rowSeat 不一致 → 整条丢弃
+    const spoof2 = roomSync.pendingActions(
+      [{ seat: 2, action: { seq: Date.now() + 11, type: 'emote', seat: 0, emoji: '🎉', rowSeat: 2 } }], {}
+    ).actions;
+    spoof2.forEach(a => host.applyFriendAction(a));
+    ok(!(host.data.emotes || []).some(e => e.seat === 0),
+      '伪冒表情（报 seat=0）→ 房主端拒收（房主座位不冒泡）');
+
+    // ③ 白名单外 emoji → 拒收（防伪造内容/超长 payload）
+    const bad2 = roomSync.pendingActions(
+      [{ seat: 2, action: { seq: Date.now() + 12, type: 'emote', seat: 2, emoji: '💣', rowSeat: 2 } }], {}
+    ).actions;
+    bad2.forEach(a => host.applyFriendAction(a));
+    ok(!(host.data.emotes || []).some(e => e.emoji === '💣'),
+      '白名单外 emoji（💣）→ 房主端拒收不冒泡');
+
+    // ④ 广播：writePlayState 快照带 emotes 队列（房主行 state 落库）
+    host._lastPlayFp = null;   // 作废指纹强制写库
+    host.writePlayState();
+    await flush();
+    const hostRow2 = store.poker_room_seats.filter(r => r.is_host)[0];
+    const st = hostRow2 && hostRow2.state;
+    ok(st && Array.isArray(st.emotes) && st.emotes.some(e => e.emoji === '🎉'),
+      '房主 writePlayState 快照广播含 emotes 队列（🎉 在队列中）');
+    ok(st && st.emotes.length <= 10, 'emotes 队列滚动上限 10 条（EMOTE_QUEUE_MAX）');
+
+    // ⑤ 镜像端：好友轮询读到表情 → 按座次重映射冒泡（我=0 号位）
+    currentUid = 'uid_friend';
+    friend._lastRemoteFp = null;   // 作废指纹强制本帧进入
+    await friend.pollOnce();
+    ok((friend.data.emotes || []).some(e => e.emoji === '🎉'),
+      '好友镜像端从快照渲染房主广播的表情（🎉 冒泡）');
+    // 房主座位 0 的表情在好友端映射到本地 0 号位；好友自己（原 2 号位）也是本地 0 号位——
+    // 只验证「表情到达且 emoji 正确」，座次映射细节由 remapS 既有断言覆盖。
+  }
+
   /* ---- 站起上行：房主标记观战 ---- */
   if (host.data.result) {
     currentUid = 'uid_friend';

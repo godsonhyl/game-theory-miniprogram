@@ -362,6 +362,20 @@ ok(dataStore.chatLog[dataStore.chatLog.length - 1].text === '🔥', '表情可�
 for (let i = 0; i < 12; i++) pageCtx.pushChat(1, '林小满', '压测' + i);
 ok(dataStore.chatLog.length <= 8, '聊天日志最多保留 8 条，实际 ' + dataStore.chatLog.length);
 
+/* 聊天未读徽章：折叠期间收他人消息累计，打开面板清零，自己发的消息不计 */
+pageCtx.setData({ chatOpen: false, chatUnread: 0 });
+pageCtx.pushChat(1, '林小满', '你好');
+ok(dataStore.chatUnread === 1, '聊天折叠时收到他人消息累计未读');
+pageCtx.pushChat(1, '林小满', '再来');
+ok(dataStore.chatUnread === 2, '未读继续累加');
+pageCtx.setData({ chatOpen: false });
+pageCtx.pushChat(pageCtx.mySeat, '你', '我说');
+ok(dataStore.chatUnread === 2, '我自己发的消息不计未读');
+pageCtx.toggleChat();
+ok(dataStore.chatOpen === true && dataStore.chatUnread === 0, '打开聊天面板清零未读');
+pageCtx.toggleChat();   // 还原折叠状态，不污染后续折叠面板回归断言
+ok(dataStore.chatOpen === false, '聊天面板还原折叠');
+
 /* ---------- ④ 新手引导 ---------- */
 pageCtx.onHelp();
 ok(dataStore.helpShow === true, '帮助弹层可打开');
@@ -874,10 +888,20 @@ while (guard++ < 400) {
   ok(/onReachBottomDistance/.test(require('fs').readFileSync(
     path.join(__dirname, 'pages', 'profile', 'profile.json'), 'utf8')),
     'profile.json 配置 onReachBottomDistance（提前触发触底加载）');
+  ok(/onPullDownRefresh\(\)/.test(profSrc) && /stopPullDownRefresh/.test(profSrc),
+    'profile.js 定义 onPullDownRefresh 并调用 wx.stopPullDownRefresh');
+  ok(/enablePullDownRefresh/.test(require('fs').readFileSync(
+    path.join(__dirname, 'pages', 'profile', 'profile.json'), 'utf8')),
+    'profile.json 启用 enablePullDownRefresh');
+  ok(/onShareTimeline\(\)/.test(tableSrc), 'table.js 定义 onShareTimeline（朋友圈分享）');
   const profWxml = require('fs').readFileSync(
     path.join(__dirname, 'pages', 'profile', 'profile.wxml'), 'utf8');
   ok(/rec-more/.test(profWxml) && /rec-end/.test(profWxml),
     'WXML 战绩列表底部有「加载更多 / 没有更多战绩」节点');
+  ok(/recordsError/.test(profSrc) && /onRetryRecords/.test(profSrc),
+    'profile.js 有 recordsError 状态 + onRetryRecords 重试方法（区分加载失败与空列表）');
+  ok(/recordsError/.test(profWxml) && /重试/.test(profWxml),
+    'profile.wxml 区分加载失败态（recordsError）并提供重试按钮');
 
   /* ---------- 引擎：10 显示为「10」，但机读码仍是单字符 T ---------- */
   const coreSrc = require('fs').readFileSync(
@@ -1025,6 +1049,12 @@ while (guard++ < 400) {
     // require 缓存重载新实例，而 table.js 闭包持有的是最初那份单例——本块
     // 拿到的模块对象不是 pushChat 实际调用的那份，spy 永远等不到调用。
     // 退守静态守卫（方案原文：若 sfx 模块拦截成本高则退守静态守卫）。
+    // 聊天未读徽章静态守卫
+    ok(/chatUnread: 0/.test(tableSrc), 'data 有 chatUnread 未读计数字段');
+    ok(/patch\.chatUnread = \(this\.data\.chatUnread \|\| 0\) \+ 1/.test(tableSrc),
+      'pushChat 折叠期间收他人消息累计未读');
+    ok(/chatUnread > 0 && !chatOpen/.test(wxmlSrc), 'WXML 聊天按钮有未读徽章（chatUnread>0 且折叠时）');
+    ok(/\.chat-badge/.test(wxssSrc), 'WXSS 有 .chat-badge 未读徽章样式');
   }
 
   /* ---------- 回归：自定义金额必须同步加注按钮文案 ----------
@@ -1171,12 +1201,12 @@ while (guard++ < 400) {
   /* ---------- 同步上行吞错提示（评审 MEDIUM 回归）---------- */
   {
     // 静态守卫：table.js 的同步链路上不允许再出现裸 .catch(() => {})。
-    // 白名单只放行「离房清理」类（closeRoom/leave —— 人已离开，提示无意义，
-    // 具体见白名单数组注释）。出现新的静默吞错会在这里被拦截。
+    // 离房清理（closeRoom/leave）原先用裸 catch 静默吞错，现已全部加 console.error
+    // 日志——出现新的裸 .catch(() => {}) 会在这里被拦截。
     const silentCatches = (tableSrc.match(/\.catch\(\s*\(\s*\)\s*=>\s*\{\s*\}\s*\)/g) || []).length;
-    const SILENT_OK_COUNT = 3;   // closeRoom×2 + roomSync.leave×1（离房清理，人已走）
+    const SILENT_OK_COUNT = 0;   // 离房清理已加日志，不再静默吞错
     ok(silentCatches === SILENT_OK_COUNT,
-      '同步链路无静默吞错（裸 catch 仅剩离房清理 ' + SILENT_OK_COUNT + ' 处），实际 ' + silentCatches);
+      '同步链路无静默吞错（裸 catch 已清零），实际 ' + silentCatches);
     ok(/SYNC_FAIL_TOAST_MS = 10000/.test(tableSrc),
       '同步失败提示节流常量 SYNC_FAIL_TOAST_MS 存在（心跳 5s 一发防刷屏）');
     ok(/syncFailToast\(title\)/.test(tableSrc), '存在统一失败提示入口 syncFailToast');
@@ -1199,6 +1229,23 @@ while (guard++ < 400) {
     pageCtx.syncFailLast['测试文案A'] = Date.now() - 10001;
     pageCtx.syncFailToast('测试文案A');
     ok(toasts.filter(t => t === '测试文案A').length === 2, '节流窗口过后恢复提示');
+  }
+
+  /* ---------- 轮询重入守卫 + bootstrapSync 失败清理（鲁棒性）---------- */
+  {
+    ok(/if \(this\._polling\) return/.test(tableSrc), 'pollOnce 有重入守卫（_polling 标记）');
+    ok(/finally \{[\s\S]{0,60}?this\._polling = false/.test(tableSrc), 'pollOnce finally 释放 _polling 标记');
+    // 行为：置 _polling=true 后 pollOnce 直接返回，不触达 roomSync.poll（roomRows 不变）
+    const pollBefore = pageCtx.roomRows;
+    pageCtx._polling = true;
+    pageCtx.pollOnce();
+    ok(pageCtx._polling === true, 'pollOnce 重入时直接返回不执行（_polling 保持 true）');
+    ok(pageCtx.roomRows === pollBefore, 'pollOnce 重入时不调用 roomSync.poll（roomRows 未变）');
+    pageCtx._polling = false;
+    // bootstrapSync 失败时清理已起的定时器，防泄漏（stopSync 出现在 bootstrap-sync catch 块内）
+    ok(/bootstrap-sync[\s\S]{0,600}?this\.stopSync\(\)/.test(tableSrc) ||
+       /this\.stopSync\(\)[\s\S]{0,400}?bootstrap-sync/.test(tableSrc),
+      'bootstrapSync 失败 catch 调用 stopSync 清理可能已起的定时器');
   }
 
   /* ---------- 弹窗 catchtap 显式化 + 对手计时环残值（评审 MEDIUM UI 细节回归）---------- */
@@ -1340,6 +1387,228 @@ while (guard++ < 400) {
     ok(/idleRemainText: '',/.test(tableSrc), 'data 声明空闲倒计时文案字段 idleRemainText');
     ok(wxmlSrc.indexOf('wi-idle') > 0, 'WXML 等待室空闲倒计时提示节点 wi-idle');
     ok(/\.wi-idle[\s\S]*?idlePulse/.test(wxssSrc), 'WXSS 空闲提示有 idlePulse 脉冲动画');
+  }
+
+  /* ---------- 页面层性能缓存：ringPositions + cardData ---------- */
+  {
+    ok(/_ringCache/.test(tableSrc), 'ringPositions 有模块级缓存 _ringCache');
+    ok(/cacheKey/.test(tableSrc) && /_ringCache\[cacheKey\] = pos/.test(tableSrc),
+      'ringPositions 命中缓存时写回并返回（纯函数缓存）');
+
+    ok(/_cardCache/.test(tableSrc), 'cardData 有按 card id 缓存 _cardCache');
+    // 行为：同卡两次返回不同引用（浅克隆）但字段一致，markBest 可安全改 hi
+    const c1 = pageCtx.cardData(0, 0);
+    const c2 = pageCtx.cardData(0, 0);
+    ok(c1 !== c2, 'cardData 返回新对象（浅克隆，markBest 可安全改 hi）');
+    ok(c1.code === c2.code && c1.cls === c2.cls, '缓存命中时字段一致');
+    // markBest 改第一份的 hi 不影响缓存（第二份仍为 false）
+    c1.hi = true;
+    ok(c2.hi === false, 'cardData 浅克隆隔离：改一份的 hi 不污染缓存（另一份仍 false）');
+  }
+
+  /* ---------- render 渲染指纹跳过（性能优化）---------- */
+  {
+    ok(/_lastRenderFp/.test(tableSrc), 'render 有渲染指纹缓存键 _lastRenderFp');
+    ok(/if \(this\._lastRenderFp === fp\)/.test(tableSrc), 'render 指纹命中时跳过 setData');
+    ok(/_renderTail\(\)/.test(tableSrc), 'render 尾部调度抽出 _renderTail（指纹跳过时仍执行）');
+    ok(/tick,/.test(tableSrc) && /myActText,/.test(tableSrc),
+      '渲染指纹含 tick 与 myActText（计时环与动作气泡变化可触发重绘）');
+    // 行为：同势二次 render 不增 setData；变势后重新 setData
+    const g = pageCtx.requireGame();
+    if (g) {
+      let renderSetDataCount = 0;
+      const realSetData = pageCtx.setData.bind(pageCtx);
+      pageCtx.setData = (d) => { if (d && d.seats) renderSetDataCount++; return realSetData(d); };
+      try {
+        pageCtx._lastRenderFp = null;   // 强制首帧建立指纹
+        pageCtx.render();
+        const firstCount = renderSetDataCount;
+        pageCtx.render();              // 同势：应命中跳过
+        ok(renderSetDataCount === firstCount,
+          '同势二次 render 跳过 setData（指纹命中），实际 setData ' + renderSetDataCount + ' 次');
+        const savedBet = g.currentBet;
+        g.currentBet = savedBet + 100; // 变势：指纹变化
+        pageCtx.render();
+        ok(renderSetDataCount > firstCount, '势变化后 render 重新 setData（指纹未命中）');
+        g.currentBet = savedBet;       // 还原
+        pageCtx._lastRenderFp = null;
+      } finally {
+        pageCtx.setData = realSetData;
+      }
+    }
+  }
+
+  /* ---------- 牌桌互动与氛围（设计 2026-10-15 §2）静态守卫 + 行为 ----------
+   * 四类动画：筹码飞行 / 赢牌金光+星光粒子 / 连胜徽章 / 表情轮盘+气泡。
+   * 全部走 transform/opacity + keyframes，animOn=false 时 .no-anim 兜底禁用。
+   * 表情走既有 emote 动作上行 + 房主随快照广播，上行失败静默降级（非关键路径）。 */
+  {
+    // —— 常量与模块级状态 ——
+    ok(/const EMOTE_SET = \['👏', '🎉', '😏', '😅', '🤡', '💪'\]/.test(tableSrc),
+      'EMOTE_SET 恰好 6 个 emoji（渲染白名单，防伪造/超长 payload）');
+    ok(/EMOTE_THROTTLE_MS = 3000/.test(tableSrc), '表情频控 3s/座位（EMOTE_THROTTLE_MS）');
+    ok(/EMOTE_BUBBLE_MS = 2200/.test(tableSrc), '气泡消散时长 2.2s（EMOTE_BUBBLE_MS）');
+    ok(/EMOTE_QUEUE_MAX = 10/.test(tableSrc), '氛围队列广播上限 10 条（EMOTE_QUEUE_MAX，滚动截断）');
+    ok(/EMOTE_PLAY_WINDOW_MS = 1500/.test(tableSrc), '镜像端只放近 1.5s 内表情（EMOTE_PLAY_WINDOW_MS，防重放）');
+    ok(/BIG_HAND_MIN = 4/.test(tableSrc), '大牌粒子阈值 = 4（引擎 HAND.STRAIGHT，顺子及以上才出星光）');
+    ok(/WIN_STREAK_MIN = 2/.test(tableSrc), '连胜徽章阈值 = 2（WIN_STREAK_MIN，≥2 手显示 🔥xN）');
+    ok(/let winStreaks = \{\}/.test(tableSrc) && /let lastEmoteAt = \{\}/.test(tableSrc) && /let flySeed = 0/.test(tableSrc),
+      '模块级氛围状态：winStreaks / lastEmoteAt / flySeed（座位级计数与动画自增 id）');
+
+    // —— data 字段齐备 ——
+    ['emoteShow', 'emoteSeat', 'emoteSet', 'emotes', 'spark', 'flyOut', 'flyIn', 'streaks', 'winFx'].forEach(f => {
+      ok(new RegExp(f + ':').test(tableSrc), 'data 声明氛围字段：' + f);
+    });
+
+    // —— 核心方法存在 ——
+    ['renderAmbience', '_snapBaseline', '_resultHandCat', '_fxPos',
+      '_spawnFlyOut', '_spawnFlyHome', '_spawnSpark', '_bumpStreaks',
+      'onAvatarTap', 'onEmoteClose', 'onEmotePick', '_showEmoteBubble', 'onEmoteTalk'].forEach(fn => {
+      ok(new RegExp(fn + '\\(').test(tableSrc), '定义氛围方法：' + fn);
+    });
+
+    // —— render 基线 diff：render 开头缓存 prevBase，末尾 _renderTail 调 renderAmbience ——
+    ok(/const prevBase = this\._base;/.test(tableSrc) && /this\._snapBaseline\(\);/.test(tableSrc) && /this\._prevBase = prevBase;/.test(tableSrc),
+      'render 开头缓存上一帧基线供 renderAmbience 比对（_prevBase）');
+    ok(/this\.renderAmbience\(\);/.test(tableSrc), '_renderTail 末尾调用 renderAmbience（每帧驱动氛围）');
+
+    // —— animOn 守卫：飞行/粒子/金光只在 animOn 时触发 ——
+    ok(/prev\.handNo === now\.handNo && this\.data\.animOn/.test(tableSrc),
+      '下注飞行只在 animOn 且同手内触发（跨手不误触）');
+    ok(/this\.data\.animOn && result_fresh/.test(tableSrc),
+      '收池飞行/金光/粒子只在 animOn 且结果新鲜时触发');
+
+    // —— HAND_NAME_TO_CAT 映射存在（evals 存中文名，映射回引擎枚举）——
+    ok(/HAND_NAME_TO_CAT = \{/.test(tableSrc), '牌型名→枚举映射 HAND_NAME_TO_CAT 存在（_resultHandCat 用）');
+    // fold 结算无 evals → cat=0 不触发粒子
+    ok(/if \(!evals\) return 0;/.test(tableSrc), '_resultHandCat：fold 结算无 evals 返回 0（不触发粒子）');
+
+    // —— 静默降级：emote 上行失败不接 syncFailToast（氛围非关键路径）——
+    ok(/pushAction\(this\.roomNo, \{ type: 'emote'/.test(tableSrc),
+      '好友房表情走既有 pushAction 上行（type:emote）');
+    ok(/\.catch\(\(\) => \{ \/\* 静默降级[^*]*\*\/ \}\)/.test(tableSrc),
+      '表情上行失败静默降级（不弹错不重试，与牌局关键上行 syncFailToast 语义不同）');
+
+    // —— startHand 清零氛围状态 ——
+    ok(/winStreaks = \{\};[^}]*this\.setData\(\{ spark: null, flyOut: \[\], flyIn: \[\], winFx: '', streaks: \{\} \}\)/.test(tableSrc),
+      'startHand 清零连胜计数 + 清空粒子/飞行/金光/徽章');
+
+    // —— applyFriendAction emote 分支：rowSeat 断言 + 白名单 ——
+    ok(/if \(a\.type === 'emote'\)/.test(tableSrc), 'applyFriendAction 有 emote 动作分支');
+    ok(/Number\(a\.seat\) !== Number\(a\.rowSeat\)/.test(tableSrc) && /EMOTE_SET\.indexOf\(a\.emoji\) < 0/.test(tableSrc),
+      'emote 分支：rowSeat 伪冒断言 + emoji 白名单双校验');
+
+    // —— writePlayState emotes 随快照广播 + 指纹含 emote ——
+    ok(/emotes: \(this\.data\.emotes \|\| \[\]\)\.slice\(-EMOTE_QUEUE_MAX\)/.test(tableSrc),
+      'writePlayState 快照带 emotes 队列（滚动 10 条上限）');
+    ok(/'e' \+ \(state\.emotes \|\| \[\]\.map/.test(tableSrc) || /'e' \+\s*\(state\.emotes/.test(tableSrc),
+      '房主写库指纹含 emotes 项（表情变化触发写库广播）');
+
+    // —— enterRemote 表情镜像 ——
+    ok(/st\.emotes/.test(tableSrc), 'enterRemote 读取房主广播的 emotes 字段');
+    ok(/const localSeat = remapS\[Number\(e\.seat\)\]/.test(tableSrc),
+      '镜像端按座次重映射 emote 的 seat（remapS，我=0 号位）');
+
+    // —— WXML 节点齐备 ——
+    ok(wxmlSrc.indexOf('class="fly-chip fly-out"') >= 0 && wxmlSrc.indexOf('class="fly-chip fly-in"') >= 0,
+      'WXML 筹码飞行层：fly-out / fly-in 两层');
+    ok(/winFx && \(',' \+ winFx \+ ','\)\.indexOf/.test(wxmlSrc),
+      'WXML 座位按 winFx 挂 winfx class（金光脉冲）');
+    ok(wxmlSrc.indexOf('catchtap="onAvatarTap"') >= 0, 'WXML 头像绑 onAvatarTap（点头像弹轮盘）');
+    ok(wxmlSrc.indexOf('streak-badge') >= 0, 'WXML 连胜徽章节点 streak-badge');
+    ok(wxmlSrc.indexOf('emote-bubble') >= 0, 'WXML 表情气泡节点 emote-bubble');
+    ok(wxmlSrc.indexOf('class="spark"') >= 0, 'WXML 星光粒子节点 spark');
+    ok(wxmlSrc.indexOf('emote-mask') >= 0 && wxmlSrc.indexOf('emote-wheel') >= 0 &&
+      wxmlSrc.indexOf('emote-grid') >= 0 && wxmlSrc.indexOf('emote-cell') >= 0,
+      'WXML 表情轮盘弹层四件套：emote-mask/wheel/grid/cell');
+
+    // —— WXSS 样式 + keyframes 齐备，且只用 transform/opacity ——
+    ['.seat.winfx .avatar', '.streak-badge', '.emote-bubble', '.spark',
+      '.fly-chip', '.fly-chip.fly-out', '.fly-chip.fly-in',
+      '.emote-mask', '.emote-wheel', '.emote-grid', '.emote-cell'].forEach(c => {
+      ok(wxssSrc.indexOf(c) >= 0, 'WXSS 样式：' + c);
+    });
+    ['winGlow', 'streakPop', 'emoteFloat', 'sparkTwinkle',
+      'flyChipOut', 'flyChipIn', 'wheelPop'].forEach(kf => {
+      ok(new RegExp('@keyframes ' + kf).test(wxssSrc), 'WXSS @keyframes：' + kf);
+    });
+    // 重排红线：飞行动画只用 transform/opacity（不动 top/left/width）
+    const flyOutBlock = (wxssSrc.match(/@keyframes flyChipOut \{[\s\S]*?\}/) || [''])[0];
+    ok(/transform:/.test(flyOutBlock) && /opacity:/.test(flyOutBlock) &&
+      !/top:|left:/.test(flyOutBlock.replace(/translate/, '')),
+      'flyChipOut 只用 transform/opacity（不动 top/left，重排红线）');
+    // spark 用贴图 assets/spark.png
+    ok(/\.spark \{[\s\S]*?background:\s*url\(\.\.\/\.\.\/assets\/spark\.png\)/.test(wxssSrc),
+      'spark 粒子用 assets/spark.png 贴图（CSS background）');
+    // .no-anim 兜底禁用氛围
+    ok(/\.no-anim \.seat\.winfx \.avatar/.test(wxssSrc) && /\.no-anim \.spark/.test(wxssSrc) &&
+      /\.no-anim \.fly-chip/.test(wxssSrc),
+      'WXSS .no-anim 兜底禁用氛围动画（animOn=false 全关）');
+
+    // —— 粒子资源文件存在且 < 50KB ——
+    const fs = require('fs');
+    const sparkPath = path.join(__dirname, 'assets', 'spark.png');
+    ok(fs.existsSync(sparkPath), '粒子贴图 assets/spark.png 存在');
+    if (fs.existsSync(sparkPath)) {
+      const sparkSize = fs.statSync(sparkPath).size;
+      ok(sparkSize < 50 * 1024, '粒子贴图 < 50KB（实测 ' + sparkSize + ' bytes，包体积余量充足）');
+      // PNG 签名校验（防 gen-particle 产出损坏）
+      const head = fs.readFileSync(sparkPath).slice(0, 8);
+      ok(head[0] === 137 && head[1] === 80 && head[2] === 78 && head[3] === 71,
+        'spark.png 是合法 PNG（签名 89 50 4E 47）');
+    }
+
+    // —— 行为级：onAvatarTap 弹轮盘 / onEmoteClose 关轮盘 ——
+    pageCtx.onAvatarTap({ currentTarget: { dataset: { seat: 2 } } });
+    ok(dataStore.emoteShow === true && dataStore.emoteSeat === 2, '点头像 → 弹出表情轮盘（emoteShow=true, emoteSeat=2）');
+    pageCtx.onEmoteClose();
+    ok(dataStore.emoteShow === false && dataStore.emoteSeat === -1, 'onEmoteClose → 关闭轮盘（emoteShow=false）');
+
+    // —— 行为级：onEmotePick 本地冒泡 + 频控 3s ——
+    pageCtx.onAvatarTap({ currentTarget: { dataset: { seat: 2 } } });
+    pageCtx.onEmotePick({ currentTarget: { dataset: { e: '🎉' } } });
+    ok((dataStore.emotes || []).some(e => e.seat === 2 && e.emoji === '🎉'),
+      '选 emoji → 本地冒泡（emotes 出现该座位该表情）');
+    // 频控：3s 内同座位第二条被吞
+    pageCtx.onAvatarTap({ currentTarget: { dataset: { seat: 2 } } });
+    pageCtx.onEmotePick({ currentTarget: { dataset: { e: '👏' } } });
+    ok(!(dataStore.emotes || []).some(e => e.seat === 2 && e.emoji === '👏'),
+      '同座位 3s 内第二条表情被频控吞掉（EMOTE_THROTTLE_MS）');
+    // 白名单外不冒泡
+    pageCtx.onAvatarTap({ currentTarget: { dataset: { seat: 1 } } });
+    pageCtx.onEmotePick({ currentTarget: { dataset: { e: '💣' } } });
+    ok(!(dataStore.emotes || []).some(e => e.seat === 1 && e.emoji === '💣'),
+      '白名单外 emoji（💣）不冒泡');
+
+    // —— 行为级：_showEmoteBubble 新顶旧（每座位只留 1 个）——
+    pageCtx.lastEmoteAt = {};   // 清频控，方便测试
+    pageCtx._showEmoteBubble(3, '💪');
+    pageCtx._showEmoteBubble(3, '👏');
+    const seat3 = (dataStore.emotes || []).filter(e => e.seat === 3);
+    ok(seat3.length === 1 && seat3[0].emoji === '👏',
+      '同座位新表情顶替旧表情（每座位同时只留 1 个）');
+
+    // —— 行为级：_bumpStreaks 赢家+1 / 其余清零 / ≥2 显示 ——
+    const g = pageCtx.requireGame();
+    if (g && g.result && g.result.winners) {
+      // 借当前 result 结构验连胜（若当前无 result 则跳过行为级，静态守卫已覆盖）
+      pageCtx._bumpStreaks({ winners: g.result.winners });
+      const w = g.result.winners[0];
+      ok(dataStore.streaks && dataStore.streaks[w] !== undefined,
+        '_bumpStreaks 写入 streaks（赢家计 +1）');
+    }
+
+    // —— 行为级：_spawnSpark 产出带 seat 字段的粒子（wxml 按 seat 归属座位）——
+    pageCtx._spawnSpark(1);
+    ok(Array.isArray(dataStore.spark) && dataStore.spark.length > 0 &&
+      dataStore.spark.every(p => p.seat === 1),
+      '_spawnSpark 产出粒子数组，每粒带 seat=1（wxml 按 seat 归属到座位渲染）');
+
+    // —— 行为级：_spawnFlyOut 产出的筹码带 dx/dy 位移量 ——
+    pageCtx._spawnFlyOut(2);
+    ok(Array.isArray(dataStore.flyOut) && dataStore.flyOut.length > 0 &&
+      dataStore.flyOut.every(c => typeof c.dx === 'number' && typeof c.dy === 'number'),
+      '_spawnFlyOut 产出筹码带 dx/dy 位移量（CSS 变量 --dx/--dy）');
   }
 
   /* ---------- 输出 ---------- */

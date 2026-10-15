@@ -35,6 +35,10 @@ const SYNC_FAIL_TOAST_MS = 10000;
  */
 function ringPositions(seatSet, mySeat) {
   const arr = seatSet.slice().sort((a, b) => a - b);
+  // 模块级缓存：座位坐标是纯函数（seatSet + mySeat 唯一决定），座位组合有限
+  // （≤9 座位），命中即返回同一对象，省去每帧重算三角函数。键含排序后座位与 mySeat。
+  const cacheKey = arr.join(',') + ':' + mySeat;
+  if (_ringCache[cacheKey]) return _ringCache[cacheKey];
   const total = arr.length;
   if (total === 0) return {};
   const idxMe = Math.max(0, arr.indexOf(mySeat));
@@ -60,8 +64,11 @@ function ringPositions(seatSet, mySeat) {
     y = Math.max(12, Math.min(80, +y.toFixed(1)));
     pos[s] = { x, y };
   });
+  _ringCache[cacheKey] = pos;
   return pos;
 }
+/** ringPositions 的模块级缓存（seatSet+mySeat → 坐标对象） */
+const _ringCache = {};
 
 /** 电脑玩家名（AI 桌的预设对手；NAMES[0] 是「我」的占位，组局时按 mySeat 覆盖） */
 const BOT_NAMES = ['林小满', '陈默', '苏晴', '赵岩', '周叙'];
@@ -109,6 +116,30 @@ const RESULT_MODAL_MS = 10000;
 const DEFAULT_BUY_IN = 1000;
 const BUY_IN_OPTIONS = [500, 1000, 2000, 5000];
 
+/* ---------- 牌桌互动与氛围（评审 2026-10-15 设计文档 docs/plans/2026-10-15-table-interaction-design.md） ---------- */
+
+/** 表情轮盘（点头像弹出）。渲染端只认这里面的字符——上行来的任意
+ *  emoji 字符串先过白名单再显示，防伪造内容与超长 payload。 */
+const EMOTE_SET = ['👏', '🎉', '😏', '😅', '🤡', '💪'];
+/** 表情频控（毫秒）：同座位两条表情至少间隔该时长，超出静默丢弃（体验功能不提示）。 */
+const EMOTE_THROTTLE_MS = 3000;
+/** 表情气泡驻留（毫秒）。时间到由 data 内 bornAt 兜底清理（渲染层不依赖定时器精确性）。 */
+const EMOTE_BUBBLE_MS = 2200;
+/** 氛围队列滚动上限：房主行 state 里保留的最近表情条数（渲染端只放最近 1.5s 的）。 */
+const EMOTE_QUEUE_MAX = 10;
+/** 渲染端放行窗口（毫秒）：表情 ts 早于该窗口的视为历史重放，不再冒泡。 */
+const EMOTE_PLAY_WINDOW_MS = 1500;
+/** 大牌特效阈值：赢家成手 ≥ 顺子才触发全屏星光粒子（小牌局保持安静，特效不廉价）。 */
+const BIG_HAND_MIN = 4;   // HAND.STRAIGHT——引擎牌型枚举：0高牌…4顺子 5同花 6葫芦 7四条 8同花顺
+/** 连胜徽章门槛：连续赢 ≥2 手开始显示 🔥xN。 */
+const WIN_STREAK_MIN = 2;
+
+/** 牌型名 → 引擎枚举（BIG_HAND_MIN 门槛用；evals 里存的是中文名）。 */
+const HAND_NAME_TO_CAT = {
+  '皇家同花顺': 8, '同花顺': 8, '四条': 7, '葫芦': 6, '同花': 5, '顺子': 4,
+  '三条': 3, '两对': 2, '一对': 1, '高牌': 0
+};
+
 /** 好友房牌局快照（中途退出 → 再次进入续局） */
 const snapshot = require('../../utils/room-snapshot');
 
@@ -124,6 +155,11 @@ let aiTimer = null;
 let foldTimer = null;   // 弃牌二次确认自动复位计时器
 let myActText = '';
 let myActCls = '';
+
+/* ---------- 氛围状态（模块级，不进 data 的派生与频控记录） ---------- */
+let winStreaks = {};      // 座位 → 连胜手数（下一手 startHand 清零）
+let lastEmoteAt = {};     // 座位 → 上次表情时刻（频控用）
+let flySeed = 0;          // 筹码飞行动画的自增 id（WXML wx:key 用，防复用错位）
 
 Page({
   data: {
@@ -231,6 +267,7 @@ Page({
 
     // 社交：快捷聊天 + 表情
     chatLog: [],          // 最近聊天/表情（最多 8 条）
+    chatUnread: 0,        // 聊天折叠期间收到的他人/AI 消息计数（打开面板清零）
     quickChat: QUICK_TALK,
     chatEmojis: EMOJIS,
 
@@ -239,6 +276,17 @@ Page({
     // 牌桌内设置弹窗（⋯ 菜单入口）
     settingsShow: false,
     sFourColor: true, sSound: true, sVibrate: true, sAnim: true,
+
+    // ---------- 牌桌互动与氛围（docs/plans/2026-10-15-table-interaction-design.md） ----------
+    emoteShow: false,      // 表情轮盘弹层（点头像弹出）
+    emoteSeat: -1,        // 轮盘针对的座位（气泡冒在该座位旁）
+    emoteSet: EMOTE_SET.map(e => ({ e })),
+    emotes: [],            // 当前在冒的表情气泡 [{seat, emoji, bornAt, key}]
+    spark: null,           // 大牌星光粒子 [{x, y, d, s, key}]（null = 不播）
+    flyOut: [],            // 下注筹码飞行：座位 → 底池 [{x, y, dx, dy, delay, key}]
+    flyIn: [],             // 收池筹码飞行：底池 → 赢家 [{x, y, tx, ty, delay, key}]
+    streaks: {},           // 座位 → 连胜徽章文案（'' = 不显示，如 '🔥 x2'）
+    winFx: '',             // 本手赢家座位列表（逗号串，wxml 给座位加金光脉冲 class）
     helpRows: [
       { name: '翻牌前', desc: '每人两张底牌，大小盲先行下注' },
       { name: '翻牌', desc: '发出 3 张公共牌，开始第二轮下注' },
@@ -289,6 +337,11 @@ Page({
     this.startStacks = {};     // 座位 → 起始筹码（结算盈亏用）
     this.buyInStack = {};      // 座位 → 买入额（入座时选定，开局按此发筹码）
     this.chatSeq = this.chatSeq || 0;
+    // 氛围状态：页面级重置（连胜/频控/飞行 id 随页面实例归零）
+    winStreaks = {};
+    lastEmoteAt = {};
+    flySeed = 0;
+    this.emoteSeen = 0;        // 镜像端已放过气泡的表情 ts 高水位（防轮询重放）
     const s = settings.get();
     this.setData({
       mode: this.mode,
@@ -311,6 +364,9 @@ Page({
       pageTitle: this.mode === 'friend' ? '好友房' : 'AI 对战',
       fourColor: s.fourColor,
       soundOn: s.sound,
+      // 氛围字段重置（页面复用/热重载时清干净上一局的气泡与粒子）
+      emoteShow: false, emoteSeat: -1, emotes: [],
+      spark: null, flyOut: [], flyIn: [], streaks: {},
       vibrateOn: s.vibrate,
       animOn: s.animation
     });
@@ -613,7 +669,9 @@ Page({
       if (this.isOwner) this.publishWait();
       await this.pollOnce();
     } catch (e) {
-      // 云端表不可用（旧应用未建表 / 网络异常）→ 本地引擎模拟
+      // 云端表不可用（旧应用未建表 / 网络异常）→ 本地引擎模拟。
+      // stopSync 先清掉可能已起的轮询/心跳/发布定时器，防泄漏后再降级。
+      this.stopSync();
       this.syncLive = false;
       this.setData({ syncLive: false, seatHint: '' });
       console.error('[table] 跨设备同步不可用，已降级本地模式',
@@ -678,13 +736,19 @@ Page({
    */
   async pollOnce() {
     if (!this.syncLive || !this.roomNo) return;
+    // 防重入：1.5s 轮询周期里若上一次 await roomSync.poll 尚未返回，本次直接跳过——
+    // 避免慢钟设备上多次 poll 重叠并发，导致序号消化乱序或重复广播。
+    if (this._polling) return;
+    this._polling = true;
     let rows;
     try {
       rows = await roomSync.poll(this.roomNo);
     } catch (e) {
       this.onSyncLost();
+      this._polling = false;
       return;
     }
+    try {
     this.roomRows = rows;
     const st = roomSync.hostStateOf(rows);
     this.hostState = st;
@@ -743,6 +807,9 @@ Page({
       return;
     }
     this.enterRemote(st);
+    } finally {
+      this._polling = false;
+    }
   },
 
   /** 等待室布局：真人来自各自的行（在线才算占座），机器人来自房主广播 */
@@ -922,6 +989,14 @@ Page({
       this.forcePublish();
       return;
     }
+    if (a.type === 'emote') {
+      // 表情：rowSeat 断言同防伪冒——他人不能替我发表情。
+      // emoji 过渲染白名单才冒泡（防伪造内容/超长 payload）。频控在冒泡侧做。
+      if (Number(a.seat) !== Number(a.rowSeat)) return;
+      if (EMOTE_SET.indexOf(a.emoji) < 0) return;
+      this._showEmoteBubble(seat, a.emoji);
+      return;
+    }
   },
 
   /** 立即广播一次（忽略 500ms 节流与脏检查）：站起/坐下/结算等关键状态变化用。
@@ -1044,7 +1119,10 @@ Page({
       readyLeft: this.data.readyLeft || 0,
       readyHint: this.data.readyHint || '',
       summary: this.data.summary || null,
-      handNo: game.handNo
+      handNo: game.handNo,
+      // 氛围表情队列（设计 §1）：随快照广播，镜像端按放行窗口渲染。
+      // 频控已在发送端/冒泡侧做过，这里只做滚动上限截断。
+      emotes: (this.data.emotes || []).slice(-EMOTE_QUEUE_MAX)
     };
     // 脏检查（评审 2026-10-15 MEDIUM「房主全量写库无脏检查」）：房主 500ms 节流后
     // 仍会因每次 render / 轮询而调到这里；若牌局实质未变（同手同街同注同池同动作
@@ -1058,7 +1136,9 @@ Page({
         (p.folded ? 1 : 0) + (p.allIn ? 1 : 0) + (p.sittingOut ? 1 : 0) +
         (p.hole ? p.hole.join('.') : '')).join('|'),
       this.data.readyPhase ? 'r' + (this.data.readyList || []).map(x => x.seat + (x.ready ? 1 : 0)).join(',') : '',
-      this.data.summary ? 's' + JSON.stringify(this.data.summary) : ''
+      this.data.summary ? 's' + JSON.stringify(this.data.summary) : '',
+      // 表情队列内容/位置变化必须触发写库——否则好友端看不到新表情（轮询内唯一广播时机）
+      'e' + (state.emotes || []).map(x => x.seat + x.emoji + x.bornAt).join('|')
     ].join('#');
     if (this._lastPlayFp === fingerprint) return;
     this._lastPlayFp = fingerprint;
@@ -1114,11 +1194,36 @@ Page({
       timeUp: !!st.summary
     };
     if (hostLeftResult && this.data.resultModal) patch.resultModal = null;
+    // 表情镜像（设计 §1）：房主广播的 emotes 按「我=0 号位」重映射后冒泡。
+    // 只放最近 1.5s 内的（EMOTE_PLAY_WINDOW_MS）——表情是瞬时氛围，靠本端
+    // bornAt 兜底消散，不重放历史（断线重连同理不补历史表情）。
+    // 以「座次重映射」换算 seat：与 readyList 同一套 remapS。
+    const freshEmotes = [];
+    ((st.emotes) || []).forEach(e => {
+      if (!e || EMOTE_SET.indexOf(e.emoji) < 0) return;
+      const localSeat = remapS[Number(e.seat)];
+      if (localSeat === undefined) return;
+      if (e.bornAt && Date.now() - e.bornAt > EMOTE_BUBBLE_MS + EMOTE_PLAY_WINDOW_MS) return;
+      freshEmotes.push({ seat: localSeat, emoji: e.emoji, bornAt: Date.now(), key: 'r' + (++flySeed) });
+    });
+    if (freshEmotes.length) {
+      // 同座位去重（房主端可能同座位连发被截断成多条）：保留最新一条
+      const seen = {};
+      const merged = (this.data.emotes || []).slice();
+      freshEmotes.reverse().forEach(e => {
+        if (seen[e.seat]) return;
+        seen[e.seat] = true;
+        const idx = merged.findIndex(x => x.seat === e.seat);
+        if (idx >= 0) merged.splice(idx, 1);
+        merged.push(e);
+      });
+      patch.emotes = merged;
+    }
     // 脏检查（评审 2026-10-15 MEDIUM「镜像端每 1.5s 全量 setData 无脏检查」）：
     // 好友端 1.5s 轮询拿到房主快照；若牌局实质未变，loadSnapshot 后渲染出的 patch
     // 与上一帧逐字段相同——整帧 setData 纯属空转，触发全量 diff/重绘、低端机掉帧。
     // 以快照的关键牌桌字段拼出指纹，与上一帧比对：未变则跳过 setData + render。
-    // 牌桌外字段（就绪名单/结算/计时）变化照常更新——指纹覆盖它们，不会被吞。
+    // 牌桌外字段（就绪名单/结算/计时/表情）变化照常更新——指纹覆盖它们，不会被吞。
     const fp = [
       snap.handNo, snap.street, snap.currentBet, snap.pot, snap.actionSeat,
       snap.boardCodes.join(','),
@@ -1127,7 +1232,8 @@ Page({
       !!st.readyPhase, (st.readyList || []).map(x => x.seat + (x.ready ? 1 : 0)).join(','),
       st.readyLeft, st.readyHint, JSON.stringify(st.summary || null),
       snap.result ? 'r' + JSON.stringify(snap.result.winners) : '',
-      (snap.reveal && JSON.stringify(snap.reveal)) || ''
+      (snap.reveal && JSON.stringify(snap.reveal)) || '',
+      (patch.emotes ? 'e' + patch.emotes.map(x => x.seat + x.emoji + x.bornAt).join('|') : '')
     ].join('#');
     if (this._lastRemoteFp === fp) return;
     this._lastRemoteFp = fp;
@@ -1274,7 +1380,8 @@ Page({
     this.clearExpireWarn();
     this.clearClock();
     if (this.roomNo) {
-      auth.closeRoom(this.roomNo).catch(() => {});   // 销毁云端房间，不影响本地退出
+      auth.closeRoom(this.roomNo).catch(e => console.error('[table] 离房清理失败',
+        JSON.stringify({ stage: 'destroyRoom', room: this.roomNo, err: e && e.message })));   // 销毁云端房间，不影响本地退出
     }
     wx.showToast({ title: '房间超时已自动解散', icon: 'none' });
     this.onBack();
@@ -1372,7 +1479,8 @@ Page({
         const cnt = this.data.waitSeats.filter(s => s.occupied).length;
         if (this.isOwner && !this.roomClosed && cnt <= 1 && this.roomNo) {
           this.roomClosed = true;
-          auth.closeRoom(this.roomNo).catch(() => {});
+          auth.closeRoom(this.roomNo).catch(e => console.error('[table] 离房清理失败',
+            JSON.stringify({ stage: 'leaveRoom-wait', room: this.roomNo, err: e && e.message })));
           this.clearSnapshot();
         }
       } else {
@@ -1380,7 +1488,8 @@ Page({
       }
       // 好友离房释放自己的座位行；房主保留行（房间仍在，可回来续局）
       if (this.syncLive && !this.isOwner) {
-        roomSync.leave(this.roomNo).catch(() => {});
+        roomSync.leave(this.roomNo).catch(e => console.error('[table] 离房清理失败',
+          JSON.stringify({ stage: 'leaveRoom-sync', room: this.roomNo, err: e && e.message })));
       }
       this.stopSync();
     }
@@ -1610,6 +1719,14 @@ Page({
     return { title: '博弈论 · AI 对战', path: '/pages/index/index' };
   },
 
+  /** 分享到朋友圈：好友房带房间号 */
+  onShareTimeline() {
+    if (this.mode === 'friend') {
+      return { title: '来「博弈论」和我打一局，房间号 ' + this.roomNo, query: 'room=' + this.roomNo };
+    }
+    return { title: '博弈论 · AI 对战' };
+  },
+
   onUnload() {
     if (timer) clearInterval(timer);
     if (aiTimer) clearTimeout(aiTimer);
@@ -1668,6 +1785,8 @@ Page({
     this.clearResultTimer();     // 上一手的结算展示定时器作废（防串手）
     this.clearResultModalTimer();
     this.resultModalHand = -1;   // 新一手允许重新调度结算弹窗（手数可能轮回重置）
+    winStreaks = {};             // 连胜计数随新手清零（设计 §2.2：连胜徽章只活到下一手）
+    this.setData({ spark: null, flyOut: [], flyIn: [], winFx: '', streaks: {} });
     // 「坐下加入游戏」下一手才生效：本手发牌前正式落座并入局
     if (this.pendingSit) {
       this.pendingSit = false;
@@ -1825,8 +1944,46 @@ Page({
   // 绝不向上抛——否则 startHand→render→advance 链路断掉，牌局无声冻结。
   render() {
     try {
-      const showdown = game.street === P.STREET.SHOWDOWN;
-      const result = game.result;
+      // 氛围基线：缓存「上一帧」的注额/池作为本帧 diff 的对照。
+      // _snapBaseline 在这里把 this._base 刷成本帧值，供下一帧比对；
+      // 本帧渲染用 prevBase（上一帧结束时缓存的值）。
+      const prevBase = this._base;
+      this._snapBaseline();
+      this._prevBase = prevBase;
+      // 渲染指纹：牌桌实质状态未变时跳过整帧 setData（评审 2026-10-15 性能优化）。
+      // tick 必须进指纹——计时应变化时需重绘；但 startTimer 的每秒回调走局部
+      // setData（不调 render），故 render 不被每秒触发，指纹稳定。跳过路径仍执行
+      // _renderTail（结算调度 + 广播），防漏调度。forcePublish 不动本指纹，靠
+      // handNo/street 等实质字段变化自然令指纹不同。
+      const g = game;
+      const fp = [
+        g.handNo, g.street, g.potTotal(), g.currentBet, g.actionSeat,
+        (g.board || []).join(','),
+        g.dealerSeat, g.sbSeat, g.bbSeat,
+        g.players.map(p => p.seat + ':' + p.stack + ':' + p.bet + ':' +
+          (p.folded ? 1 : 0) + (p.allIn ? 1 : 0) + (p.sittingOut ? 1 : 0) +
+          (p.hole ? p.hole.join('.') : '')).join('|'),
+        g.result ? 'r' + JSON.stringify(g.result.winners) + JSON.stringify(g.result.awards) : '',
+        g.showdownReveal ? 'sv' + JSON.stringify(g.showdownReveal) : '',
+        this.data.readyPhase ? 'rp' + (this.data.readyList || []).map(x => x.seat + (x.ready ? 1 : 0)).join(',') : '',
+        this.data.readyLeft,
+        this.data.foldConfirm ? 1 : 0,
+        this.data.raiseTo,
+        this.data.raiseCustom ? 1 : 0,
+        tick,                    // 计时环残值——变化时必须重绘
+        myActText,               // 我的动作气泡文案
+        myActCls,
+        this.myStanding ? 1 : 0,
+        this.pendingSit ? 1 : 0, // 影响 mySeated（坐下待下一手入局）的派生态
+        this.data.resultModal ? 'rm' : ''   // 结算弹窗开/关状态
+      ].join('#');
+      if (this._lastRenderFp === fp) {
+        this._renderTail();
+        return;
+      }
+      this._lastRenderFp = fp;
+      const showdown = g.street === P.STREET.SHOWDOWN;
+      const result = g.result;
       // 就绪阶段：上一手的牌全部收走（公共牌/底牌/赢家特效），桌面清空等下一局，
       // 就绪状态以徽章形式挂在各个座位上（不再在底部条里逐人罗列）。
       const readyPhase = this.data.readyPhase;
@@ -1990,6 +2147,11 @@ Page({
         });
       } catch (e2) { /* 连降级都失败时放弃本帧 */ }
     }
+    this._renderTail();
+  },
+
+  /** render 末尾的调度：结算弹窗时序 + 房主广播（指纹跳过时也要执行，防漏调度） */
+  _renderTail() {
     // 结算展示调度（本地端与镜像端统一走这里）：
     // 摊牌亮牌先在牌桌上停留 RESULT_SHOW_MS 让各家牌面完整可见，之后**自动弹出**
     // 「每人盈亏」结算弹窗；弹窗停留 RESULT_MODAL_MS 自动关闭并进入就绪阶段
@@ -2006,12 +2168,245 @@ Page({
     }
     // 房主端：每次渲染后节流广播最新状态，好友端 1.5s 内看到
     this.publishPlay();
+    // 氛围副作用：筹码飞行/粒子/连胜/表情清场。放最后——
+    // 即便它自身异常也不影响结算调度与广播（renderAmbience 内部已自捕获）。
+    this.renderAmbience();
+  },
+
+  /* ==================== 牌桌互动与氛围 ====================
+   * 设计：docs/plans/2026-10-15-table-interaction-design.md
+   * 统一收口在一个渲染段——render 主体只算牌局数据，氛围副作用
+   * （筹码飞行/星光粒子/连胜徽章/表情气泡）由 renderAmbience 驱动：
+   *   · 本地端与镜像端共用；输入 = 上一帧快照 diff（render 前缓存）；
+   *   · 全部动 transform/opacity，animOn=false 时只更新数字不挂动画。
+   */
+
+  /** render 开头调用：缓存本帧基线（筹码飞行与粒子靠相邻两帧 diff 触发）。
+   *  必须在 render 主体读完 game 之后、任何 setData 之前调用。 */
+  _snapBaseline() {
+    if (!game) return;
+    this._base = {
+      handNo: game.handNo,
+      street: game.street,
+      pot: game.potTotal(),
+      bets: game.players.map(p => ({ seat: p.seat, bet: p.bet, folded: !!p.folded })),
+      stacks: game.players.map(p => ({ s: p.stack })).map(x => x.s),
+      lastBetBy: (game.events || []).length ? game.events[game.events.length - 1] : null
+    };
+  },
+
+  /**
+   * 氛围渲染：比对上一帧缓存的注额/池/结果，触发四类动画。
+   * 只在被 _renderTail 调用的路径上跑（本地端与镜像端 render 末尾统一进）。
+   */
+  renderAmbience() {
+    try {
+      if (!game || this.data.phase !== 'playing') return;
+      const prev = this._prevBase;   // 上一帧缓存的基线（首帧 null → 不触发飞行）
+      const now = {
+        handNo: game.handNo,
+        street: game.street,
+        pot: game.potTotal(),
+        result: game.result || null,
+        actionSeat: game.actionSeat,
+        cat: this._resultHandCat()
+      };
+      const result_fresh = now.result && prev && !prev.result;
+
+      // ---- ① 下注筹码飞行：座位 → 底池（谁 bet 变大谁飞）----
+      if (prev && prev.handNo === now.handNo && this.data.animOn) {
+        const prevBets = {};
+        prev.bets.forEach(b => { prevBets[b.seat] = b.bet; });
+        game.players.forEach(p => {
+          const before = Number(prevBets[p.seat]) || 0;
+          if (p.bet > before) this._spawnFlyOut(p.seat, now.pot);
+        });
+      }
+
+      // ---- ② 收池筹码飞行：底池 → 赢家 + 金光脉冲（结算瞬间触发）----
+      if (this.data.animOn && result_fresh) {
+        const winners = now.result ? now.result.winners || [] : [];
+        winners.forEach(s => this._spawnFlyHome(s));
+
+        // ---- ③ 大牌星光粒子：赢家成手 ≥ 顺子 ----
+        if (now.result && now.cat >= BIG_HAND_MIN) {
+          winners.forEach(s => this._spawnSpark(s));
+        }
+        // 胜者金光脉冲座位标记（wxml 用 winFx 挂 class）
+        this.setData({ winFx: winners.join(',') });
+      }
+
+      // ---- ④ 连胜徽章 + 表情气泡清场 ----
+      if (result_fresh && now.result) this._bumpStreaks(now.result);
+
+      // 表情气泡到期清场：每帧顺带清理（渲染本身高频，无需独立定时器）
+      const liveEmotes = (this.data.emotes || []).filter(
+        e => Date.now() - e.bornAt < EMOTE_BUBBLE_MS
+      );
+      if (liveEmotes.length !== (this.data.emotes || []).length) this.setData({ emotes: liveEmotes });
+      // 星光粒子到期清场
+      if (this.data.spark && Date.now() - this.sparkBorn > 2600) this.setData({ spark: null });
+      // 收池飞行到位后清场
+      if (this.data.flyIn.length && Date.now() - this.flyInBorn > 1600) this.setData({ flyIn: [] });
+      if (this.data.flyOut.length && Date.now() - this.flyOutBorn > 1200) this.setData({ flyOut: [] });
+    } catch (e) { /* 氛围异常绝不影响牌局（与音效同口径静默） */ }
+    // 下一帧的基线在本 render 主体开头已由 _snapBaseline 刷新
+  },
+
+  /** 结算结果的赢家最高牌型档（0..8）。fold 结算无 evals → 返回 0（不触发粒子）。 */
+  _resultHandCat() {
+    if (!game || !game.result) return 0;
+    const evals = game.result.evals;
+    if (!evals) return 0;
+    let cat = 0;
+    game.result.winners.forEach(s => {
+      const e = evals[s];
+      if (e) cat = Math.max(cat, HAND_NAME_TO_CAT[e.name] || 0);
+    });
+    return cat;
+  },
+
+  /** 座位坐标 → felt 内百分比（筹码飞行起/终点）。带缓存，同帧同 seat 复用。 */
+  _fxPos(seat) {
+    const allSeats = game.players.map(p => p.seat);
+    const pos = ringPositions(allSeats, this.mySeat);
+    const pp = pos[seat] || { x: 50, y: 40 };
+    return pp;
+  },
+
+  /** 下注飞行：生成 5~7 枚筹码从座位飞向中央底池（错峰 delay）。 */
+  _spawnFlyOut(seat, pot) {
+    flySeed++;
+    const from = this._fxPos(seat);
+    const n = 5 + (Math.abs(flySeed) % 3);   // 5~7 枚
+    const chips = [];
+    // dx/dy = 底池中心(50,32) − 座位坐标，作为 transform 位移量（vw/vh 口径，
+    // 见 wxss @keyframes flyChip：translate(calc(var(--dx)*1vw),calc(var(--dy)*1vh))）。
+    // 座位环均在 felt 内，felt 宽≈100vw，故 x 方向 vw 与 felt% 近似；y 方向 felt
+    // 高<100vh，位移会略过冲，但 opacity 在到位前已淡出（氛围特效不追求精确落点）。
+    for (let i = 0; i < n; i++) {
+      chips.push({
+        x: from.x, y: from.y,
+        dx: +(50 - from.x).toFixed(1), dy: +(32 - from.y).toFixed(1),
+        delay: i * 0.04, key: 'o' + flySeed + '_' + i
+      });
+    }
+    this.setData({ flyOut: this.data.flyOut.concat(chips) });
+    this.flyOutBorn = Date.now();
+  },
+
+  /** 收池飞行：底池 → 赢家座位。 */
+  _spawnFlyHome(seat) {
+    flySeed++;
+    const to = this._fxPos(seat);
+    const n = 6;
+    const chips = [];
+    for (let i = 0; i < n; i++) {
+      chips.push({
+        x: 50, y: 32,
+        tx: +to.x.toFixed(1), ty: +to.y.toFixed(1),
+        delay: i * 0.05, key: 'i' + flySeed + '_' + i
+      });
+    }
+    this.setData({ flyIn: this.data.flyIn.concat(chips) });
+    this.flyInBorn = Date.now();
+  },
+
+  /** 大牌星光粒子：胜者座位上方 20 粒随机散布（贴图 assets/spark.png）。 */
+  _spawnSpark(seat) {
+    flySeed++;
+    const at = this._fxPos(seat);
+    const pts = [];
+    for (let i = 0; i < 20; i++) {
+      pts.push({
+        seat,                                  // wxml 按 seat 归属到座位节点上渲染
+        bx: +at.x.toFixed(1), by: +at.y.toFixed(1),   // 基准座位坐标（wxml 按 item 匹配）
+        x: +(at.x + (Math.random() * 24 - 12)).toFixed(1),
+        y: +(at.y + (Math.random() * 16 - 8)).toFixed(1),
+        d: +(Math.random() * 1.2).toFixed(2),       // 动画 delay
+        s: +(0.6 + Math.random() * 0.9).toFixed(2), // 缩放
+        key: 's' + flySeed + '_' + i
+      });
+    }
+    this.setData({ spark: pts });
+    this.sparkBorn = Date.now();
+  },
+
+  /** 连胜维护：本手赢家 +1，其余清零；≥2 手的显示 🔥xN 徽章。startHand 清零不入此。 */
+  _bumpStreaks(result) {
+    const winners = {};
+    (result.winners || []).forEach(s => { winners[s] = true; });
+    const streaks = {};
+    game.players.forEach(p => {
+      const w = winners[p.seat];
+      const n = w ? (winStreaks[p.seat] || 0) + 1 : 0;
+      winStreaks[p.seat] = n;
+      streaks[p.seat] = (n >= WIN_STREAK_MIN) ? ('🔥 x' + n) : '';
+    });
+    this.setData({ streaks });
+  },
+
+  /* ---------- 表情互动：轮盘 + 气泡 ---------- */
+
+  /** 点座位头像（游戏中任意座位、等待室不弹——那里头像承担选座职责）。
+   *  AI 局直接本地冒泡；好友房经 emote 动作上行，房主消化后随快照广播，
+   *  镜像端（含发送者本人）从广播渲染——保证每台设备同一时刻看到同一表情。
+   *  站起观战者同样可发（设计 §2.4 观战者互动）。 */
+  onAvatarTap(e) {
+    const seat = Number(e.currentTarget.dataset.seat);
+    if (isNaN(seat) || seat < 0) return;
+    this.setData({ emoteShow: true, emoteSeat: seat });
+  },
+
+  /** 关表情轮盘（点遮罩/选完都走这里） */
+  onEmoteClose() {
+    if (this.data.emoteShow) this.setData({ emoteShow: false, emoteSeat: -1 });
+  },
+
+  /** 轮盘选表情：本地即时冒泡（频控 3s/座位）+ 好友房上行广播。
+   *  上行失败静默降级（体验功能，不弹错不重试——与牌局关键上行不同）。 */
+  onEmotePick(e) {
+    const emoji = e.currentTarget.dataset.e;
+    const seat = this.data.emoteSeat;
+    this.setData({ emoteShow: false, emoteSeat: -1 });
+    if (EMOTE_SET.indexOf(emoji) < 0) return;   // 渲染白名单外的非法值直接丢
+    if (seat < 0) return;
+    // 频控：同一座位 3s 内只放一条
+    const now = Date.now();
+    if (now - (lastEmoteAt[seat] || 0) < EMOTE_THROTTLE_MS) return;
+    lastEmoteAt[seat] = now;
+    this._showEmoteBubble(seat, emoji);
+    if (this.mode === 'friend' && this.syncLive && this.roomNo) {
+      const payloadSeat = this.remoteMode ? this.roomSeat : this.mySeat;
+      roomSync.pushAction(this.roomNo, { type: 'emote', seat: payloadSeat, emoji })
+        .catch(() => { /* 静默降级：本地已冒泡，失败不提示（氛围功能非关键路径） */ });
+    }
+  },
+
+  /** 本地冒泡（每座位同时只留 1 个，新顶旧） */
+  _showEmoteBubble(seat, emoji) {
+    const emotes = (this.data.emotes || []).filter(e => e.seat !== seat);
+    emotes.push({ seat, emoji, bornAt: Date.now(), key: 'e' + (++flySeed) });
+    this.setData({ emotes });
+  },
+
+  /** 观战快捷语入口保留（P3 预留位）：当前只关轮盘。快捷语与表情同通道
+   *  （emote 动作上行 + 房主广播），文案版后续接 pushChat 即可。 */
+  onEmoteTalk() {
+    this.onEmoteClose();
   },
 
   /** 牌 ID → 渲染数据（花色配色：四色牌时 ♠黑 / ♣绿 / ♦蓝 / ♥红） */
   cardData(card, idx) {
+    // 缓存牌面基对象（rank/suit/cls/code 仅由 card id 决定，无副作用）。
+    // hi 由 markBest 在摊牌后原地写入，故命中缓存时必须浅克隆返回——否则
+    // markBest 改 c.hi 会污染缓存，下一帧 hi 残留为旧值。克隆仅 5 属性，比重算省。
+    const key = card + ':' + (idx || 0);
+    if (this._cardCache && this._cardCache[key]) {
+      return Object.assign({}, this._cardCache[key]);
+    }
     const s = P.suitOf(card);
-    return {
+    const d = {
       idx: idx || 0,                 // 供 wx:key 使用的稳定键
       code: P.cardToCode(card),      // 摊牌时用于判断是否属于最佳成手 5 张（机读码，恒为 "Th" 形式）
       hi: false,                     // 是否属于最佳 5 张（摊牌高亮）
@@ -2019,6 +2414,9 @@ Page({
       suit: P.SUIT_CHARS[s],
       cls: SUIT_CLS[s]
     };
+    this._cardCache = this._cardCache || {};
+    this._cardCache[key] = d;
+    return d;
   },
 
   /** 摊牌时把「最佳成手 5 张」标出来：传入 code 集合，给牌数据打 hi 标记 */
@@ -2097,7 +2495,10 @@ Page({
     const log = this.data.chatLog.slice();
     log.push({ id: ++this.chatSeq, seat: seat, name: name, text: text });
     while (log.length > 8) log.shift();
-    this.setData({ chatLog: log });
+    const patch = { chatLog: log };
+    // 聊天折叠时收到他人/AI 消息 → 累计未读，打开聊天面板时清零
+    if (!this.data.chatOpen && seat !== this.mySeat) patch.chatUnread = (this.data.chatUnread || 0) + 1;
+    this.setData(patch);
     // 收到他人/AI 消息时轻提示；我自己发的（快捷聊天/表情、我的站起/入局系统消息）不响
     if (this.data.soundOn && seat !== this.mySeat) sfx.play('chat');
   },
@@ -2115,7 +2516,9 @@ Page({
   // ---------- 折叠面板（聊天 / 菜单）----------
   // 微扑克式：社区与次要操作默认折叠，主视觉只留牌桌 + 我的操作区
   toggleChat() {
-    this.setData({ chatOpen: !this.data.chatOpen, menuOpen: false });
+    const opening = !this.data.chatOpen;
+    // 打开聊天面板时清零未读（已读）
+    this.setData({ chatOpen: opening, menuOpen: false, chatUnread: opening ? 0 : (this.data.chatUnread || 0) });
   },
 
   toggleMenu() {

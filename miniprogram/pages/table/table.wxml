@@ -11,7 +11,9 @@
       <text class="tb-street" wx:if="{{phase === 'playing'}}">{{streetCn}}</text>
       <text class="tb-hand" wx:if="{{phase === 'playing'}}">{{handNo}} 手</text>
       <text class="tb-clock {{remainSec <= 60 ? 'urgent' : ''}}" wx:if="{{phase === 'playing' && durationMin > 0 && !timeUp}}">{{remainText}}</text>
-      <view class="ibtn {{chatOpen ? 'on' : ''}}" bindtap="toggleChat" wx:if="{{phase === 'playing'}}"><text class="ib-txt">💬</text></view>
+      <view class="ibtn {{chatOpen ? 'on' : ''}}" bindtap="toggleChat" wx:if="{{phase === 'playing'}}"><text class="ib-txt">💬</text>
+        <view class="chat-badge" wx:if="{{chatUnread > 0 && !chatOpen}}">{{chatUnread > 9 ? '9+' : chatUnread}}</view>
+      </view>
       <view class="ibtn {{menuOpen ? 'on' : ''}}" bindtap="toggleMenu"><text class="ib-txt">⋯</text></view>
     </view>
   </view>
@@ -56,16 +58,26 @@
       </view>
     </view>
 
+    <!-- 筹码飞行层（仅游戏中，absolute 在 felt 内）：下注入池 + 收池到家。
+         全 transform/opacity 动画，不动 top/left（重排红线）。animOn=false 时
+         数据仍下发但不挂动画（.no-anim 兜底）。 -->
+    <block wx:if="{{phase === 'playing'}}">
+      <view class="fly-chip fly-out" wx:for="{{flyOut}}" wx:key="key"
+            style="left:{{item.x}}%;top:{{item.y}}%;--dx:{{item.dx}};--dy:{{item.dy}};animation-delay:{{item.delay}}s"></view>
+      <view class="fly-chip fly-in" wx:for="{{flyIn}}" wx:key="key"
+            style="left:{{item.x}}%;top:{{item.y}}%;--tx:{{item.tx}};--ty:{{item.ty}};animation-delay:{{item.delay}}s"></view>
+    </block>
+
     <!-- 座位环：等待室与游戏中复用 -->
     <block wx:for="{{seats}}" wx:key="seat">
-      <view class="seat {{item.empty ? 'empty' : ''}} {{item.isMe ? 'self' : ''}} {{item.folded ? 'folded' : ''}} {{item.active ? 'active' : ''}} {{item.win ? 'win' : ''}} {{item.standing ? 'standing' : ''}}"
+      <view class="seat {{item.empty ? 'empty' : ''}} {{item.isMe ? 'self' : ''}} {{item.folded ? 'folded' : ''}} {{item.active ? 'active' : ''}} {{item.win ? 'win' : ''}} {{item.standing ? 'standing' : ''}} {{winFx && (',' + winFx + ',').indexOf(',' + item.seat + ',') >= 0 ? 'winfx' : ''}}"
             style="left:{{item.x}}%;top:{{item.y}}%" bindtap="chooseSeat" data-seat="{{item.seat}}">
         <!-- 座位号（WPK 式：每个座位都标位号，便于好友按号入座） -->
         <text class="seat-no" wx:if="{{!item.empty}}">{{item.seatNo}}</text>
         <!-- 本轮下注：筹码堆 + 金额 -->
         <view class="seat-bet" wx:if="{{item.bet > 0}}"><view class="bet-chip"></view>{{item.bet}}</view>
 
-        <view class="avatar">
+        <view class="avatar" catchtap="onAvatarTap" data-seat="{{item.seat}}">
           <text wx:if="{{item.empty}}">＋</text>
           <text wx:else>{{item.initial}}</text>
           <view class="dealer" wx:if="{{item.isDealer}}">D</view>
@@ -111,6 +123,19 @@
         </view>
 
         <view class="act-bubble {{item.actCls}}" wx:if="{{item.actText}}">{{item.actText}}</view>
+
+        <!-- 连胜徽章（≥2 手显示 🔥xN；新手 startHand 清零） -->
+        <text class="streak-badge" wx:if="{{streaks[item.seat]}}">{{streaks[item.seat]}}</text>
+
+        <!-- 表情气泡：每座位同时只留 1 个（新顶旧）；2.2s 后由 renderAmbience 清场 -->
+        <view class="emote-bubble" wx:for="{{emotes}}" wx:for-item="em" wx:key="key"
+              wx:if="{{em.seat === item.seat}}">{{em.emoji}}</view>
+
+        <!-- 星光粒子（大牌特效）：胜者座位上方随机散布 -->
+        <block wx:if="{{spark}}" wx:for="{{spark}}" wx:for-item="sp" wx:key="key">
+          <view class="spark" wx:if="{{sp.seat === item.seat}}"
+                style="left:{{sp.x}}%;top:{{sp.y}}%;animation-delay:{{sp.d}}s;transform:scale({{sp.s}})"></view>
+        </block>
 
         <!-- 等待室：空座位上的「坐下」按钮 -->
         <view class="sit-btn" wx:if="{{item.empty}}">坐下</view>
@@ -380,6 +405,17 @@
         <view class="switch {{sAnim ? 'on' : ''}}"><view class="knob"></view></view>
       </view>
       <button class="help-btn" bindtap="onSettingsClose">完成</button>
+    </view>
+  </view>
+
+  <!-- 表情轮盘（点头像弹出）：6 格 emoji，点遮罩关闭。本地即时冒泡 +
+       好友房经 emote 动作上行广播（设计 §2.1）。观战者同样可发（§2.4）。 -->
+  <view class="emote-mask" wx:if="{{emoteShow}}" bindtap="onEmoteClose">
+    <view class="emote-wheel" catchtap="onBlockTap">
+      <view class="emote-grid">
+        <view class="emote-cell" wx:for="{{emoteSet}}" wx:for-item="em" wx:key="e"
+              data-e="{{em.e}}" bindtap="onEmotePick">{{em.e}}</view>
+      </view>
     </view>
   </view>
 </view>
