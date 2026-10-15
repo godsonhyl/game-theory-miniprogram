@@ -2135,21 +2135,39 @@ Page({
     // 仅允许在「练习模式」（AI 对战/教学）输出；好友房与匹配对战必须关闭。
     // 引擎侧 advise() 同样有 practiceMode 开关双保险（服务器接入后以房间配置为准）。
     if (!isMyTurn || this.mode !== 'ai') {
+      this._adviceKey = null;   // 离开我的回合即失效：回到我回合必然是新局势
       this.setData({ advice: {} });
       return;
     }
+    // 缓存键（评审 2026-10-15 MEDIUM「每帧 1800 次蒙特卡洛」）：轮到我期间 render
+    // 会被各种事件反复触发（AI 动作回调/setData 回流/前后台切换），而 my 牌面、
+    // 公共牌、下注局势一个都不会变——1800 次蒙特卡洛每帧重算纯属白烧 CPU（低端
+    // 机可感掉帧）。局势完全一致时直接复用上一次结果，两个附带收益：
+    // 胜率数字不再在两次 render 间因 RNG 抖动；iters 也不虚标。
+    const me = game.seatOf(this.mySeat);
+    const key = [
+      game.handNo, game.street, game.currentBet, game.potTotal(),
+      game.activePlayers().length,
+      me ? me.hole.join(',') : '', game.board.join(',')
+    ].join('|');
+    if (this._adviceKey === key) {
+      // 同局势复用；万一 advice 被别处清掉（如降级渲染），用缓存补写回来
+      const c = this._adviceResult;
+      if (c && (!this.data.advice || !this.data.advice.text)) this.setData({ advice: c });
+      return;
+    }
+    this._adviceKey = key;
     const a = P.advise(game, this.mySeat, { practiceMode: true });
+    this._adviceResult = a ? {
+      equityPct: a.equityPct,
+      potOdds: a.potOdds,
+      text: a.text,
+      tone: a.tone,
+      drawDesc: a.draws.outs > 0 ? a.draws.desc : '',
+      drawOuts: a.draws.outs
+    } : null;
     if (!a) { this.setData({ advice: {} }); return; }
-    this.setData({
-      advice: {
-        equityPct: a.equityPct,
-        potOdds: a.potOdds,
-        text: a.text,
-        tone: a.tone,
-        drawDesc: a.draws.outs > 0 ? a.draws.desc : '',
-        drawOuts: a.draws.outs
-      }
-    });
+    this.setData({ advice: this._adviceResult });
   },
 
   // ---------- 我的操作 ----------

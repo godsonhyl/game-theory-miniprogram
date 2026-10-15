@@ -491,6 +491,45 @@ while (guard++ < 400) {
       '引擎合规：不传 practiceMode 一律返回 null');
   }
 
+  /* ---------- 建议缓存（评审 2026-10-15 MEDIUM「每帧 1800 次蒙特卡洛」） ---------- */
+  // 轮到我期间 render 反复触发（AI 回调/setData 回流），局势未变时不得重跑
+  // 蒙特卡洛——用 advise 调用计数验证：同局势二次 render 零调用，局势变化后
+  // （下注额变动）恰好重新计算一次。
+  {
+    const adviceSrc = require('fs').readFileSync(
+      path.join(__dirname, 'pages', 'table', 'table.js'), 'utf8');
+    const g = pageCtx.requireGame();
+    const myTurnNow = g && !g.result && g.actionSeat === pageCtx.mySeat;
+    // 静态守卫：缓存键存在 + 失效路径存在（离开我回合必须清 _adviceKey）
+    ok(adviceSrc.indexOf('_adviceKey') >= 0, 'renderAdvice 有缓存键（不再每帧重算）');
+    ok(/!isMyTurn \|\| this\.mode !== 'ai'\)[\s\S]*?_adviceKey = null/.test(adviceSrc),
+      '离开我的回合即失效缓存键（下一回合必是新局势）');
+    if (myTurnNow) {
+      const beforeAdvice = JSON.stringify(pageCtx.data.advice || {});
+      // 数引擎层调用次数：替换 P.advise 计数（页面 require 的 P 与本测试 P 同源）
+      let advised = 0;
+      const realAdvise = P.advise;
+      P.advise = () => { advised++; return realAdvise(g, pageCtx.mySeat, { practiceMode: true }); };
+      try {
+        pageCtx.renderAdvice(true);          // 同局势：应命中缓存，0 次引擎调用
+        const cacheHit = advised === 0;
+        ok(cacheHit, '同局势二次 render 复用缓存（引擎 0 次调用），实际 ' + advised);
+        ok(JSON.stringify(pageCtx.data.advice || {}) === beforeAdvice,
+          '缓存复用时 advice 内容不变（胜率数字不再因 RNG 抖动）');
+        // 人为改变缓存键对应的局势（currentBet），必须触发重算
+        const savedBet = g.currentBet;
+        g.currentBet = savedBet + 17;
+        advised = 0;
+        pageCtx.renderAdvice(true);
+        ok(advised === 1, '下注额变化后恰好重算一次，实际 ' + advised);
+        g.currentBet = savedBet;
+        pageCtx.renderAdvice(true);          // 还原局势 → 缓存恢复命中
+      } finally {
+        P.advise = realAdvise;
+      }
+    }
+  }
+
   /* ---------- 下一手 ---------- */
   if (result) {
     const before = dataStore.handNo;
