@@ -22,7 +22,7 @@ npm run upload                  # miniprogram-ci 命令行上传体验版（需 
 npm run preview                 # 仅生成预览包，不上传
 ```
 
-测试全部是自研断言脚本（无 jest/mocha），直接 `node xxx.js` 运行，失败项会打印 label。跑单个测试：`node miniprogram/test-room-sync.js`。`npm test` = 引擎 + 牌桌页 + 牌面 + 云规范 + SDK + WXML + 打包规则七项全跑（改动后必须过）。
+测试全部是自研断言脚本（无 jest/mocha），直接 `node xxx.js` 运行，失败项会打印 label。跑单个测试：`node miniprogram/test-room-sync.js` 或对应 npm script。`npm test` = 9 套件全跑（引擎 test-core / 牌桌页 test-miniprogram-logic / 牌面 test-cards / 云规范 test-cloud-integration / 首页 test-index-logic / 跨设备同步 test-room-sync / SDK test-sdk-load / WXML check-wxml / 打包规则 check-pack-rules），改动后必须过。断言数是硬口径——改动后新增/删除断言要在 commit message 里说明。
 
 ## 双树结构（易踩坑）
 
@@ -44,15 +44,21 @@ npm run preview                 # 仅生成预览包，不上传
 - `RANK_NAMES`（机读码，定长单字符）与 `RANK_DISPLAY`（UI 显示，T→10）职责严格分离，不可合并——`codeToCard` 等编解码依赖定长。
 - 客户端定位：引擎仅做预渲染与 UI 反馈；现有实现为演示态，权威逻辑跑在「房主端」，上线底线是迁服务端。
 
-### 牌桌页权威/镜像模型（pages/table/table.js，~2500 行，核心页面）
+### 牌桌页权威/镜像模型（pages/table/table.js，~2900 行，核心页面）
 
 - **AI 对战 / 好友房房主端**：引擎跑在本机（权威端）。
 - **好友房好友端（remoteMode）**：不跑引擎，把房主广播的快照镜像成本地 game 对象，按「我 = 本地 0 号位」重映射座位，复用同一套渲染与操作逻辑；动作经 room-sync 上行，房主消化后随下一帧广播。
 - 座位环用统一的 `ringPositions()`（我固定底部中央，其余铺上方半圆），等待室与游戏中共用坐标（开局无跳变）。
+- 音效走 `utils/sfx.js` 的 WebAudio 实时合成（14 个 PRESETS 音色，零资源文件），`drainSfx()` 300ms 事件泵轮询 `game.events`（`sfxSeq` 游标）；提示音（倒计时警告/限时局/被动代弃/收到消息）挂在 startTimer/startClock/autoStandUnready/pushChat，全部 `soundOn` 门控，`unlock()` 必须在用户手势栈内（`onFirstTouch`）调用一次。
 
 ### 跨设备同步（utils/room-sync.js）
 
-基于云端表的轮询模型：每个真人一行（RLS 只许改自己），房主行存房间公开状态（waiting/playing + snapshot + appliedSeq），好友动作写自己行动作字段上行，房主 1.5s 轮询按序号消化，心跳 5s / 15s 判离线，30s 行动超时代弃牌。云端不可用时静默降级为本地模拟。已知边界：快照含真人底牌，防作弊需服务端引擎。
+基于云端表的轮询模型：每个真人一行（RLS 只许改自己），房主行存房间公开状态（waiting/playing + snapshot + appliedSeqBySeat），好友动作写自己行动作字段上行，房主 1.5s 轮询按序号消化，心跳 5s / 15s 判离线，30s 行动超时代弃牌。云端不可用时静默降级为本地模拟。
+
+- **seq 按座位分道**（不是房主单一全局水位）：`pendingActions(rows, appliedSeqBySeat)` 用「行座位 → 已应用 seq」的映射，seq 只区分同一行内动作的新旧，慢钟设备好友的动作不会被别家高 seq 永久跳过。
+- **座位伪冒断言**：`applyFriendAction` 一律以行内 `rowSeat` 为准，payload `seat` 与行座位不符即整条丢弃——好友不能替他人行动。
+- **房主心跳僵死检测**：房主行存在但心跳超 `OFFLINE_MS` 起计，超 `HOST_STALE_EXIT_MS`（30s 宽限）仍未恢复 → 好友端判房间僵死自动退出。
+- 已知边界：快照含真人底牌，防作弊需服务端引擎（已议定封存，见 room-sync.js 头注释与 `docs/服务端化蓝图.md`）；room-sync 无 chat 字段，镜像端收不到好友间聊天。
 
 ### 云服务（utils/cloud.js + WorkBuddy SDK）
 
@@ -63,18 +69,25 @@ npm run preview                 # 仅生成预览包，不上传
 
 ### 其余 utils
 
-`room-snapshot.js`（退出续局，本地缓存，纯体验优化）、`sfx.js`（WebAudio 实时合成音效，零资源文件，异常全部静默）、`settings.js`（本地存储，不进云）、`auth.js`、`workbuddy-cloud-diagnostics.js`。
+`room-snapshot.js`（退出续局，本地缓存，纯体验优化）、`sfx.js`（WebAudio 实时合成音效，零资源文件，异常全部静默）、`settings.js`（本地存储，不进云）、`auth.js`（登录 + 房卡扣减乐观锁 + 签到/对局奖励/战绩统计并发防护）、`workbuddy-cloud-diagnostics.js`。
 
 ## 测试方法
 
 自研轻量框架：脚本内 mock `wx`/`Page`/`getApp` 后真实加载页面 JS 驱动逻辑（`test:mp`/`test-room-sync.js` 通过 reload require-cache 拿多个独立页面闭包模拟房主+好友）。`test-room-sync.js` 用内存版 cloud.database 模拟云端表，不依赖网络。不装微信开发者工具也能跑全部测试。
 
+## 文档
+
+- `README.md`：合规一号风险（版号/ICP/行动建议限制）、服务端权威架构蓝图（WebSocket + 事件溯源 + MySQL/Redis）、上线检查清单。
+- `docs/review-2026-10-15.md`：全项目评审报告 + 修复记录（残余 CRITICAL/HIGH 均已修复，含每项修复的设计取舍；后续工作先查这里避免重蹈覆辙）。
+- `docs/服务端化蓝图.md`：房卡货币化前必须实施的服务端改造清单。
+
 ## 约定与注意事项
 
 - 注释、文档、commit message 用中文；文件头注释解释「为什么这么设计」是本仓库的强约定，修改前先读目标文件头部注释（内含不可破坏的格式约定和踩坑记录）。
-- `scripts/check-wxml.js` 的两条规则来自历史事故：wx:for 内用别名插值必须声明 `wx:for-item`；标签必须闭合平衡。
+- `scripts/check-wxml.js` 的规则来自历史事故：标签闭合平衡、wx:for 内别名插值（文本**与属性**位置都查）必须声明 `wx:for-item`；预处理剥离注释；VOID_TAGS 覆盖官方 WXML void 元素集；完整标签栈做词法作用域（内层可见外层别名）。
 - 牌桌动画只用 `transform`/`opacity` + CSS keyframes，不动 `top/left/width`（重排红线，目标 60fps）；包体积红线 2MB。
 - 打包/上传排除清单唯一来源是 `scripts/pack-rules.js`（pack.js / upload.js / project.config.json 三处共用）——改清单只改它，`npm test` 里的 `scripts/check-pack-rules.js` 会拦住 project.config.json 漂移和 `miniprogram_npm` 被误排除（历史事故：排除 = 体验版白屏）。
 - 位运算必须加括号（`&` 优先级高于 `===` 曾导致顺子判定全错）；任何决策输出过引擎 `act()` 前必须夹取到合法区间。
 - `project.private.config.json`、`private.*.key`、`miniprogram/.wbapp_*.privacy.json` 等本地/密钥文件不进版本库（已在 .gitignore）。
-- 「行动建议」类功能（`advise()`）仅在练习模式/AI 对战启用，好友房与匹配对战必须关闭（合规硬约束）。
+- 「行动建议」类功能（`advise(game, seat, { practiceMode: true })`）仅在练习模式/AI 对战启用（引擎层默认返回 null，`renderAdvice` 再加 `mode !== 'ai'` 门槛），好友房与匹配对战必须关闭（合规硬约束）。
+- 战绩/签到客户端层已收口（乐观锁 + 置标记先行），但 total_hands 仍客户端自报、签到日期仍客户端时钟——完整服务端化（rpc 事务 + 发放流水表 + 收表权限 + 服务端时钟）已写成 `docs/服务端化蓝图.md`，接支付前照单实施。
