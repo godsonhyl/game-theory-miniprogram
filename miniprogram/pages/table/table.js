@@ -911,9 +911,12 @@ Page({
     }
   },
 
-  /** 立即广播一次（忽略 500ms 节流）：站起/坐下/结算等关键状态变化用 */
+  /** 立即广播一次（忽略 500ms 节流与脏检查）：站起/坐下/结算等关键状态变化用。
+   *  must force：多数调用点的变动已进指纹（sittingOut/bet 等）；站起/坐下若
+   *  不改任何指纹字段（罕见），靠这里旁路脏检查保证一定写出去。 */
   forcePublish() {
     this.publishDue = 0;
+    this._lastPlayFp = null;   // 作废指纹 → writePlayState 必然重新写库
     if (this.publishTimer) { clearTimeout(this.publishTimer); this.publishTimer = null; }
     this.publishPlay();
   },
@@ -1017,9 +1020,10 @@ Page({
 
   writePlayState() {
     if (!this.syncLive || !this.isOwner || !this.roomNo || !game) return;
+    const snap = game.snapshot();
     const state = {
       kind: 'playing',
-      snapshot: game.snapshot(),
+      snapshot: snap,
       legal: game.actionSeat >= 0 ? game.legalActions(game.actionSeat) : null,
       seqBySeat: this.appliedSeqBySeat,   // 调试口：房主已消化的动作序号（按座位分道）
       readyPhase: this.data.readyPhase,
@@ -1029,6 +1033,22 @@ Page({
       summary: this.data.summary || null,
       handNo: game.handNo
     };
+    // 脏检查（评审 2026-10-15 MEDIUM「房主全量写库无脏检查」）：房主 500ms 节流后
+    // 仍会因每次 render / 轮询而调到这里；若牌局实质未变（同手同街同注同池同动作
+    // 座位），整条状态与上一帧逐字节相同——写库纯属空转，徒增云端配额与 RTT。
+    // 以 snapshot 的关键字段拼出指纹，与上一帧比对：未变则跳过本轮写库；变动或
+    // 就绪/结算这类「牌桌外」状态变化仍照写（forcePublish 会绕过本检查）。
+    const fingerprint = [
+      snap.handNo, snap.street, snap.currentBet, snap.pot,
+      snap.actionSeat, snap.boardCodes.join(','),
+      (snap.players || []).map(p => p.seat + ':' + p.stack + ':' + p.bet + ':' +
+        (p.folded ? 1 : 0) + (p.allIn ? 1 : 0) + (p.sittingOut ? 1 : 0) +
+        (p.hole ? p.hole.join('.') : '')).join('|'),
+      this.data.readyPhase ? 'r' + (this.data.readyList || []).map(x => x.seat + (x.ready ? 1 : 0)).join(',') : '',
+      this.data.summary ? 's' + JSON.stringify(this.data.summary) : ''
+    ].join('#');
+    if (this._lastPlayFp === fingerprint) return;
+    this._lastPlayFp = fingerprint;
     // 房间公开状态写库失败必须提示：好友端下一帧就看不到牌局了，用户却完全不知情。
     // 与其它上行共用 syncFailToast 节流，避免半路复活时连续失败屏被 toast 刷屏。
     roomSync.publishState(this.roomNo, state)
@@ -1081,6 +1101,23 @@ Page({
       timeUp: !!st.summary
     };
     if (hostLeftResult && this.data.resultModal) patch.resultModal = null;
+    // 脏检查（评审 2026-10-15 MEDIUM「镜像端每 1.5s 全量 setData 无脏检查」）：
+    // 好友端 1.5s 轮询拿到房主快照；若牌局实质未变，loadSnapshot 后渲染出的 patch
+    // 与上一帧逐字段相同——整帧 setData 纯属空转，触发全量 diff/重绘、低端机掉帧。
+    // 以快照的关键牌桌字段拼出指纹，与上一帧比对：未变则跳过 setData + render。
+    // 牌桌外字段（就绪名单/结算/计时）变化照常更新——指纹覆盖它们，不会被吞。
+    const fp = [
+      snap.handNo, snap.street, snap.currentBet, snap.pot, snap.actionSeat,
+      snap.boardCodes.join(','),
+      (snap.players || []).map(p => p.seat + ':' + p.stack + ':' + p.bet + ':' +
+        (p.folded ? 1 : 0) + (p.allIn ? 1 : 0) + (p.sittingOut ? 1 : 0)).join('|'),
+      !!st.readyPhase, (st.readyList || []).map(x => x.seat + (x.ready ? 1 : 0)).join(','),
+      st.readyLeft, st.readyHint, JSON.stringify(st.summary || null),
+      snap.result ? 'r' + JSON.stringify(snap.result.winners) : '',
+      (snap.reveal && JSON.stringify(snap.reveal)) || ''
+    ].join('#');
+    if (this._lastRemoteFp === fp) return;
+    this._lastRemoteFp = fp;
     this.setData(patch);
     this.render();
     // 镜像端不驱动引擎：若轮到我，只起本地计时环做视觉反馈

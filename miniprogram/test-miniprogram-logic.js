@@ -470,6 +470,19 @@ while (guard++ < 400) {
       '摊牌高亮牌数为 0（我方未摊牌）或 5（最佳成手），实际 ' + hi);
   }
 
+  /* ---------- 驱动到「轮到我」：让建议类断言确定性执行 ---------- */
+  // 上一手结算后各段留下的牌局状态是随机的（AI 行动中/已再结束）——建议类
+  // 断言据此条件跳过，通过项数在 365↔371 间随机漂移（历史遗留 flaky）。
+  // 这里主动等到「轮到我且可行动」再进入建议类校验；AI 翻牌前直接弃牌的偶发
+  // 用「重发一手」消化（与主循环同策略）。
+  {
+    const t0 = Date.now();
+    while (Date.now() - t0 < 20000 && !(dataStore.isMyTurn && dataStore.legal)) {
+      await new Promise(r => setTimeout(r, 50));
+      if (dataStore.result && !dataStore.isMyTurn) pageCtx.startHand();
+    }
+  }
+
   /* ---------- 牌力分析校验 ---------- */
   ok(typeof dataStore.advice === 'object', 'advice 为对象');
   if (dataStore.advice && dataStore.advice.text) {
@@ -1110,6 +1123,82 @@ while (guard++ < 400) {
     ok(!!mdoc, 'showResultModal 注释已改为「render 统一调度自动触发 + 用户可提前打开」（与代码一致）');
     ok(/this\.resultTimer = setTimeout\(\(\) => \{[\s\S]{0,200}?showResultModal\(\)/.test(tableSrc),
       'render 末尾确有自动弹出调度（注释与代码不再矛盾）');
+  }
+
+  /* ---------- 同步脏检查（评审 2026-10-15 MEDIUM「全量写库/全量 setData 无脏检查」） ---------- */
+  // 房主 writePlayState 与好友 enterRemote 各有指纹比对：牌局实质未变时跳过
+  // 写库 / setData，避免每 500ms/1.5s 空转云端配额与全量重绘。
+  {
+    // 静态守卫：两处指纹键、跳过路径都存在
+    ok(tableSrc.indexOf('_lastPlayFp') >= 0, 'writePlayState 有房主指纹缓存键');
+    ok(/if \(this\._lastPlayFp === fingerprint\) return/.test(tableSrc),
+      '房主牌局未变时跳过本轮写库');
+    ok(tableSrc.indexOf('_lastRemoteFp') >= 0, 'enterRemote 有镜像指纹缓存键');
+    ok(/if \(this\._lastRemoteFp === fp\) return/.test(tableSrc),
+      '好友端快照未变时跳过本轮 setData + render');
+
+    // 行为级：房主指纹比对。用本地模式（非好友房）取一个真实 game，直接调
+    // writePlayState 验证「指纹相同不二次发布，指纹变化才发布」。
+    const g = pageCtx.requireGame();
+    if (g) {
+      // 本地模式 syncLive=false，writePlayState 直接 return——强行打开来测脏检查
+      pageCtx.syncLive = true;
+      pageCtx.isOwner = true;
+      pageCtx.roomNo = 'TEST_FINGERPRINT';
+      pageCtx._lastPlayFp = null;
+      // 指纹比对验证改用 _lastPlayFp 前后值断言：同势 → 指纹不变（跳过分支），
+      // 变势 → 指纹更新（重新发布）。发布路径本身走 roomSync → mock cloud。
+      const beforeFp = pageCtx._lastPlayFp;
+      pageCtx.writePlayState();          // 第一次：建立指纹
+      const fp1 = pageCtx._lastPlayFp;
+      ok(fp1 && fp1 !== beforeFp, 'writePlayState 首次建立房主指纹');
+      pageCtx.writePlayState();          // 第二次：同势
+      ok(pageCtx._lastPlayFp === fp1, '同势二次调用指纹不变（跳过写库分支）');
+      // 人为改变牌桌势：currentBet 变动
+      const savedBet = g.currentBet;
+      g.currentBet = savedBet + 50;
+      pageCtx.writePlayState();
+      ok(pageCtx._lastPlayFp !== fp1, 'currentBet 变化后指纹更新（不再跳过）');
+      g.currentBet = savedBet;           // 还原
+      // 还原运行时，避免污染后续断言
+      pageCtx.syncLive = false;
+      pageCtx.isOwner = false;
+      pageCtx.roomNo = null;
+      pageCtx._lastPlayFp = null;
+    }
+
+    // 行为级：好友端指纹比对（enterRemote）。直接调 enterRemote 两次同势快照。
+    if (g) {
+      pageCtx.remoteMode = true;
+      pageCtx.roomSeat = 0;
+      pageCtx.mySeat = 0;
+      pageCtx._lastRemoteFp = null;
+      const snap1 = g.snapshot();
+      const st1 = { snapshot: snap1, legal: null, readyPhase: false, readyList: [], summary: null };
+      let setDataCount = 0;
+      const realSetData = pageCtx.setData.bind(pageCtx);
+      pageCtx.setData = (d) => { setDataCount++; return realSetData(d); };
+      try {
+        pageCtx.enterRemote(st1);
+        const firstCount = setDataCount;
+        ok(pageCtx._lastRemoteFp, 'enterRemote 首次建立镜像指纹');
+        // 同势再调一次：应命中跳过，不再 setData
+        pageCtx.enterRemote(st1);
+        ok(setDataCount === firstCount,
+          '同势快照二次 enterRemote 跳过 setData（指纹命中），实际 setData ' + setDataCount + ' 次');
+        // 变势：公共牌增加一张（模拟翻牌），指纹应更新并触发 setData
+        const snap2 = g.snapshot();
+        snap2.boardCodes = (snap2.boardCodes || []).concat('As');
+        snap2.street = 2;
+        pageCtx.enterRemote({ snapshot: snap2, legal: null, readyPhase: false, readyList: [], summary: null });
+        ok(setDataCount > firstCount,
+          '快照变化后 enterRemote 重新 setData（指纹未命中）');
+      } finally {
+        pageCtx.setData = realSetData;
+        pageCtx.remoteMode = false;
+        pageCtx._lastRemoteFp = null;
+      }
+    }
   }
 
   /* ---------- 输出 ---------- */
