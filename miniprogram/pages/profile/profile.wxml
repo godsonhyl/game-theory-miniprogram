@@ -70,7 +70,12 @@
 
   <view class="section">
     <view class="sec-head"><view class="sec-ico ic ic-trophy"></view><text class="sec-title">历史战绩</text></view>
-    <view class="empty" wx:if="{{records.length === 0}}">
+    <view class="empty" wx:if="{{recordsError}}">
+      <text class="empty-icon">⚠</text>
+      <text class="empty-text">战绩加载失败</text>
+      <view class="empty-retry" bindtap="onRetryRecords">重试</view>
+    </view>
+    <view class="empty" wx:elif="{{records.length === 0}}">
       <text class="empty-icon">♠</text>
       <text class="empty-text">还没有对局记录</text>
       <text class="empty-sub">去牌桌玩一局试试</text>

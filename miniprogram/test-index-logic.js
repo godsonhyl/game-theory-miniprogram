@@ -22,7 +22,8 @@ global.wx = {
   navigateTo: o => { global.__nav = o.url; },
   navigateBack: () => { global.__navBack = true; },
   reLaunch: () => {}, setClipboardData: () => {},
-  showLoading: () => {}, hideLoading: () => {},
+  showLoading: o => { global.__lastLoading = o; }, hideLoading: () => {},
+  stopPullDownRefresh: () => { global.__stoppedPull = true; },
   showActionSheet: o => { global.__sheet = o; }, getUserProfile: () => {},
   showShareMenu: () => {},
   getStorageSync: k => global.__storage[k],
@@ -315,6 +316,32 @@ const pageCtx = Object.assign({}, cfg, {
   pageCtx.tryJoin = origTryJoin;
   // 恢复：手动打开加入弹窗的路径不受影响
   global.__nav = null;
+
+  /* ---------- 下拉刷新 ---------- */
+  ok(typeof cfg.onPullDownRefresh === 'function', 'index.js 定义了 onPullDownRefresh');
+  global.__stoppedPull = false;
+  await pageCtx.onPullDownRefresh();
+  ok(global.__stoppedPull === true, 'onPullDownRefresh 调用 wx.stopPullDownRefresh 收起刷新');
+  const idxJsonSrc = require('fs').readFileSync(require('path').join(__dirname, 'pages/index/index.json'), 'utf8');
+  ok(/enablePullDownRefresh/.test(idxJsonSrc), 'index.json 启用 enablePullDownRefresh');
+
+  /* ---------- 朋友圈分享 ---------- */
+  ok(typeof cfg.onShareTimeline === 'function', 'index.js 定义了 onShareTimeline');
+  const tl = pageCtx.onShareTimeline();
+  ok(tl && tl.title.indexOf('博弈论') >= 0, 'onShareTimeline 返回带标题的分享内容');
+
+  /* ---------- 加入防抖 + showLoading mask ---------- */
+  ok(/this\.joining/.test(require('fs').readFileSync(require('path').join(__dirname, 'pages/index/index.js'), 'utf8')),
+    'index.js 有 joining 防抖标记');
+  ok(global.__lastLoading && global.__lastLoading.mask === true,
+    'tryJoin showLoading 带 mask（防查找期间误触）');
+  // 行为：joining 期间 onJoinConfirm 不触发 tryJoin（不跳转）
+  global.__nav = null;
+  pageCtx.joining = true;
+  pageCtx.data.joinNo = '123456';
+  pageCtx.onJoinConfirm();
+  ok(global.__nav === null, 'joining 期间连点不重复触发加入');
+  pageCtx.joining = false;
 
   if (failures.length === 0) {
     console.log('首页逻辑测试全部通过：' + passes + ' 项断言 ✓');

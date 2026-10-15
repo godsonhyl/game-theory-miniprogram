@@ -67,11 +67,21 @@
   display: flex; align-items: center; justify-content: center;
   background: rgba(255,255,255,.06); border: 1rpx solid rgba(255,255,255,.14);
   margin-left: calc(1.4 * var(--uw));
+  position: relative;
 }
 .ibtn:active { background: rgba(255,255,255,.16); transform: scale(.94); }
 .ibtn.on { background: rgba(232,163,61,.2); border-color: rgba(232,163,61,.55); }
 .ib-txt { font-size: calc(3 * var(--uh)); line-height: 1; }
 .ib-ico { width: calc(2.8 * var(--uh)); height: calc(2.8 * var(--uh)); }
+
+/* 聊天未读徽章：折叠期间收到他人消息累计，打开面板清零 */
+.chat-badge {
+  position: absolute; top: calc(-1 * var(--uh)); right: calc(-1 * var(--uh));
+  min-width: calc(3 * var(--uh)); height: calc(3 * var(--uh));
+  background: #e5484d; color: #fff; font-size: calc(2 * var(--uh));
+  border-radius: 999rpx; display: flex; align-items: center; justify-content: center;
+  padding: 0 calc(0.5 * var(--uh)); z-index: 10;
+}
 
 /* ---------- 折叠菜单 ---------- */
 .menu-pop {
@@ -875,3 +885,144 @@
 }
 .bopt.on { background: linear-gradient(160deg, #f4d78a, #d9a441 60%, #b8791f); color: #1a1a1a; border-color: transparent; }
 .buyin-btns { display: flex; align-items: center; }
+
+/* ============================================================
+ * 牌桌互动与氛围（设计文档 2026-10-15 §2）
+ * 四类动画：筹码飞行 / 赢牌金光+星光粒子 / 连胜徽章 / 表情轮盘+气泡。
+ * 全部只用 transform/opacity + CSS keyframes（重排红线，60fps）；
+ * .no-anim 兜底统一禁用（与 card/seat-bet 同口径，关闭动画时只跳数字）。
+ * 座位环坐标来自 ringPositions()，范围 x:10~90% / y:12~82%（felt 内百分比）；
+ * 筹码飞行用 CSS 变量 --dx/--dy/--tx/--ty 传位移量（无单位纯数，配合 vw/vh，
+ * 见 _spawnFlyOut 注释——felt 宽≈100vw 故 x 向 vw≈felt%，y 向有轻微过冲但
+ * 到位前已 opacity 淡出，氛围特效不追求像素级落点）。
+ * ============================================================ */
+
+/* ---------- 赢牌金光脉冲（座位 .winfx，叠加在头像 box-shadow 上） ---------- */
+.seat.winfx .avatar {
+  animation: winGlow 2s ease-out 1 both;
+}
+@keyframes winGlow {
+  0%   { box-shadow: 0 0 0 calc(0.4 * var(--uh)) rgba(232,163,61,.9), 0 0 calc(3 * var(--uh)) rgba(232,163,61,.7); }
+  50%  { box-shadow: 0 0 0 calc(1.2 * var(--uh)) rgba(232,163,61,.55), 0 0 calc(8 * var(--uh)) rgba(232,163,61,.85); }
+  100% { box-shadow: 0 0 0 calc(0.4 * var(--uh)) rgba(232,163,61,.2), 0 0 calc(3 * var(--uh)) rgba(232,163,61,.3); }
+}
+
+/* ---------- 连胜徽章（座位旁 🔥 xN，≥2 手显示） ---------- */
+.streak-badge {
+  position: absolute; top: calc(-2.6 * var(--uh)); right: calc(-1 * var(--uh));
+  font-size: calc(2.2 * var(--uh)); font-weight: 800; color: var(--gold);
+  background: rgba(5,16,13,.9); border: 1rpx solid rgba(232,163,61,.5);
+  border-radius: 999rpx; padding: 0 calc(0.8 * var(--uw)); line-height: calc(3 * var(--uh));
+  white-space: nowrap; z-index: 6;
+  text-shadow: 0 0 calc(0.8 * var(--uh)) rgba(232,163,61,.5);
+  animation: streakPop .4s cubic-bezier(.2,.9,.3,1.3) both;
+}
+@keyframes streakPop {
+  from { opacity: 0; transform: scale(.6); }
+  to   { opacity: 1; transform: scale(1); }
+}
+
+/* ---------- 表情气泡（座位旁，2.2s 上浮消散） ---------- */
+.emote-bubble {
+  position: absolute; top: calc(-4.4 * var(--uh)); left: 50%;
+  font-size: calc(5.6 * var(--uh)); line-height: 1; z-index: 7;
+  transform: translateX(-50%);
+  animation: emoteFloat 2.2s ease-out both;
+  pointer-events: none;
+}
+@keyframes emoteFloat {
+  0%   { opacity: 0; transform: translate(-50%, calc(1.2 * var(--uh))) scale(.5); }
+  15%  { opacity: 1; transform: translate(-50%, 0) scale(1.1); }
+  30%  { transform: translate(-50%, 0) scale(1); }
+  100% { opacity: 0; transform: translate(-50%, calc(-5 * var(--uh))) scale(1); }
+}
+
+/* ---------- 星光粒子（大牌特效，贴图 assets/spark.png） ---------- */
+.spark {
+  position: absolute; width: calc(4.8 * var(--uh)); height: calc(4.8 * var(--uh));
+  background: url(../../assets/spark.png) center/contain no-repeat;
+  pointer-events: none; z-index: 5; opacity: 0;
+  animation: sparkTwinkle 2.4s ease-out both;
+}
+@keyframes sparkTwinkle {
+  0%   { opacity: 0; }
+  20%  { opacity: 1; }
+  100% { opacity: 0; transform: scale(0.3) translateY(calc(-3 * var(--uh))); }
+}
+
+/* ---------- 筹码飞行层（felt 内 absolute，仅游戏中渲染） ----------
+ * .fly-chip 是一枚圆形筹码代币（纯 wxss 画，零图片）：
+ *  · left/top = 起点（座位坐标，felt 百分比）；
+ *  · --dx/--dy = 飞行位移量（无单位，配合 vw/vh 口径）；
+ *  · fly-out 用 keyframes 从起点 translate 到 (dx,dy)；
+ *  · fly-in 起点在底池中心，--tx/--ty 是终点，到赢家座位。
+ *  动画结束 opacity 归零，由 JS 在 bornAt+1.2/1.6s 后清场 setData 清空数组。
+ */
+.fly-chip {
+  position: absolute; width: calc(4.4 * var(--uh)); height: calc(4.4 * var(--uh));
+  border-radius: 50%; z-index: 4; pointer-events: none;
+  background: radial-gradient(circle at 38% 32%, #ffe9a8, #d9a441 58%, #b8791f);
+  border: 1rpx solid rgba(255,255,255,.45);
+  box-shadow: 0 calc(0.3 * var(--uh)) calc(0.8 * var(--uh)) rgba(0,0,0,.4);
+}
+.fly-chip::after {
+  content: ''; position: absolute; inset: 22%; border-radius: 50%;
+  border: 1rpx solid rgba(255,255,255,.5);
+}
+/* 下注入池：座位 → 底池（位移量由 --dx/--dy 传入） */
+.fly-chip.fly-out {
+  animation: flyChipOut 1.1s cubic-bezier(.45,.05,.55,.95) both;
+}
+@keyframes flyChipOut {
+  0%   { opacity: 0; transform: scale(.5); }
+  15%  { opacity: 1; transform: scale(1); }
+  85%  { opacity: 1; transform: translate(calc(var(--dx) * 1vw), calc(var(--dy) * 1vh)) scale(.8); }
+  100% { opacity: 0; transform: translate(calc(var(--dx) * 1vw), calc(var(--dy) * 1vh)) scale(.4); }
+}
+/* 收池到家：底池 → 赢家（终点 --tx/--ty） */
+.fly-chip.fly-in {
+  animation: flyChipIn 1.5s cubic-bezier(.35,.1,.5,1) both;
+}
+@keyframes flyChipIn {
+  0%   { opacity: 0; transform: scale(.4); }
+  12%  { opacity: 1; transform: scale(1); }
+  88%  { opacity: 1; transform: translate(calc(var(--tx) * 1vw), calc(var(--ty) * 1vh)) scale(.9); }
+  100% { opacity: 0; transform: translate(calc(var(--tx) * 1vw), calc(var(--ty) * 1vh)) scale(.5); }
+}
+
+/* ---------- 表情轮盘弹层（点头像弹出 6 格 emoji） ---------- */
+.emote-mask {
+  position: fixed; left: 0; top: 0; right: 0; bottom: 0;
+  background: rgba(0,0,0,.55); z-index: 70;
+  display: flex; align-items: center; justify-content: center;
+}
+.emote-wheel {
+  width: 460rpx; background: #12261f; border: 1rpx solid rgba(232,163,61,.4);
+  border-radius: calc(3.6 * var(--uh)); padding: calc(3 * var(--uh)) calc(2.4 * var(--uw));
+  box-shadow: 0 calc(2 * var(--uh)) calc(8 * var(--uh)) rgba(0,0,0,.5);
+  animation: wheelPop .25s cubic-bezier(.2,.9,.3,1.3) both;
+}
+@keyframes wheelPop {
+  from { opacity: 0; transform: scale(.8); }
+  to   { opacity: 1; transform: scale(1); }
+}
+.emote-grid { display: flex; flex-wrap: wrap; justify-content: center; }
+.emote-cell {
+  width: calc(15 * var(--uw)); height: calc(15 * var(--uw));
+  display: flex; align-items: center; justify-content: center;
+  font-size: calc(7.2 * var(--uh)); margin: calc(0.8 * var(--uw));
+  border-radius: 50%; background: rgba(255,255,255,.06);
+  border: 1rpx solid rgba(255,255,255,.12);
+}
+.emote-cell:active { transform: scale(.88); background: rgba(232,163,61,.2); }
+
+/* ---------- .no-anim 兜底：关闭动画时氛围全部禁用 ----------
+ * 与既有 .no-anim .card/.seat-bet 同口径——动画关闭只跳数字/状态，
+ * 飞行/粒子/金光/连胜/气泡/轮盘弹出全停（氛围特效非必要信息）。 */
+.no-anim .seat.winfx .avatar,
+.no-anim .streak-badge,
+.no-anim .emote-bubble,
+.no-anim .spark,
+.no-anim .fly-chip,
+.no-anim .emote-wheel { animation: none !important; }
+.no-anim .spark { display: none; }

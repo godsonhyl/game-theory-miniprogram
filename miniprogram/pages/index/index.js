@@ -87,6 +87,12 @@ Page({
     this.setData({ sFourColor: s.fourColor, sSound: s.sound, sVibrate: s.vibrate, sAnim: s.animation });
   },
 
+  /** 下拉刷新：重新拉取档案与房间列表后收起刷新动画 */
+  async onPullDownRefresh() {
+    await this.syncFromCloud();
+    wx.stopPullDownRefresh();
+  },
+
   /** 打开创建房间弹窗（人数与时长均可自定义） */
   onCreateTap() {
     this.setData({ createShow: true });
@@ -323,6 +329,15 @@ Page({
     return { title: '博弈论 · 好友房德州扑克', path: '/pages/index/index' };
   },
 
+  /** 分享到朋友圈：与 onShareAppMessage 同路径（有房间号时带 query） */
+  onShareTimeline() {
+    const no = this.data.createdRoomNo;
+    if (no) {
+      return { title: '来「博弈论」和我打一局，房间号 ' + no, query: 'room=' + no };
+    }
+    return { title: '博弈论 · 好友房德州扑克' };
+  },
+
   /** 创建成功弹窗：关闭 */
   onCreatedClose() {
     this.setData({ createdShow: false });
@@ -450,14 +465,17 @@ Page({
       wx.showToast({ title: '请输入 6 位数字房间号', icon: 'none' });
       return;
     }
+    if (this.joining) return;   // 防连点：上一次加入仍在进行
+    this.joining = true;
     this.tryJoin(no);
   },
 
   /** 按房间号查云端房间并进入 */
   async tryJoin(roomNo) {
+    try {
     // 登录未完成时先等登录（分享冷启动时 onLaunch 的 login 可能仍在进行）
     if (!app.globalData.ready) {
-      wx.showLoading({ title: '登录中…' });
+      wx.showLoading({ title: '登录中…', mask: true });
       await new Promise(resolve => {
         const t = setInterval(() => {
           if (app.globalData.ready) { clearInterval(t); resolve(); }
@@ -470,7 +488,7 @@ Page({
       return;
     }
 
-    wx.showLoading({ title: '查找房间…' });
+    wx.showLoading({ title: '查找房间…', mask: true });
     try {
       const room = await auth.findRoom(roomNo);
       wx.hideLoading();
@@ -483,6 +501,9 @@ Page({
     } catch (err) {
       wx.hideLoading();
       wx.showToast({ title: err.message || '查询房间失败', icon: 'none' });
+    }
+    } finally {
+      this.joining = false;
     }
   },
 

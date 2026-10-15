@@ -16,11 +16,18 @@ Page({
     style: '稳健型',
     records: [],
     recordsLoading: false,   // 战绩加载中（区分首屏 loading 与翻页 loading）
-    recordsEnd: false        // 已加载到底（无更多战绩），隐藏触底加载条
+    recordsEnd: false,       // 已加载到底（无更多战绩），隐藏触底加载条
+    recordsError: false      // 战绩加载失败（与「没有记录」区分，提供重试入口）
   },
 
   onShow() {
     this.loadFromCloud();
+  },
+
+  /** 下拉刷新：重新拉取档案与战绩后收起刷新动画 */
+  async onPullDownRefresh() {
+    await this.loadFromCloud();
+    wx.stopPullDownRefresh();
   },
 
   async loadFromCloud() {
@@ -48,7 +55,7 @@ Page({
 
     // 历史战绩从云端拉取（首页，从最新开始）
     this._recordCursor = null;   // 翻页游标：上一页最后一条的 created_at
-    this.setData({ records: [], recordsEnd: false });
+    this.setData({ records: [], recordsEnd: false, recordsError: false });
     await this.loadRecords(true);
   },
 
@@ -59,7 +66,7 @@ Page({
   async loadRecords(first) {
     if (this.data.recordsLoading) return;     // 防连点：上一页还没回不来
     if (!first && this.data.recordsEnd) return; // 已到底，不再请求
-    this.setData({ recordsLoading: true, loading: first });
+    this.setData({ recordsLoading: true, loading: first, recordsError: false });
     try {
       const rows = await auth.listRecords(PAGE_SIZE, this._recordCursor);
       const mapped = rows.map(r => ({
@@ -82,9 +89,15 @@ Page({
         recordsEnd: rows.length < PAGE_SIZE
       });
     } catch (err) {
-      this.setData({ loading: false, recordsLoading: false });
+      this.setData({ loading: false, recordsLoading: false, recordsError: true });
       wx.showToast({ title: err.message || '读取战绩失败', icon: 'none' });
     }
+  },
+
+  /** 战绩加载失败后重试 */
+  onRetryRecords() {
+    this.setData({ recordsError: false });
+    this.loadRecords(true);
   },
 
   /** 列表触底：加载下一页战绩 */
