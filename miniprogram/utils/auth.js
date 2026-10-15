@@ -23,7 +23,7 @@ const T = {
  *  - daily：每日领取张数
  *  - handsPerCard：累计多少手领 1 张
  *  - bonusCap：单次领取上限
- * 商业化版本应改为服务端发放并保留发放流水（防刷），这里仅演示。
+ * 商业化版本的服务端发放与防刷蓝本见 docs/服务端化蓝图.md，这里仅演示。
  */
 const CARD_RULES = {
   daily: 2,
@@ -135,7 +135,6 @@ const auth = {
   },
 
   // ---------- 昵称 ----------
-
   /**
    * 我的牌桌显示名：优先玩家档案里的昵称，没设过才回落 fallback。
    *
@@ -231,40 +230,79 @@ const auth = {
     return { ok: true, gained: n, roomCards: data[0].room_cards };
   },
 
-  /** 每日领取：每天 2 张（last_checkin 记录领取日期，同一天只发一次） */
+  /**
+   * 每日领取：每天 2 张（last_checkin 记录领取日期，同一天只发一次）
+   *
+   * 防重复领取靠「资格标记 + 乐观锁」两道闸（评审 2026-10-15 MEDIUM「三段非原子
+   * 可双领」的客户端收口——完整服务端化见 docs/服务端化蓝图.md）：
+   *  1. 先置 last_checkin（身份闸）：带「last_checkin 仍是读到的旧值」条件，
+   *     领过的/已置标记的行都不命中 —— 同日重复点击从源头发不出卡；
+   *  2. 再发卡（grantRoomCards 内含 room_cards 乐观锁）。
+   * 两步之间有非原子窗口：极端并发下置标记成功、发卡失败，用户当天会被误判
+   * 已领（少发 2 张）。演示态选择「少发」而非「多发」—— 多发要改服务端才能
+   * 追回，少发只是体验瑕疵；商业化版本须由服务端事务消掉这个窗口。
+   */
   async claimDailyCards() {
     const profile = await this.ensureProfile();
     const today = this.today();
     if ((profile.last_checkin || '') === today) {
       return { ok: false, reason: '今日已领取，明天再来', roomCards: profile.room_cards };
     }
-    const got = await this.grantRoomCards(CARD_RULES.daily);
-    if (!got.ok) return got;
-    await cloud.database.from(T.profile)
+    // 身份闸：只有当前 last_checkin 仍是读到的旧值（未领）才允许置今天的日期。
+    // 返回空数组 = 已有并发请求抢先置过标记，不发卡。注意 PostgREST 的 eq 对
+    // NULL 列永不命中，所以旧值可能为 NULL（历史行没有 DEFAULT 填充）时必须
+    // 用 is(column, null) 过滤，否则这条永远领不了签到。
+    const prev = profile.last_checkin;
+    const gate = cloud.database.from(T.profile)
       .update({ last_checkin: today })
       .eq('id', profile.id);
-    return got;
+    if (prev === null || prev === undefined) gate.is('last_checkin', null);
+    else gate.eq('last_checkin', String(prev));
+    const { data, error } = await gate.select();
+    if (error) throw new Error(error.message || '领取失败，请重试');
+    if (!Array.isArray(data) || data.length === 0) {
+      return { ok: false, reason: '今日已领取，明天再来', roomCards: profile.room_cards };
+    }
+    const got = await this.grantRoomCards(CARD_RULES.daily);
+    if (!got.ok) return got;
+    return { roomCards: got.roomCards, gained: got.gained, ok: true };
   },
 
   /**
    * 对局奖励：累计打满 N 手领 1 张（bonus_base 是已奖励过的手数基准）
    * 单次最多补 5 张，避免长时间不领时一次性刷出过量房卡。
+   *
+   * 同每日领取：置 bonus_base 时带 = 乐观锁（基准未变才推进），并发双击只有
+   * 一方能推进基准，另一方方面空数组直接失败——发卡数量与基准推进保持一致。
+   * 置基准成功而发卡失败的窗口与每日领取同性质（少发不发多），服务端化后消除。
    */
   async claimHandBonus() {
-    const profile = await this.ensureProfile();
-    const hands = profile.total_hands || 0;
-    const base = profile.bonus_base || 0;
-    const gained = Math.min(CARD_RULES.bonusCap, Math.floor((hands - base) / CARD_RULES.handsPerCard));
-    if (gained <= 0) {
-      const left = CARD_RULES.handsPerCard - ((hands - base) % CARD_RULES.handsPerCard);
-      return { ok: false, reason: '再打 ' + left + ' 手可领 1 张', roomCards: profile.room_cards };
+    // 循环重试：发卡失败可能已经对自己可见地改变了行（乐观锁冲突），重读再算
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const profile = await this.ensureProfile();
+      const hands = profile.total_hands || 0;
+      const base = profile.bonus_base || 0;
+      const gained = Math.min(CARD_RULES.bonusCap, Math.floor((hands - base) / CARD_RULES.handsPerCard));
+      if (gained <= 0) {
+        const left = CARD_RULES.handsPerCard - ((hands - base) % CARD_RULES.handsPerCard);
+        return { ok: false, reason: '再打 ' + left + ' 手可领 1 张', roomCards: profile.room_cards };
+      }
+      // 基准闸：只在 bonus_base 仍是读到的值时推进为「本批已奖励」的手数
+      const { data, error } = await cloud.database.from(T.profile)
+        .update({ bonus_base: base + gained * CARD_RULES.handsPerCard })
+        .eq('id', profile.id)
+        .eq('bonus_base', base)
+        .select();
+      if (error) throw new Error(error.message || '领取失败，请重试');
+      if (!Array.isArray(data) || data.length === 0) {
+        // 并发抢先：重读最新行，资格可能已被别人（或另一台设备）消费掉
+        continue;
+      }
+      const got = await this.grantRoomCards(gained);
+      if (!got.ok) return got;
+      return { roomCards: got.roomCards, gained: got.gained, ok: true };
     }
-    const got = await this.grantRoomCards(gained);
-    if (!got.ok) return got;
-    await cloud.database.from(T.profile)
-      .update({ bonus_base: base + gained * CARD_RULES.handsPerCard })
-      .eq('id', profile.id);
-    return got;
+    return { ok: false, reason: '房卡已变动，请重试', roomCards: (await this.ensureProfile()).room_cards };
   },
 
   /** 可领状态（只读，不写库）：供首页展示「今日可领 / 可领 N 张 / 还差 M 手」 */
@@ -281,7 +319,16 @@ const auth = {
     };
   },
 
-  /** 写入一条对局战绩，并同步累计统计 */
+  /**
+   * 写入一条对局战绩，并同步累计统计
+   *
+   * 战绩流水（insert）没有并发问题——每手一条、互不覆盖；但累计统计
+   * （total_hands/total_wins/total_net 三个 UPDATE）在极速连打两手时可能
+   * 并发跑：两次都读到旧值 → 后写覆盖先写，少计一手。所以累计更新带
+   * `.eq('total_hands', 读值)` 乐观锁，0 行命中就重读重试——把「覆盖丢手」
+   * 收敛成「最终一致」。total_hands 仍是客户端自报（可刷），商业化前必须
+   * 换服务端校验发放，见 docs/服务端化蓝图.md。
+   */
   async saveRecord(rec) {
     const row = {
       table_id: rec.tableId || 'ai',
@@ -297,15 +344,24 @@ const auth = {
     const { data, error } = await cloud.database.from(T.record).insert(row).select().single();
     if (error) throw new Error(error.message || '保存战绩失败');
 
-    const profile = await this.ensureProfile();
-    await cloud.database
-      .from(T.profile)
-      .update({
-        total_hands: profile.total_hands + 1,
-        total_wins: profile.total_wins + (row.won ? 1 : 0),
-        total_net: profile.total_net + row.net
-      })
-      .eq('id', profile.id);
+    let statOk = false;
+    for (let attempt = 0; attempt < 3 && !statOk; attempt++) {
+      const profile = await this.ensureProfile();
+      const { data: updated, error: uerr } = await cloud.database
+        .from(T.profile)
+        .update({
+          total_hands: profile.total_hands + 1,
+          total_wins: profile.total_wins + (row.won ? 1 : 0),
+          total_net: profile.total_net + row.net
+        })
+        .eq('id', profile.id)
+        .eq('total_hands', profile.total_hands)   // 乐观锁：并发写入不再互相覆盖
+        .select();
+      if (uerr) throw new Error(uerr.message || '更新战绩统计失败');
+      statOk = Array.isArray(updated) && updated.length > 0;
+      // 0 行命中 = 有并发写入抢先推进了统计 → 重读最新值再试
+    }
+    if (!statOk) throw new Error('战绩统计写入繁忙，请稍后查看');
 
     return data;
   },

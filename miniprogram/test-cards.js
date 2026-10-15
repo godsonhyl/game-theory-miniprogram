@@ -4,6 +4,9 @@
  * 覆盖「房卡不足怎么办」这条路径：
  *  - 发放（每日领取 / 对局奖励）与扣减（创建房间）走同一套乐观锁
  *  - 每日只能领一次；对局奖励按累计手数发放且有单次上限
+ *  - 并发双领防护（评审 2026-10-15 MEDIUM「三段非原子」收口）：资格标记
+ *    先行 + 乐观锁闸——两台设备同时读到旧快照时，只有抢到标记的一方发卡
+ *  - 战绩累计统计的并发覆盖防护：连打两手读到同一快照时不互相丢计数
  *  - 首页有可点的领卡入口（WXML 静态检查）
  *
  * 用内存版 cloud.database 模拟云端表，避免依赖真实网络。
@@ -47,10 +50,15 @@ const DEFAULTS = {
 };
 
 function matches(row, filters) {
-  return filters.every(f => String(row[f[0]]) === String(f[1]));
+  return filters.every(f => {
+    const v = row[f[0]];
+    // PostgREST 语义：eq(NULL 列, 任何值) 永不命中；is(col, null) 命中 NULL 列
+    if (f[1] === null) return v === null || v === undefined;
+    return v !== null && v !== undefined && String(v) === String(f[1]);
+  });
 }
 
-function makeQuery(table) {
+const makeQuery = table => {
   const q = {
     _table: table, _op: 'select', _payload: null, _filters: [],
     _wantSelect: false, _single: false, _maybeSingle: false, _cols: '*'
@@ -59,6 +67,7 @@ function makeQuery(table) {
   q.insert = row => { q._op = 'insert'; q._payload = row; return q; };
   q.update = patch => { q._op = 'update'; q._payload = patch; return q; };
   q.eq = (a, b) => { q._filters.push([a, b]); return q; };
+  q.is = (a, b) => { q._filters.push([a, b === null ? null : b]); return q; };
   q.order = () => q;
   q.limit = () => q;
   q.single = () => { q._single = true; return q; };
@@ -75,11 +84,15 @@ function makeQuery(table) {
         rows.push(row);
         out = { data: [row], error: null };
       } else if (q._op === 'update') {
+        // PostgREST 语义：update 只改「全部过滤条件都命中」的行；
+        // 乐观锁条件（如 .eq('last_checkin', 旧值)）不命中 → 0 行 → 上层判失败。
+        // 命中后的新值以库中当前行为底再套 patch（模拟服务端读到-改回）。
         const hit = rows.filter(r => matches(r, q._filters));
-        hit.forEach(r => Object.assign(r, q._payload));
-        // 乐观锁：带 room_cards 条件但没命中 → 返回空数组（上层据此判定「已变动」）
-        out = { data: q._wantSelect ? hit : hit, error: null };
-        if (!q._wantSelect) out = { data: hit, error: null };
+        const hitIds = new Set(hit.map(r => r.id));
+        rows.forEach(r => {
+          if (hitIds.has(r.id)) Object.assign(r, q._payload);
+        });
+        out = { data: q._wantSelect ? rows.filter(r => hitIds.has(r.id)) : hit, error: null };
       } else {
         const hit = rows.filter(r => matches(r, q._filters));
         out = { data: hit, error: null };
@@ -95,7 +108,7 @@ function makeQuery(table) {
     return Promise.resolve(out).then(resolve, reject);
   };
   return q;
-}
+};
 
 const fakeCloud = {
   database: {
@@ -199,7 +212,109 @@ Module.prototype.require = origRequire;
   eq(c3.reason, '房卡已变动，请重试', '失败原因提示重试');
   eq((await auth.ensureProfile()).room_cards, 99, '并发下余额保持为最新值 ' + staleCards + ' → 99');
 
-  /* ---------- 首页入口（WXML 静态检查） ---------- */
+  /* ---------- 并发双领防护（评审 2026-10-15 MEDIUM 收口） ---------- */
+  // 场景：两台设备同时读到「last_checkin 还是昨天」的快照并发领取。
+  // 修复前：发卡在前、标记在后，两个请求都能发卡 → 双领；另一台置标记
+  // 失败被吞、无感知。修复后：置标记先行 + 乐观锁，只有抢到标记的一方发卡。
+  {
+    // 重置到干净的并发起点（上一段曾直接改库模拟并发，把余额摸成 99）
+    const me2 = await auth.ensureProfile();
+    me2.last_checkin = '';
+    me2.room_cards = 100;
+    const beforeA = me2.room_cards;
+
+    const rA = await auth.claimDailyCards();
+    ok(rA.ok === true && rA.gained === 2, '并发-先到方领取成功 +2');
+
+    // B 后走：仍用 A 已消费过的旧快照（last_checkin 还是 ''）判断「未领」，
+    // 但置标记因 .eq('last_checkin', '') 不再命中（库里已是今天）→ 被拒
+    const snapB = Object.assign({}, me2);
+    const realEnsureB = auth.ensureProfile.bind(auth);
+    auth.ensureProfile = async () => Object.assign({}, snapB, { last_checkin: '' });
+    try {
+      const rB = await auth.claimDailyCards();
+      ok(rB.ok === false, '并发-后到方从旧快照领取被拒（标记闸拦截）');
+      eq(store.poker_profiles[0].room_cards, beforeA + 2,
+        '并发领取后余额只增加一份（不再双领）');
+    } finally {
+      auth.ensureProfile = realEnsureB;
+    }
+    eq(store.poker_profiles[0].last_checkin, auth.today(), '并发领取后标记只置一次');
+
+    // 原子失败方向：置标记成功但发卡失败 → 当天不能再重发（宁可少发）
+    me2.last_checkin = '';
+    const realGrant = auth.grantRoomCards.bind(auth);
+    auth.grantRoomCards = async () => ({ ok: false, reason: '房卡已变动，请重试', roomCards: me2.room_cards });
+    try {
+      const rC = await auth.claimDailyCards();
+      ok(rC.ok === false, '发卡失败时整体返回失败（不再静默半段成功）');
+      eq(store.poker_profiles[0].last_checkin, auth.today(),
+        '标记已置：发卡失败当天也不重发（少发而非多发，服务端事务兜底见蓝图）');
+    } finally {
+      auth.grantRoomCards = realGrant;
+    }
+  }
+
+  /* ---------- 对局奖励并发：bonus_base 乐观锁 ---------- */
+  {
+    // A 领完只剩 5 手余量：B 拿旧快照重试时会重读到新基准 → 无可领卡。
+    // 若乐观锁失效，B 会用旧基准再发一整批（多发）。
+    const me3 = await auth.ensureProfile();
+    me3.total_hands = 25;
+    me3.bonus_base = 0;
+
+    const snapB = Object.assign({}, me3, { total_hands: 25, bonus_base: 0 });
+    const rA = await auth.claimHandBonus();
+    ok(rA.ok === true && rA.gained === 2, '对局奖励-先到方领 2 张（25 手基准 0）');
+    eq(me3.bonus_base, 20, '先到方把 bonus_base 推进到 20');
+
+    const realEnsureB = auth.ensureProfile.bind(auth);
+    let calls = 0;
+    auth.ensureProfile = async () => {
+      calls++;
+      return calls <= 1
+        ? Object.assign({}, snapB)          // 第一次：A 消费前的旧快照
+        : await realEnsureB();              // 冲突后：真实重读
+    };
+    try {
+      const rB = await auth.claimHandBonus();
+      ok(rB.ok === false, '后到方重读新基准后无可领卡（不再按旧基准多发）');
+      eq(me3.bonus_base, 20, 'bonus_base 只被推进一次（并发不重发）');
+    } finally {
+      auth.ensureProfile = realEnsureB;
+    }
+  }
+
+  /* ---------- 战绩累计统计并发覆盖防护（saveRecord） ---------- */
+  {
+    // 并发连打两手：两个 saveRecord 都 cur=0 的旧快照起跑。
+    // 修复前：后写的 UPDATE 用旧 cur 覆盖先写 → total_hands 只 +1（丢一手）。
+    // 修复后：.eq('total_hands', cur) 乐观锁，后到方 0 行命中 → 重读到 cur=1 再写。
+    const before = (await auth.ensureProfile()).total_hands;
+    const [r1, r2] = await Promise.all([
+      auth.saveRecord({ tableId: 'ai', handNo: 1, seat: 0, net: 10, won: true }),
+      auth.saveRecord({ tableId: 'ai', handNo: 2, seat: 0, net: -5, won: false })
+    ]);
+    const after = (await auth.ensureProfile());
+    eq(after.total_hands, before + 2, '连打两手累计不丢（并发覆盖防护生效）');
+    eq(after.total_wins, (await auth.ensureProfile()).total_wins, '胜场统计读取一致');
+    ok(Array.isArray(store.poker_records) && store.poker_records.length >= 2,
+      '战绩流水两条都在（流水 insert 天然无并发问题）');
+  }
+
+
+  /* ---------- NULL last_checkin 的历史行也能领签到（is 过滤兜底） ---------- */
+  {
+    // PostgREST 的 eq 对 NULL 永不命中：老行 last_checkin 为 NULL 时，若标记闸
+    // 用 .eq('last_checkin', null) 就永远 0 行 → 这条历史行永远领不了签到。
+    // 修复后 NULL 旧值改走 .is('last_checkin', null)。
+    const old = await auth.ensureProfile();
+    old.last_checkin = null;
+    const r = await auth.claimDailyCards();
+    ok(r.ok === true, 'last_checkin 为 NULL 的历史行可以领每日卡（is 过滤兜底）');
+    eq(old.last_checkin, auth.today(), 'NULL 行领取后标记置为今天');
+  }
+
   const fs = require('fs');
   const indexWxml = fs.readFileSync(path.join(__dirname, 'pages', 'index', 'index.wxml'), 'utf8');
   const indexJs = fs.readFileSync(path.join(__dirname, 'pages', 'index', 'index.js'), 'utf8');
