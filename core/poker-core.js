@@ -680,7 +680,11 @@
    *    可能被平台判定为「外挂 / 场外交易辅助」。
    *    建议仅在「练习模式」启用，或改为纯统计反馈。
    */
-  function advise(game, seat) {
+  function advise(game, seat, opts) {
+    // 合规开关（README 第 0.3 节）：行动建议属实时辅助，竞技房（好友房/匹配）
+    // 必须关闭。默认不返回任何建议 —— 调用方必须显式传 { practiceMode: true }
+    // 才输出，防止新调用点无意间在竞技对局中启用。
+    if (!opts || opts.practiceMode !== true) return null;
     const p = game.seatOf(seat);
     if (!p) return null;
     const legal = game.legalActions(seat);

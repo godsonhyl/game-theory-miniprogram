@@ -16,6 +16,9 @@ function eq(actual, expected, label) {
 function ok(cond, label) {
   if (cond) pass++; else fails.push(label);
 }
+function strictEq(actual, expected, label) {
+  if (actual === expected) pass++; else fails.push(label + '\n        got: ' + String(actual));
+}
 const group = t => console.log('  ' + t);
 
 /* ---- 引擎双副本防漂移：小程序内打包的是 miniprogram/core 的副本，必须与根目录一致 ---- */
@@ -526,8 +529,12 @@ const ga = P.createGame({ players: [mkPlayer(0, 1000, true), mkPlayer(1, 1000)],
 ga.startHand();
 ga.act(ga.actionSeat, 'call', 0);
 ga.act(ga.actionSeat, 'check', 0);
-const adv = P.advise(ga, 0);
-ok(adv && typeof adv.text === 'string' && adv.text.length > 0, '建议文本生成: ' + (adv ? adv.text.slice(0, 34) : 'null'));
+// 合规回归：不显式传 practiceMode → 一律 null（竞技房防外挂门槛）
+strictEq(P.advise(ga, 0), null, 'advise 默认关闭（竞技房合规门槛）');
+strictEq(P.advise(ga, 0, {}), null, 'opts 未带 practiceMode → null');
+strictEq(P.advise(ga, 0, { practiceMode: false }), null, 'practiceMode=false → null');
+const adv = P.advise(ga, 0, { practiceMode: true });
+ok(adv && typeof adv.text === 'string' && adv.text.length > 0, '练习模式下建议文本生成: ' + (adv ? adv.text.slice(0, 34) : 'null'));
 ok(adv.equity >= 0 && adv.equity <= 1, '胜率区间合法: ' + adv.equityPct);
 ok(['strong', 'weak', 'neutral', 'draw'].indexOf(adv.tone) !== -1, '色调字段合法: ' + adv.tone);
 

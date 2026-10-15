@@ -467,6 +467,19 @@ while (guard++ < 400) {
       '建议色调合法: ' + dataStore.advice.tone);
   }
 
+  /* ---------- 合规：行动建议仅限「AI 对战」（练习模式） ---------- */
+  // 当前 onLoad() 无参 → mode='ai'：轮到我时建议应正常输出
+  {
+    const g = pageCtx.requireGame();
+    if (g && !g.result && g.actionSeat === pageCtx.mySeat) {
+      const rAdv = P.advise(g, g.actionSeat, { practiceMode: true });
+      ok(!!rAdv, '练习模式（AI 对战）：引擎建议可输出');
+    }
+    // 引擎层门槛（防新调用点漏传开关）
+    ok(P.advise(g && g.actionSeat >= 0 ? g : null, 0) === null,
+      '引擎合规：不传 practiceMode 一律返回 null');
+  }
+
   /* ---------- 下一手 ---------- */
   if (result) {
     const before = dataStore.handNo;

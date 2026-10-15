@@ -2003,11 +2003,14 @@ Page({
   },
 
   renderAdvice(isMyTurn) {
-    if (!isMyTurn) {
+    // 合规硬约束（README 第 0.3 节）：行动建议 = 实时外挂辅助，
+    // 仅允许在「练习模式」（AI 对战/教学）输出；好友房与匹配对战必须关闭。
+    // 引擎侧 advise() 同样有 practiceMode 开关双保险（服务器接入后以房间配置为准）。
+    if (!isMyTurn || this.mode !== 'ai') {
       this.setData({ advice: {} });
       return;
     }
-    const a = P.advise(game, this.mySeat);
+    const a = P.advise(game, this.mySeat, { practiceMode: true });
     if (!a) { this.setData({ advice: {} }); return; }
     this.setData({
       advice: {
