@@ -781,19 +781,112 @@ while (guard++ < 400) {
   ok(/stopSfxPump\(\)/.test(tableSrc), '音效泵有明确的停止生命周期（onUnload 调用）');
   ok(/this\.data\.soundOn/.test(tableSrc), '音效开关在事件泵内逐次判断（切换即时生效）');
 
+  /* ---------- 回归：真机完全没声音（WebAudio 未解锁） ----------
+   * 现象：真机上一点声音都没有，控制台无任何报错。
+   * 根因：wx.createWebAudioContext() 创建后状态是 suspended，currentTime 恒为 0。
+   *      旧代码两处叠加导致永久静音：
+   *        1) 从不调用 resume()；
+   *        2) play() 里 `if (!c.currentTime) return` —— 这个守卫恰好把所有
+   *           「解锁前」的播放全挡掉，永远等不到声音，形成死锁。
+   * 修法：sfx 暴露 unlock()，table 根节点 bindtouchstart 调它；play() 遇到
+   *      时钟未走改为尝试解锁并跳过本次，而不是静默丢弃。 */
+  {
+    const sfxPath = path.join(__dirname, 'utils', 'sfx.js');
+    const sfxSrc = require('fs').readFileSync(sfxPath, 'utf8');
+    ok(/function unlock\(\)/.test(sfxSrc) && /module.exports\s*=\s*\{[^}]*unlock/.test(sfxSrc),
+      'sfx 导出 unlock()（音频解锁入口）');
+    ok(/c\.resume\(\)/.test(sfxSrc),
+      'unlock() 真正调用 resume()——suspended 上下文不 resume 就永不发声');
+    ok(!/if \(!c \|\| !c\.currentTime\) return/.test(sfxSrc),
+      'play() 不再用 currentTime 当守卫（该守卫会把解锁前的播放全部挡掉，形成死锁）');
+    ok(/bindtouchstart="onFirstTouch"/.test(wxmlSrc),
+      'table 根节点绑定 bindtouchstart="onFirstTouch"（在用户手势里解锁）');
+    ok(/onFirstTouch\(\)\s*\{[\s\S]{0,200}?sfx\.unlock\(\)/.test(tableSrc),
+      'onFirstTouch 调用 sfx.unlock()');
+
+    // 行为仿真：造一个 suspended 的 WebAudioContext，验证「解锁前静默、解锁后有声」
+    const calls = [];
+    let clock = 0;
+    const fakeCtx = {
+      get state() { return clock > 0 ? 'running' : 'suspended'; },
+      get currentTime() { return clock; },
+      resume() { calls.push('resume'); clock = 0.001; return Promise.resolve(); },
+      createOscillator() {
+        return {
+          type: 'sine',
+          frequency: { setValueAtTime() {}, exponentialRampToValueAtTime() {} },
+          connect() {}, disconnect() {}, start() { calls.push('osc.start'); },
+          stop() { calls.push('osc.stop'); }, onended: null,
+        };
+      },
+      createGain() {
+        return {
+          gain: { setValueAtTime() {}, exponentialRampToValueAtTime() {} },
+          connect() {}, disconnect() {},
+        };
+      },
+      destination: {},
+    };
+    const gwx = global.wx;
+    global.wx = { createWebAudioContext: () => fakeCtx };
+    delete require.cache[require.resolve(sfxPath)];
+    const sfx2 = require(sfxPath);
+
+    ok(sfx2.available() === true, 'WebAudio 能力可用（available() 探测）');
+    ok(sfx2.isRunning() === false, '初始状态为 suspended（isRunning() 如实反映）');
+    sfx2.play('click');
+    ok(calls.indexOf('osc.start') < 0,
+      '解锁前 play 不发声（suspended 时钟为 0，无输出属正常）');
+    ok(calls.indexOf('resume') >= 0, '解锁前 play 会自动尝试 resume（不再死锁）');
+
+    calls.length = 0;
+    clock = 0.05;                                  // 模拟用户手势后进入 running
+    ok(sfx2.isRunning() === true, '解锁后状态为 running');
+    sfx2.play('raise');
+    ok(calls.indexOf('osc.start') >= 0,
+      '解锁后 play 真正创建振荡器并发声（真机「没声音」的回归断言）');
+    ok(calls.filter(c => c === 'osc.stop').length >= 1,
+      '每个音都成对 start/stop，避免节点泄漏');
+
+    // 未知音色静默忽略，不能影响牌局
+    calls.length = 0;
+    sfx2.play('__not_exist__');
+    ok(calls.indexOf('osc.start') < 0, '未知音名静默忽略，绝不影响牌局');
+
+    if (gwx === undefined) delete global.wx; else global.wx = gwx;
+    delete require.cache[require.resolve(sfxPath)];
+  }
+
   /* ---------- 回归：自定义金额必须同步加注按钮文案 ----------
    * 现象（真机）：自定义滑杆拉到 346，底部按钮仍显示「加注 20」。
    * 根因：raiseSubmit / raiseAllIn 只在 render() 里派生，而滑杆/输入框/快捷档
    *      只 setData({raiseTo}) 不触发 render → 按钮文案永远停在上一帧旧值。
-   * 修法：所有改金额的入口统一走 setRaiseTo()，同帧写入三个字段。 */
+   * 修法：所有改金额的入口统一走 setRaiseTo()，同帧写入三个字段。
+   *
+   * ⚠️ 这里是本文件第三次 pageCtx.onLoad()。game 是 table.js 的模块级单例、
+   *    不会随 onLoad 重置，前面两组用例已经开过局、消耗过房卡（globalData.roomCards），
+   *    于是本次开局是否成功取决于前面用例跑到哪一步 —— 表现为
+   * 「通过 N 项，失败 1 项：异步推进到轮到我且可加注」的随机失败（与本组断言无关）。
+   * 修法：开局前把房卡补足，让这段不再依赖前面用例的执行顺序。 */
+  global.__storage = global.__storage || {};
+  global.getApp = () => ({
+    globalData: { roomCards: 99, userInfo: null },
+    consumeRoomCard: () => true,
+  });
   pageCtx.onLoad();
   pageCtx.chooseSeat({ currentTarget: { dataset: { seat: 2 } } });
   pageCtx.confirmBuyIn({ currentTarget: { dataset: { amt: '1000' } } });
   pageCtx.startGame();
-  // AI 用真实 setTimeout 推进，异步轮询到轮到我且可加注
+  ok(dataStore.phase === 'playing',
+    '第三次 onLoad 后仍能正常开局（房卡充足，不受前面用例顺序影响）');
+  // AI 用真实 setTimeout 推进，异步轮询到轮到我且可加注。
+  // ⚠️ 超时给足 40s：AI 行动节奏随机（think delay + 随机决策），15s 窗口偶发
+  // 超时导致本组断言整块跳过、表现为「通过 N 项，失败 1 项」的随机失败
+  // （改动前即存在，非本次引入）。这里放宽窗口并把实际耗时/状态带进失败信息，
+  // 万一再抖也能一眼看出是没等到还是状态不对。
   {
     const t0 = Date.now();
-    while (Date.now() - t0 < 15000 &&
+    while (Date.now() - t0 < 40000 &&
            !(dataStore.isMyTurn && dataStore.legal && dataStore.legal.canRaise)) {
       await new Promise(r => setTimeout(r, 50));
       // 偶发（2 人桌）：AI 翻牌前直接弃牌 → 本手提前结束、永远轮不到我。
@@ -802,9 +895,15 @@ while (guard++ < 400) {
         pageCtx.startHand();
       }
     }
+    global.__sfxWaitMs = Date.now() - t0;
   }
   ok(dataStore.isMyTurn === true && !!(dataStore.legal && dataStore.legal.canRaise),
-    '异步推进到「轮到我且可加注」（验证加注按钮文案的前置条件）');
+    '异步推进到「轮到我且可加注」（验证加注按钮文案的前置条件）' +
+    (dataStore.isMyTurn && dataStore.legal && dataStore.legal.canRaise
+      ? '，耗时 ' + global.__sfxWaitMs + 'ms'
+      : '；实际 isMyTurn=' + !!dataStore.isMyTurn +
+        ' canRaise=' + !!(dataStore.legal && dataStore.legal.canRaise) +
+        ' 耗时=' + global.__sfxWaitMs + 'ms'));
   if (dataStore.isMyTurn && dataStore.legal && dataStore.legal.canRaise) {
     const minT = dataStore.legal.minRaiseTo, maxT = dataStore.legal.maxRaiseTo;
     // 真机回归：点「自定义」无反应 —— onCustomTap 翻转了 open 却从未写 data.raiseCustom

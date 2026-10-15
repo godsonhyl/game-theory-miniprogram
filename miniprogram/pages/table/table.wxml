@@ -1,4 +1,5 @@
-<view class="table-page {{fourColor ? 'four-color' : ''}} {{animOn ? '' : 'no-anim'}}" style="{{rootStyle}}">
+<view class="table-page {{fourColor ? 'four-color' : ''}} {{animOn ? '' : 'no-anim'}}" style="{{rootStyle}}"
+      bindtouchstart="onFirstTouch">
   <!-- 顶栏：好友房/AI 通用。等待室与牌桌共用，等待阶段隐藏街次/手数/倒计时 -->
   <view class="topbar">
     <view class="tb-l">

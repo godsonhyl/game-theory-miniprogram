@@ -302,6 +302,10 @@ Page({
     // 与渲染解耦——对手在计时器/看门狗路径里的动作也能及时发声。
     this.sfxSeq = 0;          // 已消费的事件序号（首手从 0 开始，天然不播历史音）
     this.startSfxPump();
+    // 音频解锁：WebAudio 上下文初始 suspended，必须在一次真实手势里 resume()。
+    // 挂根节点 touchstart（捕获阶段，卡在所有按钮之前），用户第一次碰屏幕就解锁，
+    // 之后发牌/下注音才真的出声。once 语义由 sfx.unlock 内部幂等保证。
+    this.sfxUnlockBound = true;
     if (this.mode === 'friend' && wx.showShareMenu) {
       wx.showShareMenu({ withShareTicket: false, menus: ['shareAppMessage', 'shareTimeline'] });
     }
@@ -329,6 +333,18 @@ Page({
       }, 100);
     }
     this.updateViewport();
+    // 从后台切回：iOS 会把 WebAudio 上下文挂起（currentTime 停走），
+    // 这里补一次解锁尝试；用户下一次触摸也会再触发 onFirstTouch。
+    if (this.sfxUnlockBound) { try { sfx.unlock(); } catch (e) {} }
+  },
+
+  /**
+   * 首次触摸 → 解锁音频上下文（见 sfx.js unlock 注释）。
+   * 绑定在根节点的 bindtouchstart 上，用 capture 语义先于按钮执行；
+   * 不做任何业务逻辑，纯音频解锁，重复触发由 unlock() 幂等吸收。
+   */
+  onFirstTouch() {
+    try { sfx.unlock(); } catch (e) { /* 音效不可用也不能影响牌局 */ }
   },
 
   /** 视口尺寸变化（转屏 / 分窗）时重算布局变量 */

@@ -23,6 +23,7 @@
 
 let ctx = null;          // 懒加载的 WebAudioContext 单例
 let failed = false;      // 创建失败标记（之后不再重试，避免每次 play 都抛错）
+let unlocked = false;    // 是否已被用户手势解锁过（见 unlock）
 
 function ensureCtx() {
   if (ctx) return ctx;
@@ -32,6 +33,45 @@ function ensureCtx() {
     ctx = wx.createWebAudioContext();
   } catch (e) { failed = true; ctx = null; }
   return ctx;
+}
+
+/**
+ * 解锁音频上下文 —— 必须在用户手势的同步调用栈里执行。
+ *
+ * ⚠️ 这是「真机完全没声音」的头号原因：
+ * WebAudio 上下文创建后状态是 suspended，此时 currentTime 恒为 0、不推进，
+ * 振荡器能建好也能连到 destination，但渲染线程不跑 → 一片寂静，且不报任何错。
+ * 必须由一次真实的 touch/click 触发 resume() 才能进入 running。
+ *
+ * 页面在 onLoad 后立刻挂一次根节点 bindtouchstart 调本函数（见 table.js onFirstTouch），
+ * 之后所有音效都不再受自动播放策略限制。
+ * 幂等：重复调用只在非 running 时才 resume。
+ */
+function unlock() {
+  const c = ensureCtx();
+  if (!c) return false;
+  try {
+    if (c.state === 'running') { unlocked = true; return true; }
+    const r = c.resume && c.resume();
+    // resume 返回 Promise（部分基础库）；失败也不阻塞，静默等下一次手势
+    if (r && typeof r.then === 'function') {
+      r.then(() => { unlocked = true; }, () => { /* 仍未解锁，等下次手势 */ });
+    } else {
+      unlocked = true;
+    }
+    return true;
+  } catch (e) { return false; }
+}
+
+/** 上下文是否可用（用于「音效开关」显示真实状态，而非假装开着） */
+function available() {
+  const c = ensureCtx();
+  return !!c;
+}
+
+/** 当前是否真的在发声状态（running）—— 供诊断/测试用 */
+function isRunning() {
+  return !!(ctx && ctx.state === 'running');
 }
 
 /**
@@ -49,7 +89,14 @@ function osc(c, t, freq, dur, type, vol, glideTo) {
   g.gain.exponentialRampToValueAtTime(vol, t + 0.006);
   g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
   o.connect(g); g.connect(c.destination);
-  o.start(t); o.stop(t + dur + 0.05);
+  // 尾部多留 30ms 再停：部分基础库会在 stop() 时刻硬切波形，
+  // 提前停会把正在衰减的尾巴砍出一个「咔」声。
+  const end = t + dur + 0.03;
+  o.start(t); o.stop(end);
+  // 节点自动回收：避免长时间对局累积几百个已停止的 oscillator
+  if (typeof o.onended === 'function') {
+    try { o.onended = function () { try { o.disconnect(); g.disconnect(); } catch (e) {} }; } catch (e) {}
+  }
 }
 
 /* ---------- 音色编排（t = 起始时刻，s = 秒） ---------- */
@@ -115,12 +162,21 @@ const PRESETS = {
  */
 function play(name) {
   const c = ensureCtx();
-  if (!c || !c.currentTime) return;
+  if (!c) return;
   const fn = PRESETS[name];
   if (!fn) return;
+  // ⚠️ 不要再用 `if (!c.currentTime) return` 当守卫：
+  // 上下文 suspended 时 currentTime 恒为 0，会把每一次播放都挡掉，
+  // 而这恰恰是「解锁前」的所有播放 —— 于是永远等不到声音，形成死锁。
+  // 这里改为：时钟没走就先尝试解锁并跳过本次（下一帧/下一次手势后再响）。
+  const t0 = c.currentTime || 0;
+  if (!t0) {
+    if (!unlocked) unlock();
+    return;
+  }
   try {
-    fn(c, c.currentTime + 0.01);
+    fn(c, t0 + 0.01);
   } catch (e) { /* 音频通道偶发占用等：本次静默 */ }
 }
 
-module.exports = { play };
+module.exports = { play, unlock, available, isRunning };
