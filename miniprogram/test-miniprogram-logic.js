@@ -652,12 +652,15 @@ while (guard++ < 400) {
   pageCtx.enterReadyPhase();
   ok(dataStore.readyPhase === true, '一手结束后进入就绪阶段（等所有人准备就绪）');
   ok(dataStore.readyList.length === 9, '就绪列表含所有在座玩家，实际 ' + dataStore.readyList.length);
-  ok(dataStore.readyLeft === 60, '就绪倒计时 60 秒，实际 ' + dataStore.readyLeft);
+  ok(dataStore.readyLeft === 30, '就绪倒计时 30 秒，实际 ' + dataStore.readyLeft);
   ok(dataStore.myReady === false, '初始状态我方未准备');
 
   const handBefore = dataStore.handNo;
   pageCtx.onNextHand();   // 就绪阶段：结算面板按钮即「准备就绪」
   ok(dataStore.myReady === true, '点「准备就绪」后我方标记已准备');
+  pageCtx.onReadyTap();           // 已就绪后重复点击应被忽略（按钮虽 disabled，仍需 JS 幂等兜底）
+  ok(dataStore.myReady === true && dataStore.readyPhase === true,
+    '已就绪后重复点「准备就绪」无副作用（幂等，不重复计票）');
   ok(dataStore.readyPhase === true && dataStore.handNo === handBefore,
     '还有人未准备时不提前发下一手（handNo 不变）');
 
@@ -666,10 +669,10 @@ while (guard++ < 400) {
   ok(dataStore.handNo === handBefore + 1,
     '全员就绪后自动发下一手: ' + handBefore + ' → ' + dataStore.handNo);
 
-  /* ---------- 就绪超时：超过 1 分钟未点就绪自动站起 ---------- */
+  /* ---------- 就绪超时：超过 30 秒未点就绪自动站起 ---------- */
   pageCtx.enterReadyPhase();
   ok(dataStore.readyPhase === true, '再次进入就绪阶段以验证超时逻辑');
-  pageCtx.autoStandUnready();     // 模拟 60 秒到点（不等待真实时间）
+  pageCtx.autoStandUnready();     // 模拟 30 秒到点（不等待真实时间）
   ok(dataStore.myStanding === true, '超时未准备，我被自动站起（仍留在房间内）');
   ok(pageCtx.seatedOf(0) === false, '自动站起后不再算「在座」，下一手不参与发牌');
   ok(dataStore.readyHint.indexOf('人数不足') >= 0 || dataStore.readyPhase === false,
@@ -1212,6 +1215,27 @@ while (guard++ < 400) {
       '面板提供 33%/67%/100% 快捷额');
     ok(!/onCustomHalf|onCustomPot/.test(wxmlSrc + pctSrc),
       '旧的 ½池/底池 快捷入口已移除（统一为百分比档）');
+  }
+
+  /* ---------- 回归：就绪按钮点完变灰禁用 + 倒计时 30s ---------- */
+  {
+    const wxssSrc = require('fs').readFileSync(
+      require('path').join(__dirname, 'pages/table/table.wxss'), 'utf8');
+    ok(/const READY_TIMEOUT_SEC = 30;/.test(tableSrc),
+      '就绪倒计时 30 秒（超时自动站起）');
+    // 关键：按钮不能消失成一行小字（布局跳动 + 状态不明确），要就地变灰
+    ok(/class="rb-btn \{\{myReady \? 'done' : ''\}\}"/.test(wxmlSrc) &&
+       /disabled="\{\{myReady\}\}"/.test(wxmlSrc),
+      '就绪按钮用 done 态 + disabled 切换，而非 wx:if 消失成 rb-wait 小字');
+    ok(!/rb-wait" wx:elif/.test(wxmlSrc), '旧的 rb-wait「已准备」文本入口已移除');
+    ok(/\.rb-btn\.done\s*\{[\s\S]{0,300}?background:\s*rgba\(255,255,255/.test(wxssSrc),
+      '存在 .rb-btn.done 灰态样式（点完变灰）');
+    ok(/onReadyTap\(\)\s*\{[\s\S]{0,200}?if \(this\.data\.myReady\) return;/.test(tableSrc),
+      'onReadyTap 对已就绪幂等（重复点击无副作用）');
+    // 倒计时只该在未就绪时展示，就绪后数字消失
+    ok(/myReady \? '已准备' : '准备就绪'/.test(wxmlSrc) &&
+       /!myReady && readyLeft > 0/.test(wxmlSrc),
+      '就绪后按钮文案变「已准备」且不再显示倒计时秒数');
   }
 
   /* ---------- 静态守卫：金额入口全部收口到 setRaiseTo ---------- */

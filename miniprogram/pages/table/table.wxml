@@ -158,10 +158,12 @@
         <button class="rb-btn ghost" wx:if="{{result}}" bindtap="onShowResult">查看结算</button>
         <button class="rb-btn ghost" wx:if="{{canStand}}" bindtap="onMenuStand">站起退出本局</button>
         <button class="rb-btn ghost" wx:if="{{myStanding && !mySeated}}" bindtap="onMenuSit">坐下加入游戏</button>
-        <button class="rb-btn" wx:if="{{mySeated && !myReady}}" bindtap="onReadyTap">
-          准备就绪{{readyLeft > 0 ? '（' + readyLeft + 's）' : ''}}
+        <!-- 就绪按钮：点完就地变灰禁用（不再消失成一行小字），
+             否则按钮消失会让右侧布局跳动，且用户看不出「我已就绪」的确定状态 -->
+        <button class="rb-btn {{myReady ? 'done' : ''}}" wx:if="{{mySeated}}"
+                bindtap="onReadyTap" disabled="{{myReady}}">
+          {{myReady ? '已准备' : '准备就绪'}}{{!myReady && readyLeft > 0 ? '（' + readyLeft + 's）' : ''}}
         </button>
-        <view class="rb-wait" wx:elif="{{myReady}}">已准备</view>
       </view>
     </view>
   </view>

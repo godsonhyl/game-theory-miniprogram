@@ -385,6 +385,12 @@
   background: transparent; color: var(--gold);
   border: 1rpx solid rgba(232,163,61,.55); line-height: calc(7 * var(--uh));
 }
+/* 已就绪态：灰底灰字，彻底不可点（配合 wxml 的 disabled，去掉点击热区） */
+.rb-btn.done {
+  background: rgba(255,255,255,.07); color: rgba(255,255,255,.4);
+  border: 1rpx solid rgba(255,255,255,.14);
+}
+.rb-btn.done::after { border: none; }
 .rb-wait { margin-left: calc(1.4 * var(--uw)); font-size: calc(3 * var(--uh)); color: var(--gold); white-space: nowrap; }
 /* 局内（已弃牌/本手结束未结算时）行内站起入口 */
 .stand-link {

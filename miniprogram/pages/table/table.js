@@ -95,7 +95,7 @@ const IDLE_WARN_MS = 5 * 60 * 1000;
  * 就绪超时（秒）：上一手结束后，所有人需点「准备就绪」才发下一手；
  * 超过该时长仍未准备的人，自动站起（退出本局，但保留在房间内）。
  */
-const READY_TIMEOUT_SEC = 60;
+const READY_TIMEOUT_SEC = 30;
 
 /**
  * 结算展示时序（毫秒）：一手结束（摊牌亮牌）后，先在牌桌上停留亮牌
@@ -3204,6 +3204,8 @@ Page({
   /** 我点「准备就绪」（未坐下时先提示坐下） */
   onReadyTap() {
     if (!this.data.readyPhase) return;
+    // 幂等：按钮已 disabled，但主操作键/镜像端也可能触发这里，重复计票会白耗一轮
+    if (this.data.myReady) return;
     if (this.data.soundOn) sfx.play('click');
     if (this.remoteMode) {
       // 镜像端：写自己行的 ready_hand（下一手手数），房主轮询合入计票
