@@ -422,12 +422,14 @@
   flex: 1; min-width: 0; display: flex; align-items: center; justify-content: center;
   padding: 0 calc(2 * var(--uw));
 }
-.presets { display: flex; align-items: center; }
+/* 档位条：flex-wrap 兜底。档位从 6 个增到 7 个（33/50/67/100%）后，
+   窄屏横屏下若仍挤在一行会溢出 mymid，故允许换行并略收窄横向内边距。 */
+.presets { display: flex; align-items: center; flex-wrap: wrap; }
 .pr {
   font-size: calc(3 * var(--uh)); color: var(--ink);
   background: rgba(255,255,255,.07); border: 1rpx solid rgba(255,255,255,.13);
   border-radius: calc(1.6 * var(--uh));
-  padding: calc(0.9 * var(--uh)) calc(2.6 * var(--uw)); margin-right: calc(1.6 * var(--uw));
+  padding: calc(0.9 * var(--uh)) calc(2.2 * var(--uw)); margin-right: calc(1.4 * var(--uw));
   white-space: nowrap;
 }
 .pr:last-child { margin-right: 0; }
