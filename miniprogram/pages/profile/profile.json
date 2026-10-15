@@ -1,5 +1,6 @@
 {
   "navigationBarTitleText": "我的战绩",
   "onReachBottomDistance": 80,
+  "enablePullDownRefresh": true,
   "usingComponents": {}
 }
