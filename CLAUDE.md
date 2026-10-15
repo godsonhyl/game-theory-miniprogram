@@ -15,13 +15,14 @@ npm run test:mp                 # 牌桌页逻辑仿真（mock wx/Page）
 npm run test:cards              # 牌面渲染逻辑
 npm run test:cloud              # 云服务接入规范校验
 npm run test:sdk                # SDK 加载
+npm run test:pack               # 打包排除清单与 project.config.json 漂移校验
 npm run test:wxml               # WXML 静态检查（标签闭合 + wx:for-item 声明）
 npm run pack                    # 打包 dist/*.zip（三层校验：引擎存在/体积<2MB/页面四件套齐全）
 npm run upload                  # miniprogram-ci 命令行上传体验版（需 private.<AppID>.key）
 npm run preview                 # 仅生成预览包，不上传
 ```
 
-测试全部是自研断言脚本（无 jest/mocha），直接 `node xxx.js` 运行，失败项会打印 label。跑单个测试：`node miniprogram/test-room-sync.js`。
+测试全部是自研断言脚本（无 jest/mocha），直接 `node xxx.js` 运行，失败项会打印 label。跑单个测试：`node miniprogram/test-room-sync.js`。`npm test` = 引擎 + 牌桌页 + 牌面 + 云规范 + SDK + WXML + 打包规则七项全跑（改动后必须过）。
 
 ## 双树结构（易踩坑）
 
