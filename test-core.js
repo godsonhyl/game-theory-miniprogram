@@ -18,6 +18,15 @@ function ok(cond, label) {
 }
 const group = t => console.log('  ' + t);
 
+/* ---- 引擎双副本防漂移：小程序内打包的是 miniprogram/core 的副本，必须与根目录一致 ---- */
+{
+  const fs = require('fs');
+  const path = require('path');
+  const rootCopy = fs.readFileSync(path.join(__dirname, 'core', 'poker-core.js'), 'utf8');
+  const mpCopy = fs.readFileSync(path.join(__dirname, 'miniprogram', 'core', 'poker-core.js'), 'utf8');
+  ok(rootCopy === mpCopy, '引擎两份副本一致（core/ 与 miniprogram/core/，改引擎必须同步两边）');
+}
+
 const c = (r, s) => P.cardId(r, s);
 // ⚠️ 记法：H.S5 是「5♠」，不是 rank 5（rank 5 是 7）。数字只表示花色。
 const H = {
@@ -185,6 +194,17 @@ eq(g.result.awards.reduce((s, a) => s + a.amount, 0),
   g.players.reduce((s, p) => s + p.committed, 0), '不足额全下场景筹码守恒');
 ok(g.pots.length >= 2, '短码 vs 深码产生边池，实际 ' + g.pots.length);
 ok(g.players.every(p => p.stack >= 0), '无负筹码');
+
+// 关键回归：全下跑马（skipToShowdown）后 street 必须落为 SHOWDOWN。
+// 曾因该路径只把 street 置到 RIVER，导致渲染层不亮牌、快照不带 reveal，
+// 出现「桌上全程牌背、结算弹窗里才有牌」的现象（顶栏还停在「河牌圈」）。
+eq(g.street, P.STREET.SHOWDOWN, '全下直接摊牌后 street = SHOWDOWN');
+ok(Object.keys(g.showdownReveal).length > 0, 'showdownReveal 已填充（亮牌依据）');
+const endSnap = g.snapshot();
+ok(endSnap.reveal && Object.keys(endSnap.reveal).length > 0,
+  '快照 showAll：摊牌后 reveal 必须下发（镜像端才亮牌）');
+ok(endSnap.players.filter(p => !p.folded).every(p => Array.isArray(p.hole) && p.hole.length === 2),
+  '快照：摊牌后未弃牌玩家底牌明文下发');
 
 console.log('\n【5】蒙特卡洛胜率');
 const pct = (r) => (r.equity * 100).toFixed(1) + '%';
@@ -369,6 +389,60 @@ ok(!!snap.streetCn, '街道中文名: ' + snap.streetCn);
 ok(snap.players.find(p => p.isHuman).hole !== null, '本人可见底牌');
 ok(JSON.parse(JSON.stringify(snap)).players.length === 3, 'JSON 往返无损');
 ok(typeof snap.pot === 'number' && snap.pot > 0, '底池金额 ' + snap.pot);
+
+console.log('\n【8b】庄位/小盲/大盲 + 快照镜像（跨设备好友房）');
+{
+  const g3 = P.createGame({ players: [mkPlayer(0, 1000), mkPlayer(1, 1000), mkPlayer(2, 1000)], sb: 10, bb: 20, dealerSeat: 0, seed: 'blinds' });
+  g3.startHand();
+  const s3 = g3.snapshot();
+  eq(s3.dealerSeat, 1, 'snapshot 带 dealerSeat');
+  eq(s3.sbSeat, 2, 'snapshot 带 sbSeat（三人局 = 按钮左一）');
+  eq(s3.bbSeat, 0, 'snapshot 带 bbSeat（三人局 = 按钮左二）');
+  g3.startHand();
+  eq(g3.dealerSeat, 2, '每手按座位顺序轮转庄位（1 → 2）');
+  eq(g3.sbSeat, 0, '轮转后小盲 = 新按钮左一');
+  eq(g3.bbSeat, 1, '轮转后大盲 = 新按钮左二');
+}
+{
+  // 两人局（heads-up）：庄家即小盲，另一人大盲，按钮先行动
+  const g2 = P.createGame({ players: [mkPlayer(0, 1000), mkPlayer(1, 1000)], sb: 10, bb: 20, dealerSeat: 1, seed: 'hu' });
+  g2.startHand();
+  eq(g2.dealerSeat, 0, '两人局按钮轮转后落在座位0');
+  eq(g2.sbSeat, 0, '两人局庄家即小盲');
+  eq(g2.bbSeat, 1, '两人局另一人大盲');
+  eq(g2.players.map(p => p.bet), [10, 20], '两人局盲注 10/20（庄家小盲）');
+  eq(g2.actionSeat, 0, '两人局翻牌前按钮（小盲）先行动');
+}
+{
+  // 稀疏座位（自选座位）：引擎按座位号排序处理盲注与轮转
+  const gs = P.createGame({ players: [mkPlayer(3, 1000), mkPlayer(5, 1000), mkPlayer(7, 1000)], sb: 10, bb: 20, dealerSeat: 3, seed: 'sparse' });
+  gs.startHand();
+  eq(gs.dealerSeat, 5, '稀疏座位庄位轮转（3 → 5）');
+  eq(gs.sbSeat, 7, '稀疏座位小盲 = 按钮左一');
+  eq(gs.bbSeat, 3, '稀疏座位大盲 = 按钮左二');
+}
+{
+  // loadSnapshot：好友端镜像 + 「我 = 本地 0 号位」重映射
+  const src = P.createGame({
+    players: [mkPlayer(0, 1000, true), mkPlayer(2, 1000), mkPlayer(5, 1000, true)],
+    sb: 10, bb: 20, dealerSeat: 0, seed: 'mirror'
+  });
+  src.startHand();
+  const snap = src.snapshot();
+  const mirror = P.createGame({ players: [], sb: 10, bb: 20, dealerSeat: 0, seed: 'm' });
+  ok(mirror.loadSnapshot(snap, 5) === true, 'loadSnapshot 成功装载广播快照');
+  eq(mirror.players.map(p => p.seat).sort((a, b) => a - b), [0, 1, 2], '座位重映射为紧凑 0..N');
+  eq(mirror.seatOf(0).name, 'P5', '我的房间座位（5）映射到本地 0 号位');
+  ok(mirror.seatOf(0).hole.length === 2, '镜像保留我的底牌');
+  ok(mirror.seatOf(2).hole.length === 0, '非真人座位底牌不进镜像（暗牌）');
+  eq(mirror.dealerSeat, 2, '庄位随重映射');
+  eq(mirror.sbSeat, 0, '小盲随重映射');
+  eq(mirror.bbSeat, 1, '大盲随重映射');
+  eq(mirror.potTotal(), snap.pot, '底池与广播一致');
+  eq(mirror.handNo, snap.handNo, '手数一致');
+  eq(P.codeToCard('As'), 12 * 4 + 0, 'codeToCard 解析 A♠');
+  eq(P.cardToCode(P.codeToCard('Th')), 'Th', 'codeToCard 与 cardToCode 互逆');
+}
 
 console.log('\n【9】种子复现（事件溯源前提）');
 function dealOf(seed) {

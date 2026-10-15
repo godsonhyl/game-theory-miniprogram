@@ -392,12 +392,28 @@ Page({
     wx.navigateTo({ url: '/pages/profile/profile' });
   },
 
-  /** 拉取「我创建的」进行中的房间（非关键路径，失败静默） */
+  /**
+   * 拉取「我创建的」进行中的房间（非关键路径，失败静默）。
+   * 顺手清理僵尸房：限时房到期 / 不限时房超 24 小时的，自动关闭云端房间
+   * 并清掉本地续局快照（30 分钟空闲销毁只在房主停留在等待室时生效，
+   * 退出页面后无人兜底，这里就是兜底入口）。
+   */
   async loadMyRooms() {
     try {
       const rooms = await auth.listMyRooms();
+      const now = Date.now();
+      const kept = [];
+      const stale = [];
+      (rooms || []).forEach(r => {
+        if (auth.roomExpired(r, now)) stale.push(r.room_no);
+        else kept.push(r);
+      });
+      stale.forEach(no => {
+        snapshot.clear(no);
+        auth.closeRoom(no).catch(() => {});
+      });
       this.setData({
-        myRooms: (rooms || []).map(r => {
+        myRooms: kept.map(r => {
           // 本地若有该房间的牌局快照，说明中途退出过，进入后可续局
           const snap = snapshot.load(r.room_no);
           const live = !!snap;
@@ -416,6 +432,37 @@ Page({
     } catch (e) {
       // 房间列表非首屏必需，错误不阻塞首页
     }
+  },
+
+  /**
+   * 删除房间：关闭云端房间 + 清除本地续局快照。
+   * catchtap 阻止冒泡，不会触发卡片的进入房间。
+   */
+  onCloseRoom(e) {
+    const room = e.currentTarget.dataset.room;
+    if (!room) return;
+    wx.showModal({
+      title: '删除房间',
+      content: '房间 ' + room + ' 将被关闭并从列表移除，好友将无法再加入',
+      confirmText: '删除',
+      cancelText: '取消',
+      confirmColor: '#e5484d',
+      success: res => {
+        if (!res.confirm) return;
+        wx.showLoading({ title: '删除中…', mask: true });
+        auth.closeRoom(room)
+          .then(() => {
+            snapshot.clear(room);
+            wx.hideLoading();
+            wx.showToast({ title: '已删除', icon: 'success' });
+            this.loadMyRooms();
+          })
+          .catch(() => {
+            wx.hideLoading();
+            wx.showToast({ title: '删除失败，请重试', icon: 'none' });
+          });
+      }
+    });
   },
 
   /** 点击「我的房间」卡片，直接进入对应房间（own=1 标记为房主，可续局/开牌） */

@@ -80,6 +80,7 @@
         <text class="room-no">房间 {{item.roomNo}}</text>
         <text class="room-meta">{{item.maxPlayers}} 人桌 · {{item.durText}} · {{item.liveText}}</text>
       </view>
+      <view class="room-del" catchtap="onCloseRoom" data-room="{{item.roomNo}}">删除</view>
       <view class="room-enter">{{item.live ? '继续' : '进入'}} <text class="chev">›</text></view>
     </view>
   </view>

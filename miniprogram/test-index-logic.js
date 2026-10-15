@@ -38,15 +38,23 @@ let currentPage = null;
 global.Page = cfg => { currentPage = cfg; };
 
 // 桩掉 listMyRooms（避免真实网络请求，验证首页映射逻辑）
+// 两个新鲜房间 + 一个限时已到期的僵尸房（30 分钟房，建于 2 小时前）
 const authMod = require('./utils/auth');
+const NOW = Date.now();
 authMod.auth.listMyRooms = () => Promise.resolve([
-  { room_no: '123456', mode: 'friend', max_players: 6, created_at: '2026-10-13' },
-  { room_no: '654321', mode: 'friend', max_players: 6, created_at: '2026-10-13' }
-]);
+  { room_no: '123456', mode: 'friend', max_players: 6, created_at: new Date(NOW - 3600e3).toISOString() },
+  { room_no: '654321', mode: 'friend', max_players: 6, created_at: new Date(NOW - 3600e3).toISOString() },
+  { room_no: '999999', mode: 'friend', max_players: 6, duration_min: 30, created_at: new Date(NOW - 2 * 3600e3).toISOString() }
+].filter(r => (global.__closed || []).indexOf(r.room_no) === -1));
 // 桩掉 createRoom：记录入参，返回固定房间号（避免真实网络请求）
 authMod.auth.createRoom = (mode, maxPlayers, durationMin) => {
   global.__created = { mode, maxPlayers, durationMin };
   return Promise.resolve({ room_no: '888888' });
+};
+// 桩掉 closeRoom：记录被关闭的房间号（避免真实网络请求）
+authMod.auth.closeRoom = roomNo => {
+  global.__closed = (global.__closed || []).concat(roomNo);
+  return Promise.resolve();
 };
 
 require('./pages/index/index.js');
@@ -134,6 +142,48 @@ const pageCtx = Object.assign({}, cfg, {
   ok(dataStore.sFourColor === true, '四色牌可再次开启');
   pageCtx.onSettingsClose();
   ok(dataStore.setShow === false, '设置弹窗可关闭');
+
+  /* ---------- 僵尸房自动过期 + 手动删除 ---------- */
+  // 过期规则：限时房到期即过期；不限时房 24 小时后过期
+  ok(authMod.auth.roomExpired({ created_at: new Date(NOW - 2 * 3600e3).toISOString(), duration_min: 30 }, NOW) === true,
+    '限时房到期即判定过期');
+  ok(authMod.auth.roomExpired({ created_at: new Date(NOW - 25 * 3600e3).toISOString(), duration_min: 0 }, NOW) === true,
+    '不限时房超 24 小时判定过期');
+  ok(authMod.auth.roomExpired({ created_at: new Date(NOW - 2 * 3600e3).toISOString(), duration_min: 0 }, NOW) === false,
+    '不限时房 24 小时内不过期');
+  ok(authMod.auth.roomExpired({ created_at: '' }, NOW) === false && authMod.auth.roomExpired(null, NOW) === false,
+    '脏数据（空/缺房间）不误判过期');
+
+  // loadMyRooms：僵尸房被过滤并自动关闭 + 清快照，列表只剩 2 条新鲜房
+  global.__storage['poker_room_snap_999999'] = { ts: Date.now(), handNo: 3, seats: [{ seat: 0 }] };
+  global.__closed = [];
+  await pageCtx.loadMyRooms();
+  ok(dataStore.myRooms.length === 2, '过期僵尸房不进列表，剩 2 条: ' + dataStore.myRooms.length);
+  ok(!dataStore.myRooms.find(r => r.roomNo === '999999'), '僵尸房 999999 已被过滤');
+  ok(global.__closed.indexOf('999999') !== -1, '僵尸房 999999 已自动关闭: ' + JSON.stringify(global.__closed));
+  ok(!global.__storage['poker_room_snap_999999'], '僵尸房本地续局快照已清除');
+
+  // 手动删除：确认后关闭房间 + 清快照 + 刷新列表
+  global.__storage['poker_room_snap_123456'] = { ts: Date.now(), handNo: 7, seats: [{ seat: 0, isMe: true }] };
+  await pageCtx.loadMyRooms();
+  ok(dataStore.myRooms.length === 2, '删除前列表 2 条');
+  global.__modalMode = 'confirm';   // 模拟在确认弹窗上点「删除」
+  global.__closed = [];
+  pageCtx.onCloseRoom({ currentTarget: { dataset: { room: '123456' } } });
+  await new Promise(r => setTimeout(r, 60));
+  ok(global.__closed.indexOf('123456') !== -1, '确认删除后关闭云端房间 123456');
+  ok(!global.__storage['poker_room_snap_123456'], '删除后清掉本地续局快照');
+  await new Promise(r => setTimeout(r, 60));
+  ok(dataStore.myRooms.length === 1 && dataStore.myRooms[0].roomNo === '654321',
+    '删除后列表刷新，只剩 654321: ' + JSON.stringify((dataStore.myRooms || []).map(r => r.roomNo)));
+
+  // 取消删除：不关房间
+  global.__modalMode = 'cancel-x';  // 未匹配 confirm/fail → 视为取消
+  global.__closed = [];
+  pageCtx.onCloseRoom({ currentTarget: { dataset: { room: '654321' } } });
+  await new Promise(r => setTimeout(r, 60));
+  ok(global.__closed.length === 0, '取消删除时不关闭房间');
+  ok(dataStore.myRooms.length === 1, '取消删除后列表不变');
 
   if (failures.length === 0) {
     console.log('首页逻辑测试全部通过：' + passes + ' 项断言 ✓');

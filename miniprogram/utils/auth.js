@@ -31,6 +31,9 @@ const CARD_RULES = {
   bonusCap: 5
 };
 
+/** 不限时房间存活上限：24 小时（与本地续局快照 TTL 一致） */
+const ROOM_TTL_MS = 24 * 60 * 60 * 1000;
+
 const auth = {
   /**
    * 微信静默登录
@@ -330,6 +333,20 @@ const auth = {
     const { data, error } = await q;
     if (error) throw new Error(error.message || '读取房间失败');
     return data || [];
+  },
+
+  /**
+   * 房间是否已过期（首页加载列表时据此自动关闭僵尸房）。
+   * 云端没有活动时间字段，规则只能基于 created_at：
+   *  - 限时房（duration_min > 0）：创建时间 + 时长一到即过期（倒计时结束自动收局）；
+   *  - 不限时房：24 小时后过期（与本地续局快照 ROOM_SNAP_TTL 一致）。
+   */
+  roomExpired(r, now) {
+    if (!r || !r.created_at) return false;
+    const t = new Date(r.created_at).getTime();
+    if (isNaN(t)) return false;
+    const dur = (Number(r.duration_min) || 0) * 60 * 1000;
+    return now >= t + (dur || ROOM_TTL_MS);
   },
 
   /** 当前会话（用于鉴权门禁） */

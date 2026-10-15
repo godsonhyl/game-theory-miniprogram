@@ -171,6 +171,14 @@
   display: flex; align-items: center; flex: none; margin-left: 12rpx;
 }
 .room-enter .chev { font-size: 32rpx; line-height: 1; margin-left: 2rpx; }
+/* 删除房间：小号幽灵按钮，红色描边提示破坏性操作 */
+.room-del {
+  flex: none; margin-left: 12rpx; padding: 8rpx 18rpx;
+  font-size: 20rpx; color: #e5484d; font-weight: 600;
+  border: 1rpx solid rgba(229,72,77,.45); border-radius: 999rpx;
+  background: rgba(229,72,77,.08);
+}
+.room-del:active { background: rgba(229,72,77,.2); }
 
 /* 顶部右侧：房卡 + 设置齿轮 */
 .hero-right { display: flex; align-items: center; }

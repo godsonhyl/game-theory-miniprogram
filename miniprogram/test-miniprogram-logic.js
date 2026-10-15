@@ -86,8 +86,10 @@ pageCtx.onLoad();
 
 ok(dataStore.handNo >= 1, '开局后 handNo = ' + dataStore.handNo);
 ok(dataStore.pot === 30, '开局底池 = 30（盲注 10+20），实际 ' + dataStore.pot);
-ok(dataStore.seats.length === 5, '微扑克式分区：seats 只含 5 个对手（我在底部 myzone），实际 ' + dataStore.seats.length);
-ok(dataStore.seats.every(s => s.seat !== 0), 'seats 不含我的座位（0 号位已移到 myzone）');
+ok(dataStore.seats.length === 6, 'WPK 式布局：所有座位（含我）都在牌桌环上，实际 ' + dataStore.seats.length);
+const mySeat0 = dataStore.seats.filter(s => s.seat === 0 && s.isMe)[0];
+ok(!!mySeat0, '我的座位（0 号位）也在牌桌环上（isMe=true）');
+ok(mySeat0 && mySeat0.y > 70, '我的座位锚定在底部中央（y≈' + (mySeat0 && mySeat0.y) + '）');
 ok(Array.isArray(dataStore.myCards), '我的手牌渲染在 myCards');
 ok(typeof dataStore.myStack === 'number' && dataStore.myStack > 0, '我的筹码在 myStack，实际 ' + dataStore.myStack);
 ok(dataStore.board.length === 0, '翻牌前公共牌为空');
@@ -116,7 +118,7 @@ pageCtx.onBack();
 ok(global.__reLaunched || global.__navBack, '返回动作触发 navigateBack 或兜底 reLaunch');
 pageCtx.startGame();
 ok(dataStore.phase === 'playing', '房主点开始后进入牌桌');
-ok(dataStore.seats.length === 1, '2 人局：seats 仅 1 个对手（我方在 myzone），实际 ' + dataStore.seats.length);
+ok(dataStore.seats.length === 2, '2 人局：2 个座位都在牌桌环上（含我），实际 ' + dataStore.seats.length);
 ok(dataStore.myCards.length === 2, '我的两张底牌已在 myzone 渲染，实际 ' + dataStore.myCards.length);
 ok(dataStore.pot === 30, '开局底池 30（盲注 10+20），实际 ' + dataStore.pot);
 
@@ -168,7 +170,7 @@ ok(!!snap && typeof snap.handNo === 'number' && snap.handNo >= 1, '快照记录�
 const handBefore = snap.handNo;
 pageCtx.onLoad({ room: '246810', own: '1' });
 ok(dataStore.phase === 'playing', '再次进入房间直接回到牌桌（不再退回等待室）');
-ok(dataStore.seats.length === 1, '续局保留原座位数（对手 1 人），实际 ' + dataStore.seats.length);
+ok(dataStore.seats.length === 2, '续局保留原座位数（2 个座位都在环上），实际 ' + dataStore.seats.length);
 ok(dataStore.handNo === handBefore, '续局从第 ' + handBefore + ' 手继续，实际 ' + dataStore.handNo);
 ok(toasts.indexOf('已回到房间 · 第 ' + handBefore + ' 手') >= 0, '续局提示文案正确: ' + toasts.slice(-1)[0]);
 
@@ -221,7 +223,7 @@ pageCtx.addBot();
 pageCtx.startGame();
 ok(dataStore.phase === 'playing', '带时长的房间开局进入牌桌');
 ok(dataStore.remainSec === 1800, '开局倒计时 1800 秒，实际 ' + dataStore.remainSec);
-ok(dataStore.seats.length === 1, '4 人桌 2 人入局（对手 1 人），实际 ' + dataStore.seats.length);
+ok(dataStore.seats.length === 2, '4 人桌 2 人入局（2 个座位都在环上），实际 ' + dataStore.seats.length);
 pageCtx.endGame();
 ok(dataStore.timeUp === true, '到点后置 timeUp');
 ok(!!dataStore.summary && dataStore.summary.title.indexOf('时长已到') > 0, '生成结束结算面板');
@@ -403,6 +405,13 @@ while (guard++ < 400) {
     if (winRows.length) {
       ok(winRows.every(r => typeof r.gain === 'number'), '赢家行均有 gain 金额');
     }
+
+    /* ---------- ⑧ 结算条（resultbar）：短文本与投入字段 ---------- */
+    ok(result.rows.every(r => typeof r.short === 'string' && r.short.length > 0 && r.short.indexOf('undefined') < 0),
+      '结算行带 short 短文本（摊牌=牌型名，未摊牌=底牌文本），实际 ' +
+      JSON.stringify(result.rows.map(r => r.short)));
+    ok(result.rows.every(r => typeof r.committed === 'number' && r.committed >= 0),
+      '结算行带 committed（本手总投入，供飞筹动画）');
   }
 
   ok(myActions > 0, 'AI 推进中我方被要求行动 ' + myActions + ' 次');
@@ -452,8 +461,11 @@ while (guard++ < 400) {
 
   /* ---------- 微扑克式分区：折叠面板 ---------- */
   ok(dataStore.chatOpen === false && dataStore.menuOpen === false, '聊天与菜单默认折叠（不抢占主视觉）');
-  ok(Array.isArray(dataStore.raisePresets) && dataStore.raisePresets.length === 4,
-    '加注档位 4 档（最小 / ½池 / 底池 / 全下）');
+  ok(Array.isArray(dataStore.raisePresets) && dataStore.raisePresets.length === 5,
+    '加注档位 5 档（最小 / ½池 / 底池 / 全下 / 自定义）');
+  ok(Array.isArray(dataStore.raisePresets) &&
+    dataStore.raisePresets[4].k === 'custom' && dataStore.raisePresets[4].t === '自定义',
+    '第 5 档为「自定义」入口（展开 0~MAX 连续可调的金额面板）');
   pageCtx.toggleChat();
   ok(dataStore.chatOpen === true && dataStore.menuOpen === false, '点 💬 展开聊天并收起菜单');
   pageCtx.toggleMenu();
@@ -465,10 +477,10 @@ while (guard++ < 400) {
   pageCtx.onLoad({ room: '111111', own: '1', max: '9' });
   for (let i = 0; i < 8; i++) pageCtx.addBot();
   pageCtx.startGame();
-  ok(dataStore.seats.length === 8, '9 人局：8 个对手渲染在椭圆上半环，实际 ' + dataStore.seats.length);
+  ok(dataStore.seats.length === 9, '9 人局：9 个座位（含我）都在牌桌环上，实际 ' + dataStore.seats.length);
   const posKeys = dataStore.seats.map(s => s.x + ',' + s.y);
-  ok(new Set(posKeys).size === 8, '9 人局 8 个座位坐标互不重合');
-  ok(dataStore.seats.every(s => s.y >= 19 && s.y <= 62), '9 人局座位 y 均落在安全区（不被扁椭圆裁切）');
+  ok(new Set(posKeys).size === 9, '9 人局 9 个座位坐标互不重合');
+  ok(dataStore.seats.every(s => s.y >= 14 && s.y <= 82), '9 人局座位 y 均落在安全区（不被扁椭圆裁切）');
   ok(dataStore.seats.every(s => s.x >= 5 && s.x <= 95), '9 人局座位 x 均在画布内');
   ok(dataStore.myCards.length === 2, '9 人局我的手牌仍在底部 myzone');
   ok(dataStore.myCards.every(c => !!c.rank && !!c.suit && !!c.cls),
@@ -509,12 +521,166 @@ while (guard++ < 400) {
     path.join(__dirname, 'pages', 'table', 'table.wxml'), 'utf8');
   const standCount = (wxmlSrc.match(/站起退出本局/g) || []).length;
   ok(standCount >= 3, '「站起退出本局」至少 3 处入口（结算面板 / 局内弃牌后 / 菜单），实际 ' + standCount + ' 处');
-  ok(wxmlSrc.indexOf('result-btn ghost') >= 0, '结算面板含「站起退出本局」ghost 按钮（摊牌后可直接点）');
+  ok(wxmlSrc.indexOf('rb-btn ghost') >= 0, '结算条含「站起退出本局」ghost 按钮（摊牌后可直接点）');
   ok(wxmlSrc.indexOf('stand-link') >= 0, '局内弃牌后含「站起退出本局」行内入口');
   ok(wxmlSrc.indexOf('用右侧「站起退出本局」') < 0, '退出弹窗文案不再指向已删除的右栏');
   const sitCount = (wxmlSrc.match(/坐下加入游戏/g) || []).length;
   ok(sitCount >= 3, '「坐下加入游戏」至少 3 处入口（局内观战 / 就绪面板 / 菜单），实际 ' + sitCount + ' 处');
   ok((wxmlSrc.match(/onMenuSit/g) || []).length >= 3, 'onMenuSit 绑定覆盖观战、就绪面板与菜单');
+
+  /* ---------- ⑧ 结算条改版（resultbar）：文档流布局，不遮牌 ---------- */
+  ok(wxmlSrc.indexOf('result-banner') < 0, '旧的大弹窗 result-banner 已从 WXML 移除');
+  ok(wxmlSrc.indexOf('class="resultbar"') >= 0, '新增横向紧凑结算条 .resultbar');
+  ok(wxmlSrc.indexOf('resultbar') > wxmlSrc.indexOf('<!-- /felt -->'),
+    '回归护栏：结算条必须位于牌桌区（felt）之后，走文档流而非绝对定位浮层');
+  ok(wxmlSrc.indexOf('badge ready') >= 0 && wxmlSrc.indexOf('badge prewait') >= 0,
+    '就绪状态上座位：各座位亮出「已准备/准备中」徽章（不再在底部条逐人罗列）');
+  ok(wxmlSrc.indexOf('item.ready === true') >= 0, '座位徽章按就绪状态二态切换（true=已准备 / false=准备中）');
+  const wxssSrc = require('fs').readFileSync(
+    path.join(__dirname, 'pages', 'table', 'table.wxss'), 'utf8');
+  ok(wxssSrc.indexOf('.result-banner') < 0 && wxssSrc.indexOf('.result-btn') < 0,
+    '旧弹窗样式 .result-banner / .result-btn 已从 WXSS 删除');
+  ok(wxssSrc.indexOf('.resultbar {') >= 0, 'WXSS 新增 .resultbar 样式');
+  ok(/\.resultbar\s*\{[^}]*12 \* var\(--uh\)/.test(wxssSrc), '结算条高度约 12uh（横向紧凑条，纵向压缩后适配扁屏）');
+  ok(wxssSrc.indexOf('.rc-chip') >= 0 && wxssSrc.indexOf('.rb-btn') >= 0,
+    '结算条含胶囊（rc-chip）与按钮（rb-btn）样式');
+
+  /* ---------- ⑨ 运行时环境守卫：禁止裸 process 引用 ---------- */
+  // 微信小程序没有 process 全局对象（Node 测试里一切正常）——一旦源码里
+  // 残留 process.env 调试语句，真机上直接 ReferenceError，且往往发生在
+  // render 等关键链路上，全局回退等待室。此处静态扫描运行时源码防复发。
+  {
+    const fs = require('fs');
+    const scanDirs = ['pages', 'utils', 'core', 'components'];
+    const bad = [];
+    const walk = dir => {
+      let entries = [];
+      try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch (e) { return; }
+      entries.forEach(en => {
+        const p = path.join(dir, en.name);
+        if (en.isDirectory()) walk(p);
+        else if (/\.js$/.test(en.name) && en.name.indexOf('test-') !== 0) {
+          const src = fs.readFileSync(p, 'utf8');
+          if (/(^|[^\w.])process\s*\./.test(src)) bad.push(path.relative(__dirname, p));
+        }
+      });
+    };
+    scanDirs.forEach(d => walk(path.join(__dirname, d)));
+    ok(bad.length === 0, '小程序运行时源码无裸 process 引用（真机无 process 全局）' +
+      (bad.length ? '，违规文件: ' + bad.join(', ') : ''));
+  }
+
+  /* ---------- ⑩ 结算展示阶段：摊牌后停留 ~5s 展示每人盈亏，再进就绪 ---------- */
+  const tableSrc = require('fs').readFileSync(
+    path.join(__dirname, 'pages', 'table', 'table.js'), 'utf8');
+  ok(/RESULT_SHOW_MS = 5000/.test(tableSrc), '结算展示时长常量 RESULT_SHOW_MS = 5000ms');
+  ok(tableSrc.indexOf('this.resultShowMs || RESULT_SHOW_MS') >= 0,
+    '一手结束后延迟进入就绪阶段（结算展示可被测试覆盖缩短）');
+  ok(tableSrc.indexOf("p.folded ? '弃牌'") >= 0,
+    '结算行覆盖弃牌者（未摊牌的弃牌者显示「弃牌」而非消失）');
+  ok(wxmlSrc.indexOf("item.net > 0 ? '+' + item.net") >= 0,
+    '结算胶囊显示每人净盈亏（赢 +N / 输 -N / 平 ±0）');
+  ok(wxssSrc.indexOf('.rc-gain.plus') >= 0 && wxssSrc.indexOf('.rc-gain.minus') >= 0,
+    '盈亏配色样式：赢（金）/ 输（红灰）');
+
+  /* ---------- ⑩+ 单手结算弹窗：亮牌展示后独立弹窗显示每人净盈亏 ---------- */
+  // 时序：摊牌亮牌在牌桌上停留 ~5s（不遮底牌）→ 弹出结算弹窗（逐人 net）
+  // → 弹窗停留 10s 自动关闭进入就绪阶段（防无人操作卡局）。
+  ok(/RESULT_MODAL_MS = 10000/.test(tableSrc), '结算弹窗自动关闭时长常量 RESULT_MODAL_MS = 10000ms');
+  ok(tableSrc.indexOf('showResultModal') >= 0 && tableSrc.indexOf('closeResultModal') >= 0,
+    '结算弹窗开/关方法齐备（showResultModal / closeResultModal）');
+  ok(tableSrc.indexOf('resultModalHand') >= 0,
+    '每手只调度一次结算弹窗（resultModalHand 守卫，镜像端轮询不重弹）');
+  ok(tableSrc.indexOf('resultModal: this.data.result') >= 0,
+    '弹窗复用 buildResult 的每人净盈亏数据');
+  ok(tableSrc.indexOf('isMe: p.seat === this.mySeat') >= 0, '结算弹窗高亮我的行（rows 带 isMe）');
+  ok(tableSrc.indexOf('onResultNext') >= 0,
+    '弹窗按钮：房主/本地 = 下一手进就绪计票，镜像端 = 知道了仅关闭');
+  ok(wxmlSrc.indexOf('wx:if="{{resultModal}}"') >= 0, 'WXML 新增独立结算弹窗（resultModal）');
+  ok(wxmlSrc.indexOf('查看结算') >= 0, '亮牌展示期摘要条提供「查看结算」立即弹窗入口');
+  ok(wxmlSrc.indexOf("{{remoteMode ? '知道了' : '下一手'}}") >= 0,
+    '弹窗按钮文案按端区分（镜像端「知道了」/ 房主「下一手」）');
+  ok(wxmlSrc.indexOf('sr-hand') >= 0 && wxssSrc.indexOf('.sr-hand') >= 0,
+    '结算弹窗行显示牌型/状态列（sr-hand 样式齐备）');
+  ok(wxmlSrc.indexOf('wx:elif="{{result}}"') >= 0,
+    '结算摘要条与就绪条互斥切换（亮牌期不出现逐人盈亏胶囊）');
+
+  /* ---------- ⑪ 参照 WePoker 的牌桌细节：买入入座 / 状态徽章 / 中央筹码堆 ---------- */
+  ok(wxmlSrc.indexOf('buyin-dialog') >= 0 && wxmlSrc.indexOf('confirmBuyIn') >= 0,
+    '入座流程：点空位 → 选买入额 → 入座');
+  ok(tableSrc.indexOf('BUY_IN_OPTIONS') >= 0 && /DEFAULT_BUY_IN = 1000/.test(tableSrc),
+    '买入档位常量与默认买入 1000');
+  ok(/stack: Number\(s\.stack\) \|\| DEFAULT_BUY_IN/.test(tableSrc),
+    '开局按各人买入额发筹码（未指定回落默认）');
+  ok(wxmlSrc.indexOf('badge allin') >= 0 && wxmlSrc.indexOf('badge fold') >= 0,
+    '座位状态徽章：ALL-IN / 弃牌');
+  ok(wxmlSrc.indexOf('seat-win') >= 0 && tableSrc.indexOf('winGain') >= 0,
+    '摊牌后赢家座位直接飘出赢得筹码');
+  ok(wxssSrc.indexOf('.pot-chip') >= 0 && wxssSrc.indexOf('.bet-chip') >= 0,
+    '中央底池与下注筹码堆采用筹码图标（WPK 风格）');
+
+  /* ---------- ⑫ WPK 式布局回归：统一座位环 + 座位号 + 牌背 + 弃牌二次确认 ---------- */
+  // 复用上方已读取的 tableSrc / wxmlSrc / wxssSrc
+
+  // ① 已移除旧的双坐标系（oppPos / genRing），统一为 ringPositions
+  ok(!/function oppPos\(/.test(tableSrc), '已移除旧对手布局函数 oppPos（统一座位环）');
+  ok(!/function genRing\(/.test(tableSrc), '已移除旧的等待室布局函数 genRing');
+  ok(/function ringPositions\(/.test(tableSrc), '存在统一座位环函数 ringPositions（锚定我的座位为底部中央）');
+
+  // ② 渲染所有玩家（含我）都在环上：render 用 ringPositions(allSeats, mySeat)
+  ok(/ringPositions\(allSeats, this\.mySeat\)/.test(tableSrc), 'render 用 ringPositions 含我的座位（WPK 式：我也在牌桌环上）');
+  ok(/buildWaitSeats[\s\S]*ringPositions\(list\.map\(s => s\.seat\)/.test(tableSrc), '等待室 buildWaitSeats 用 ringPositions（开局坐标连续无跳变）');
+
+  // ③ 座位号 / 牌背 / 弃牌确认在视图与样式中
+  ok(/item\.seatNo/.test(wxmlSrc), 'WXML：每个座位展示座位号 seatNo');
+  ok(/item\.cardsBack/.test(wxmlSrc), 'WXML：对手未摊牌时展示牌背 cardsBack');
+  ok(/card-xs back/.test(wxmlSrc), 'WXML：牌背用小牌样式 card-xs back');
+  ok(/\.seat-no\s*\{/.test(wxssSrc), 'WXSS：存在座位号样式 .seat-no');
+  ok(/ab-fold\.confirm/.test(wxssSrc), 'WXSS：存在弃牌确认态样式 .ab-fold.confirm');
+
+  // ④ 弃牌二次确认逻辑
+  ok(/onFold\(\)\s*\{[\s\S]*foldConfirm/.test(tableSrc), 'onFold 实现弃牌二次确认（首次进入确认态）');
+  ok(/clearFoldTimer\(\)/.test(tableSrc), '存在弃牌确认计时器清理 clearFoldTimer');
+  ok(/foldConfirm: isMyTurn \? this\.data\.foldConfirm : false/.test(tableSrc), '非我回合自动解除弃牌确认态');
+
+  // ⑤ 行为验证：首次点弃牌只是进入确认态，不真正弃牌
+  pageCtx.data.isMyTurn = true;
+  pageCtx.data.foldConfirm = false;
+  const beforeStack = dataStore.seats.length; // 占位：确认态不应改变牌桌
+  pageCtx.onFold();
+  ok(pageCtx.data.foldConfirm === true, '首次点「弃牌」进入确认态（不直接弃牌）');
+  pageCtx.onFold();
+  ok(pageCtx.data.foldConfirm === false, '确认态内再点「弃牌」才真正执行（确认态复位）');
+
+  /* ---------- 自定义下注金额（0 ~ MAX 全下） ---------- */
+  const tableWxss = require('fs').readFileSync(
+    path.join(__dirname, 'pages', 'table', 'table.wxss'), 'utf8');
+  // 三层一致性守卫：本轮 bug 正是「JS/WXML 已改、WXSS 漏改」导致面板裸奔
+  ok(/class="raise-custom"/.test(wxmlSrc), 'WXML：存在自定义下注面板容器 .raise-custom');
+  ['rc-head', 'rc-label', 'rc-input', 'rc-max', 'rc-slider', 'rc-quick', 'rc-q'].forEach(cls => {
+    ok(new RegExp('\\.' + cls + '\\s*[,{]').test(tableWxss), 'WXSS：自定义面板样式齐全 .' + cls);
+  });
+  // 面板必须独立成行（不能塞进固定高度的 mybar 里挤压手牌区）
+  ok(wxmlSrc.indexOf('</view>\n\n      <!-- 行动条') > 0 && wxmlSrc.indexOf('class="raise-custom"') > wxmlSrc.indexOf('class="mybar"'),
+    'WXML：自定义面板独立成行且位于 mybar 之后（不挤占手牌区高度）');
+  // 事件绑定与实现一一对应（onCustomTap 由「自定义」档经 onPresetTap 间接调用，故分开校验）
+  ['onRaiseSlider', 'onRaiseInput', 'onCustomMin', 'onCustomHalf', 'onCustomPot', 'onCustomMax'].forEach(fn => {
+    ok(wxmlSrc.indexOf(fn) >= 0 && new RegExp('\\n  ' + fn + '\\(').test(tableSrc),
+      '自定义下注：WXML 绑定 ' + fn + ' 且 JS 已实现');
+  });
+  ok(/data-v="\{\{item\.k\}\}" bindtap="onPresetTap"/.test(wxmlSrc) &&
+    /\n  onPresetTap\(/.test(tableSrc) && /\n  onCustomTap\(/.test(tableSrc) &&
+    /if \(v === 'custom'\) \{ this\.onCustomTap\(\); return; \}/.test(tableSrc),
+    '自定义下注：「自定义」档经 onPresetTap → onCustomTap 展开面板');
+  ok(/onRaiseChange/.test(tableSrc) === false && /onRaiseChange/.test(wxmlSrc) === false,
+    '旧滑杆回调 onRaiseChange 已彻底移除（无死代码/无悬空绑定）');
+  // 滑杆范围 = 0 ~ raiseMax(全下)，且按钮文案与实际提交口径一致
+  ok(/min="0" max="\{\{raiseMax\}\}"/.test(wxmlSrc), 'WXML：滑杆范围 0 ~ 最大(全下金额)');
+  ok(/raiseSubmit/.test(tableSrc) && /raiseAllIn/.test(tableSrc),
+    'render 计算 raiseSubmit / raiseAllIn（按钮文案与实际提交同口径）');
+  ok(/raiseAllIn \? '全下'/.test(wxmlSrc), 'WXML：加注按钮按 raiseAllIn 显示「全下」');
+  ok(/Math\.max\(legal\.minRaiseTo, Math\.round\(this\.data\.raiseTo \|\| 0\)\)/.test(tableSrc),
+    'onRaise 钳制口径：低于最小加注按最小值提交（滑杆拖到 0 不会真的下 0）');
 
   /* ---------- 输出 ---------- */
   console.log('\n' + '='.repeat(52));

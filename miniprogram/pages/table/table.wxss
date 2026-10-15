@@ -17,11 +17,12 @@
   --mut: #93a5a0;    /* 次要文字 */
   --gold: #e8a33d;   /* 唯一高亮色（金橙） */
   height: calc(100 * var(--uh));
+  box-sizing: border-box;   /* 关键：padding 计入高度，否则 100uh + 上下 padding 会把底部按钮顶出屏幕 */
   background:
     radial-gradient(ellipse at 22% 0%, rgba(232,163,61,.05) 0%, transparent 55%),
     radial-gradient(ellipse at 78% 100%, rgba(47,158,110,.05) 0%, transparent 55%),
     linear-gradient(180deg, #101c19 0%, #0b1412 100%);
-  padding: calc(1.2 * var(--uh)) calc(1.4 * var(--uw));
+  padding: calc(0.8 * var(--uh)) calc(1.4 * var(--uw));
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -29,7 +30,7 @@
 
 /* ---------- 顶栏 ---------- */
 .topbar {
-  height: calc(6.4 * var(--uh)); flex-shrink: 0;
+  height: calc(5.6 * var(--uh)); flex-shrink: 0;
   display: flex; align-items: center; justify-content: space-between;
   padding: 0 calc(0.6 * var(--uw));
 }
@@ -92,7 +93,8 @@
 /* ---------- 牌桌（上半区：对手） ---------- */
 .felt {
   flex: 1; min-height: 0; position: relative; width: 100%;
-  margin-top: calc(0.8 * var(--uh));
+  margin-top: calc(0.6 * var(--uh));
+  box-sizing: border-box;   /* 边框计入尺寸，不再额外撑出 1.6uh */
   background:
     radial-gradient(ellipse at 50% 40%, rgba(255,255,255,.05) 0%, transparent 55%),
     radial-gradient(ellipse at 50% 44%, #25604f 0%, #1a4438 45%, #0d2822 100%);
@@ -171,6 +173,13 @@
 .card-xs { width: calc(8.4 * var(--uh)); height: calc(11.8 * var(--uh)); border-radius: calc(1.6 * var(--uh)); }
 .card-xs .r { font-size: calc(3.6 * var(--uh)); }
 .card-xs .s { font-size: calc(3 * var(--uh)); }
+/* 座位卡上的暗牌（仍在手，未摊牌）：统一用牌背 */
+.card-xs.back {
+  background:
+    repeating-linear-gradient(45deg, rgba(255,255,255,.05) 0 calc(1.2 * var(--uh)), transparent calc(1.2 * var(--uh)) calc(2.4 * var(--uh))),
+    linear-gradient(160deg, #2e5290, #1c3763);
+  border: 2rpx solid rgba(232,238,245,.7);
+}
 
 .card.back {
   background:
@@ -198,6 +207,16 @@
 }
 .seat.folded { opacity: .38; }
 .seat.standing { opacity: .42; }
+
+/* 座位号（WPK 式：每个座位标位号，便于好友按号入座） */
+.seat-no {
+  position: absolute; top: calc(-2.2 * var(--uh)); left: calc(-3.4 * var(--uh));
+  min-width: calc(4.2 * var(--uh)); height: calc(4.2 * var(--uh)); padding: 0 calc(0.6 * var(--uh));
+  border-radius: 999rpx; background: rgba(10,20,17,.9);
+  border: 1rpx solid rgba(255,255,255,.18);
+  display: flex; align-items: center; justify-content: center;
+  font-size: calc(2.6 * var(--uh)); color: rgba(255,255,255,.62); z-index: 5; flex-shrink: 0;
+}
 
 .seat-bet {
   font-size: calc(2.8 * var(--uh)); color: #ffd98a; background: rgba(5,16,13,.9);
@@ -258,6 +277,16 @@
   font-size: calc(2.4 * var(--uh)); color: #7d8f8a; flex: none; margin-left: calc(0.8 * var(--uw));
   padding: 0 calc(1 * var(--uw)); border: 1rpx solid rgba(255,255,255,.14); border-radius: 999rpx;
 }
+/* 位置标记 SB/BB（庄家 D 在头像右上角） */
+.pos-tags { display: flex; align-items: center; margin-top: calc(0.4 * var(--uh)); }
+.pos-tags.mine { margin: 0 calc(1.2 * var(--uw)) 0 0; }
+.pos-tag {
+  font-size: calc(2.2 * var(--uh)); font-weight: 700; color: #ffd98a;
+  background: rgba(232,163,61,.16); border: 1rpx solid rgba(232,163,61,.45);
+  border-radius: 999rpx; padding: 0 calc(1.2 * var(--uw)); margin-right: calc(0.6 * var(--uw));
+  line-height: calc(3.4 * var(--uh)); flex: none;
+}
+.pos-tag.d { background: linear-gradient(160deg, #f4d78a, #d9a441); color: #1a1a1a; border-color: #fff; }
 .seat-cards { display: flex; margin-top: calc(0.6 * var(--uh)); }
 .seat-cards .card-xs { margin-right: calc(0.8 * var(--uw)); }
 
@@ -271,36 +300,71 @@
 .act-r { background: linear-gradient(160deg, #c98a2a, #a76d15); }
 .act-a { background: linear-gradient(160deg, #e56a58, #c44a3a); }
 
-/* ---------- 结算弹窗 ---------- */
-.result-banner {
-  position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%);
-  background: rgba(8,22,18,.97); border: 1rpx solid rgba(232,163,61,.6);
-  box-shadow: 0 calc(3 * var(--uh)) calc(10 * var(--uh)) rgba(0,0,0,.75);
-  border-radius: calc(4 * var(--uh)); padding: calc(3.6 * var(--uh)) calc(9 * var(--uw));
-  text-align: center; min-width: 360rpx; z-index: 20;
+/* ---------- 就绪条（牌桌下沿 · 文档流 · 约 12uh） ----------
+ * 结算摘要条同样走文档流；每人盈亏明细改为独立结算弹窗（resultModal），
+ * 弹窗在摊牌亮牌展示约 5s 后才弹出——先亮牌后弹窗，不遮各家底牌。 */
+.resultbar {
+  flex-shrink: 0; display: flex; align-items: center;
+  height: calc(12 * var(--uh)); box-sizing: border-box; margin-top: calc(0.6 * var(--uh));
+  background: linear-gradient(180deg, rgba(8,22,18,.94), rgba(8,22,18,.8));
+  border: 1rpx solid rgba(232,163,61,.42); border-radius: calc(2.4 * var(--uh));
+  padding: 0 calc(1.8 * var(--uw));
 }
-.result-title {
-  display: block; font-size: calc(5.4 * var(--uh)); font-weight: 700; margin-bottom: calc(2.4 * var(--uh));
-  color: var(--gold);
+.rb-title {
+  flex: none; font-size: calc(3.4 * var(--uh)); font-weight: 700; color: var(--gold);
+  margin-right: calc(2.2 * var(--uw)); white-space: nowrap;
 }
-.result-rows { display: flex; flex-direction: column; margin-bottom: calc(2 * var(--uh)); max-height: calc(34 * var(--uh)); overflow: hidden; }
-.result-row { display: flex; align-items: center; justify-content: center; margin-bottom: calc(1 * var(--uh)); }
-.rr-name { font-size: calc(3.8 * var(--uh)); color: #cfe0d9; margin-right: calc(2.6 * var(--uw)); }
-.rr-hand { font-size: calc(3.4 * var(--uh)); color: var(--mut); }
-.rr-gain { font-size: calc(3.8 * var(--uh)); color: var(--gold); font-weight: 700; margin-left: calc(2.6 * var(--uw)); }
-.result-row.is-win .rr-name { color: var(--gold); font-weight: 700; }
-.result-net { display: block; font-size: calc(3.8 * var(--uh)); color: var(--mut); margin-bottom: calc(2.4 * var(--uh)); }
-.result-btn {
-  width: 200rpx; line-height: calc(12 * var(--uh)); font-size: calc(4.8 * var(--uh)); font-weight: 700; color: #1a1a1a;
+.rb-sub {
+  flex: 1 1 0; min-width: 0; font-size: calc(2.7 * var(--uh)); color: var(--mut);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.rb-scroll { flex: 1 1 0; min-width: 0; height: calc(9.8 * var(--uh)); display: flex; align-items: center; }
+.rc-chip {
+  flex: none; display: flex; align-items: center; height: calc(7.8 * var(--uh));
+  padding: 0 calc(2.2 * var(--uw)); margin-right: calc(1.4 * var(--uw));
+  background: rgba(255,255,255,.06); border: 1rpx solid rgba(255,255,255,.12);
+  border-radius: 999rpx;
+}
+.rc-chip.win { background: rgba(232,163,61,.16); border-color: rgba(232,163,61,.55); }
+.rc-chip.on { background: rgba(232,163,61,.14); border-color: rgba(232,163,61,.5); }
+.rc-name {
+  font-size: calc(2.9 * var(--uh)); color: #cfe0d9; margin-right: calc(1.2 * var(--uw));
+  max-width: 92rpx; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.rc-chip.win .rc-name { color: var(--gold); font-weight: 700; }
+.rc-hand { font-size: calc(2.7 * var(--uh)); color: var(--mut); margin-right: calc(1 * var(--uw)); white-space: nowrap; }
+.rc-gain { font-size: calc(3 * var(--uh)); color: var(--gold); font-weight: 700; white-space: nowrap; }
+/* 净盈亏配色：赢 = 金色（+N，中文市场赢为暖色），输 = 灰红，平 = 暗色 */
+.rc-gain.plus { color: var(--gold); }
+.rc-gain.minus { color: rgba(224, 108, 96, 0.95); }
+.rc-gain:not(.plus):not(.minus) { color: rgba(255, 255, 255, 0.45); }
+.rc-dot {
+  width: calc(1.5 * var(--uh)); height: calc(1.5 * var(--uh)); border-radius: 50%;
+  background: rgba(255,255,255,.28); margin-right: calc(1 * var(--uw)); flex: none;
+}
+.rc-chip.on .rc-dot { background: var(--gold); }
+.rc-state { font-size: calc(2.7 * var(--uh)); color: var(--mut); white-space: nowrap; }
+.rc-chip.on .rc-state { color: var(--gold); }
+.rb-right { flex: none; display: flex; flex-direction: column; align-items: flex-end; margin-left: calc(2 * var(--uw)); }
+.rb-net { font-size: calc(2.9 * var(--uh)); color: var(--mut); white-space: nowrap; }
+.rb-hint {
+  font-size: calc(2.9 * var(--uh)); color: var(--mut); white-space: nowrap;
+  max-width: calc(26 * var(--uw)); overflow: hidden; text-overflow: ellipsis;
+}
+.rb-btns { display: flex; align-items: center; margin-top: calc(0.6 * var(--uh)); }
+.rb-btn {
+  flex: none; margin-left: calc(1.4 * var(--uw));
+  line-height: calc(7.8 * var(--uh)); padding: 0 calc(3 * var(--uw));
+  font-size: calc(3.2 * var(--uh)); font-weight: 700; color: #1a1a1a;
   background: linear-gradient(160deg, #f4d78a, #d9a441 60%, #b8791f);
-  border: none; border-radius: calc(2.6 * var(--uh));
+  border: none; border-radius: calc(1.8 * var(--uh)); white-space: nowrap;
 }
-.result-btn::after { border: none; }
-/* 摊牌面板里的次要按钮：站起退出本局（金边 ghost，不抢「下一手」主按钮） */
-.result-btn.ghost {
+.rb-btn::after { border: none; }
+.rb-btn.ghost {
   background: transparent; color: var(--gold);
-  border: 1rpx solid rgba(232,163,61,.55);
+  border: 1rpx solid rgba(232,163,61,.55); line-height: calc(7 * var(--uh));
 }
+.rb-wait { margin-left: calc(1.4 * var(--uw)); font-size: calc(3 * var(--uh)); color: var(--gold); white-space: nowrap; }
 /* 局内（已弃牌/本手结束未结算时）行内站起入口 */
 .stand-link {
   flex: none; margin-left: calc(1.6 * var(--uw));
@@ -308,51 +372,27 @@
   border: 1rpx solid rgba(232,163,61,.45); border-radius: calc(1.6 * var(--uh));
   padding: calc(0.5 * var(--uh)) calc(1.8 * var(--uw));
 }
-.stand-inline {
-  color: var(--gold); margin-left: calc(1.2 * var(--uw));
-  border-bottom: 1rpx solid rgba(232,163,61,.6);
-}
-
-/* 就绪阶段：上一手结束后等所有人「准备就绪」才发下一手 */
-.ready-list {
-  display: flex; flex-wrap: wrap; justify-content: center;
-  max-width: 520rpx; margin-bottom: calc(1.6 * var(--uh));
-}
-.ready-row {
-  display: flex; align-items: center; margin: 0 calc(1.2 * var(--uw)) calc(0.8 * var(--uh));
-  padding: calc(0.4 * var(--uh)) calc(1.8 * var(--uw)); border-radius: 999rpx;
-  background: rgba(255,255,255,.06); border: 1rpx solid rgba(255,255,255,.1);
-}
-.ready-row.on { background: rgba(232,163,61,.16); border-color: rgba(232,163,61,.5); }
-.rd-dot {
-  width: calc(1.6 * var(--uh)); height: calc(1.6 * var(--uh)); border-radius: 50%;
-  background: rgba(255,255,255,.28); margin-right: calc(1.2 * var(--uw)); flex: none;
-}
-.ready-row.on .rd-dot { background: var(--gold); }
-.rd-name { font-size: calc(3 * var(--uh)); color: #cfe0d9; margin-right: calc(1.2 * var(--uw)); }
-.rd-state { font-size: calc(2.8 * var(--uh)); color: var(--mut); }
-.ready-row.on .rd-state { color: var(--gold); }
-.ready-hint {
-  display: block; font-size: calc(3 * var(--uh)); color: var(--mut);
-  margin-bottom: calc(1.8 * var(--uh)); text-align: center;
-}
-.ready-wait {
-  font-size: calc(3.4 * var(--uh)); color: var(--gold); padding: calc(1 * var(--uh)) 0;
-}
-
 /* ---------- 我的区域（下半区） ---------- */
 .myzone {
-  flex-shrink: 0; margin-top: calc(1.2 * var(--uh));
+  flex-shrink: 0; margin-top: calc(0.8 * var(--uh));
   display: flex; flex-direction: column;
 }
 .mybar {
   display: flex; align-items: center;
-  height: calc(16 * var(--uh));
+  height: calc(14.5 * var(--uh));
+  box-sizing: border-box;
   background: linear-gradient(170deg, rgba(255,255,255,.05), rgba(255,255,255,.02));
   border: 1rpx solid rgba(255,255,255,.09);
   border-radius: calc(2.8 * var(--uh));
   padding: 0 calc(2.4 * var(--uw));
 }
+.mybar .card {
+  /* 我的手牌比公共牌小一号，完整收进 mybar 不外溢 */
+  width: calc(10.6 * var(--uh)); height: calc(14 * var(--uh)); border-radius: calc(1.8 * var(--uh));
+}
+.mybar .card .r { font-size: calc(4.4 * var(--uh)); }
+.mybar .card .s { font-size: calc(3.6 * var(--uh)); }
+.mybar .card.back { border-width: 2rpx; }
 .mycards { display: flex; align-items: center; flex: none; }
 .mycards .card { margin-right: calc(1.2 * var(--uw)); }
 .mycards.folded { opacity: .35; }
@@ -384,18 +424,81 @@
 .ms-v { font-size: calc(4.4 * var(--uh)); font-weight: 800; color: var(--gold); line-height: 1.1; }
 .ms-l { font-size: calc(2.4 * var(--uh)); color: var(--mut); }
 
-/* 行动条：三个大按钮 + 拉大间距（微扑克：防误触） */
-.actbar { display: flex; margin-top: calc(1.2 * var(--uh)); }
+/* ---------- 自定义下注面板（0 ~ MAX=全下） ----------
+ * 独立成行插在 mybar 与 actbar 之间，不占手牌区高度；牌桌 felt(flex:1) 自动让位。
+ * 高度控制在 ~15uh 内，19.5:9 扁屏也不会把行动条顶出视口。 */
+.raise-custom {
+  flex-shrink: 0;
+  margin-top: calc(0.8 * var(--uh));
+  padding: calc(1.2 * var(--uh)) calc(2.4 * var(--uw)) calc(1.4 * var(--uh));
+  box-sizing: border-box;
+  background: linear-gradient(170deg, rgba(255,255,255,.06), rgba(255,255,255,.02));
+  border: 1rpx solid rgba(232,163,61,.28);
+  border-radius: calc(2.4 * var(--uh));
+}
+/* 标题行：标签 + 数字输入框 + 上下限说明 */
+.rc-head {
+  display: flex; align-items: center;
+  height: calc(4.4 * var(--uh));
+}
+.rc-label {
+  flex: none; font-size: calc(3 * var(--uh)); color: var(--mut); margin-right: calc(2 * var(--uw));
+}
+.rc-input {
+  flex: none;
+  width: calc(17 * var(--uw)); height: calc(4.4 * var(--uh));
+  box-sizing: border-box; padding: 0 calc(1.4 * var(--uw));
+  font-size: calc(3.4 * var(--uh)); font-weight: 700; color: var(--gold);
+  text-align: center;
+  background: rgba(0,0,0,.35);
+  border: 1rpx solid rgba(232,163,61,.5);
+  border-radius: calc(1.4 * var(--uh));
+}
+.rc-max {
+  flex: 1; min-width: 0; margin-left: calc(2 * var(--uw));
+  font-size: calc(2.5 * var(--uh)); color: var(--mut);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+/* 滑杆：0 ~ MAX 连续可调（MAX 即全下金额） */
+.rc-slider { margin: calc(0.4 * var(--uh)) 0 calc(0.2 * var(--uh)); }
+/* 快捷档：最小 / ½池 / 底池 / 全下 */
+.rc-quick { display: flex; align-items: center; }
+.rc-q {
+  flex: 1; text-align: center;
+  font-size: calc(2.8 * var(--uh)); color: var(--ink);
+  line-height: calc(4.4 * var(--uh));
+  background: rgba(255,255,255,.07);
+  border: 1rpx solid rgba(255,255,255,.13);
+  border-radius: calc(1.4 * var(--uh));
+  margin-right: calc(1.6 * var(--uw));
+}
+.rc-q:last-child { margin-right: 0; }
+.rc-q:active {
+  background: rgba(232,163,61,.22); border-color: rgba(232,163,61,.7); color: #ffd98a;
+}
+
+/* 行动条：三个大按钮 + 拉大间距（微扑克：防误触）。
+ * 高度收紧：11.5uh 足够指尖点击，同时保证在 19.5:9 扁屏上也不把底部顶出视口。 */
+.actbar { display: flex; margin-top: calc(0.8 * var(--uh)); }
 .ab {
   flex: 1; margin-right: calc(3.4 * var(--uw));
-  line-height: calc(14 * var(--uh)); font-size: calc(5 * var(--uh)); font-weight: 700; color: #fff;
-  border: none; padding: 0; border-radius: calc(3 * var(--uh));
+  line-height: calc(11.5 * var(--uh)); font-size: calc(4.4 * var(--uh)); font-weight: 700; color: #fff;
+  border: none; padding: 0; border-radius: calc(2.6 * var(--uh));
 }
 .ab::after { border: none; }
 .ab:last-child { margin-right: 0; }
 .ab:active { transform: scale(.97); }
 .ab[disabled] { opacity: .3; }
 .ab-fold { background: linear-gradient(160deg, #5f6874, #3f4854); }
+/* 弃牌二次确认态：高亮警示，避免误触一键弃牌 */
+.ab-fold.confirm {
+  background: linear-gradient(160deg, #d4504a, #a8332e);
+  color: #fff; animation: foldPulse 1s ease-in-out infinite;
+}
+@keyframes foldPulse {
+  0%, 100% { box-shadow: 0 0 0 calc(0.3 * var(--uh)) rgba(212,80,74,.8), 0 0 calc(2.4 * var(--uh)) rgba(212,80,74,.5); }
+  50%      { box-shadow: 0 0 0 calc(0.7 * var(--uh)) rgba(212,80,74,.4), 0 0 calc(5 * var(--uh)) rgba(212,80,74,.8); }
+}
 .ab-call { background: linear-gradient(160deg, #35b27b, #1d7a52); }
 .ab-raise { background: linear-gradient(160deg, #f4d78a, #d9a441 60%, #b8791f); color: #1a1a1a; }
 
@@ -473,6 +576,9 @@
   font-size: calc(2.9 * var(--uh)); color: var(--gold); text-align: center;
   margin-top: calc(1.8 * var(--uh)); flex-shrink: 0;
 }
+/* 自选座位提示（跨设备同步可用时显示） */
+.wait-note.seat-hint { color: #ffd98a; font-weight: 600; }
+.wseat:active { transform: scale(.96); }
 /* 座位网格：固定宽度 + 自动换行，9 人时分两行，不再被压缩成一条 */
 .wait-seats {
   display: flex; flex-wrap: wrap; justify-content: center;
@@ -573,6 +679,12 @@
 .sr-rank { width: calc(5.6 * var(--uh)); font-size: calc(2.9 * var(--uh)); color: var(--mut); font-weight: 700; flex: none; }
 .sr-name { flex: 1; font-size: calc(3.2 * var(--uh)); color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sr-stack { font-size: calc(2.9 * var(--uh)); color: var(--mut); margin: 0 calc(2.2 * var(--uw)); flex: none; }
+/* 单手结算弹窗：牌型/状态列（摊牌=牌型名，弃牌=「弃牌」） */
+.sr-hand {
+  font-size: calc(2.8 * var(--uh)); color: var(--mut); flex: none;
+  margin: 0 calc(2 * var(--uw)); max-width: 240rpx;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 .sr-net { font-size: calc(3.4 * var(--uh)); font-weight: 800; color: #cfe0d9; flex: none; min-width: 96rpx; text-align: right; }
 .sr-net.up { color: #ff6b5a; }
 .sr-net.down { color: #4caf7d; }
@@ -591,3 +703,113 @@
   border-radius: calc(2.2 * var(--uh)); border: none;
 }
 .sbtn::after { border: none; }
+
+/* ---------- 合并后：等待室即牌桌（座位环常显） ----------
+ * 等待室与游戏中复用同一张 .felt：空座位显示虚线头像 + 「坐下」按钮，
+ * 房主自己的座位描金边高亮。底部 waitbar 承载房间信息与房主操作条，
+ * 视觉与 mybar 一致（微扑克式：主视觉只留牌桌 + 操作区）。 */
+.seat.empty { cursor: pointer; }
+.seat.empty .avatar {
+  background: rgba(255,255,255,.04);
+  border: 2rpx dashed rgba(255,255,255,.28); color: #6b7d76; font-weight: 400;
+}
+.seat.empty .seat-name { color: #6b7d76; }
+.seat.empty:active { transform: translate(-50%, -50%) scale(.96); }
+.seat.self .avatar { border-color: var(--gold); box-shadow: 0 0 calc(1.6 * var(--uh)) rgba(232,163,61,.42); }
+.seat .sit-btn {
+  margin-top: calc(0.8 * var(--uh));
+  font-size: calc(2.8 * var(--uh)); font-weight: 700; color: #1a1a1a; line-height: 1.1;
+  background: linear-gradient(160deg, #f4d78a, #d9a441 60%, #b8791f);
+  border-radius: 999rpx; padding: calc(0.5 * var(--uh)) calc(3.4 * var(--uw));
+  white-space: nowrap; flex-shrink: 0;
+}
+.seat.empty:active .sit-btn { transform: scale(.95); }
+
+/* 等待室底部：房间信息 + 房主操作条 */
+.wait-info {
+  flex-shrink: 0; display: flex; flex-direction: column; align-items: center;
+  margin-top: calc(0.6 * var(--uh));
+}
+.wi-set {
+  font-size: calc(3 * var(--uh)); color: #ffd98a; text-align: center;
+  background: rgba(232,163,61,.12); border: 1rpx solid rgba(232,163,61,.32);
+  border-radius: 999rpx; padding: calc(0.6 * var(--uh)) calc(2.8 * var(--uw));
+}
+.wi-hint {
+  font-size: calc(2.8 * var(--uh)); color: var(--mut); text-align: center;
+  margin-top: calc(0.8 * var(--uh)); line-height: 1.35; max-width: 680rpx;
+}
+.waitbar {
+  flex-shrink: 0; margin-top: calc(0.8 * var(--uh));
+  display: flex; align-items: center; justify-content: center;
+  background: linear-gradient(170deg, rgba(255,255,255,.05), rgba(255,255,255,.02));
+  border: 1rpx solid rgba(255,255,255,.09); border-radius: calc(2.8 * var(--uh));
+  padding: calc(1 * var(--uh)) calc(2.4 * var(--uw));
+}
+.wait-actions { display: flex; align-items: center; gap: calc(2 * var(--uw)); }
+.wait-actions .wbtn {
+  font-size: calc(3.6 * var(--uh)); line-height: calc(9.5 * var(--uh)); border-radius: calc(2.6 * var(--uh)); color: #fff;
+  border: none; padding: 0 calc(4.4 * var(--uw)); display: flex; align-items: center; justify-content: center;
+}
+.wait-actions .wbtn::after { border: none; }
+.wait-actions .wbtn.ghost { background: rgba(255,255,255,.08); border: 1rpx solid rgba(255,255,255,.18); }
+.wait-actions .wbtn.ghost:active { background: rgba(255,255,255,.16); }
+.wait-actions .wbtn.primary { background: linear-gradient(160deg, #f4d78a, #d9a441 60%, #b8791f); color: #1a1a1a; font-weight: 700; }
+.wait-actions .wbtn[disabled] { opacity: .4; }
+.wait-actions .inv-ico { width: calc(2.6 * var(--uh)); height: calc(2.6 * var(--uh)); margin-right: calc(1.1 * var(--uw)); flex: none; }
+
+/* ---------- WPK 式牌桌细节：中央筹码堆 / 下注筹码 / 状态徽章 / 赢家飘分 ---------- */
+.pot-chip {
+  width: calc(3 * var(--uh)); height: calc(3 * var(--uh)); border-radius: 50%;
+  margin-right: calc(0.8 * var(--uw)); flex: none;
+  background: radial-gradient(circle at 34% 28%, #f7e3ae, #d9a441 58%, #9d6f1c);
+  border: 2rpx solid rgba(255, 255, 255, .55);
+  box-shadow: 0 calc(0.3 * var(--uh)) calc(1 * var(--uh)) rgba(0, 0, 0, .35);
+}
+.pot-label { font-size: calc(2.4 * var(--uh)); color: rgba(255, 255, 255, .62); margin-right: calc(0.6 * var(--uw)); }
+.bet-chip {
+  width: calc(2.2 * var(--uh)); height: calc(2.2 * var(--uh)); border-radius: 50%;
+  margin-right: calc(0.5 * var(--uw)); flex: none;
+  background: radial-gradient(circle at 34% 28%, #a9e6c6, #2f9e6e 60%, #1a6446);
+  border: 1rpx solid rgba(255, 255, 255, .45);
+}
+.seat-badges { display: flex; align-items: center; justify-content: center; margin-top: calc(0.3 * var(--uh)); }
+.badge {
+  font-size: calc(2.1 * var(--uh)); line-height: calc(3.2 * var(--uh));
+  padding: 0 calc(0.9 * var(--uw)); border-radius: calc(1.6 * var(--uh));
+  font-weight: 700; white-space: nowrap;
+}
+.badge.allin { background: linear-gradient(160deg, #ff8f63, #df4f43); color: #fff; }
+.badge.fold { background: rgba(255, 255, 255, .1); color: rgba(255, 255, 255, .5); }
+/* 就绪阶段座位徽章：已准备 = 金色实底，准备中 = 暗底灰字 */
+.badge.ready { background: var(--gold); color: #1d2b25; }
+.badge.prewait { background: rgba(255, 255, 255, .08); color: rgba(255, 255, 255, .55); }
+.seat-win {
+  position: absolute; top: calc(-3.2 * var(--uh)); left: 50%;
+  font-size: calc(2.7 * var(--uh)); color: var(--gold); font-weight: 700; white-space: nowrap;
+  text-shadow: 0 0 calc(0.9 * var(--uh)) rgba(232, 163, 61, .5);
+  animation: winPop .5s cubic-bezier(.2, .9, .3, 1.3) both;
+}
+@keyframes winPop {
+  from { opacity: 0; transform: translate(-50%, calc(1.8 * var(--uh))); }
+  to { opacity: 1; transform: translate(-50%, 0); }
+}
+
+/* 入座买入弹窗（WePoker 式：点空位 → 选买入额 → 入座） */
+.buyin-dialog {
+  width: 560rpx; background: #12261f; border: 1rpx solid rgba(232, 163, 61, .36);
+  border-radius: calc(3.2 * var(--uh)); padding: calc(3 * var(--uh)) calc(3.2 * var(--uw));
+  display: flex; flex-direction: column; align-items: center;
+}
+.buyin-title { font-size: calc(4.2 * var(--uh)); color: #fff; font-weight: 700; }
+.buyin-sub { font-size: calc(2.6 * var(--uh)); color: rgba(255, 255, 255, .5); margin-top: calc(0.8 * var(--uh)); }
+.buyin-opts { display: flex; flex-wrap: wrap; justify-content: center; margin: calc(1.8 * var(--uh)) 0 calc(1.2 * var(--uh)); }
+.bopt {
+  min-width: calc(16 * var(--uw)); text-align: center;
+  font-size: calc(3.2 * var(--uh)); line-height: calc(8 * var(--uh));
+  margin: calc(0.6 * var(--uh)) calc(0.8 * var(--uw));
+  border-radius: calc(2 * var(--uh)); background: rgba(255, 255, 255, .08);
+  border: 1rpx solid rgba(255, 255, 255, .16); color: #fff; font-weight: 700;
+}
+.bopt.on { background: linear-gradient(160deg, #f4d78a, #d9a441 60%, #b8791f); color: #1a1a1a; border-color: transparent; }
+.buyin-btns { display: flex; align-items: center; }

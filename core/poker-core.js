@@ -153,6 +153,13 @@
   function cardId(rank, suit) { return (rank << 2) | suit; }
   function cardToStr(card) { return RANK_NAMES[rankOf(card)] + SUIT_CHARS[suitOf(card)]; }
   function cardToCode(card) { return RANK_NAMES[rankOf(card)] + SUIT_NAMES[suitOf(card)]; }
+  /** 'As' → 牌 id（cardToCode 的逆运算，供快照镜像重建底牌/公共牌） */
+  function codeToCard(code) {
+    if (typeof code !== 'string' || code.length < 2) return -1;
+    const r = RANK_NAMES.indexOf(code[0]);
+    const s = SUIT_NAMES.indexOf(code[1]);
+    return (r < 0 || s < 0) ? -1 : cardId(r, s);
+  }
 
   /**
    * 从 rank 位掩码找最大顺子，返回最大牌的 rank（0..12），无则 -1。
@@ -785,8 +792,11 @@
 
       const order = [];
       for (let i = 0; i < seats.length; i++) order.push(seats[(seats.indexOf(btnSeat) + i) % seats.length]);
-      const sbSeat = order[1 % order.length];
-      const bbSeat = order[2 % order.length];
+      // 小盲/大盲：三人及以上 = 按钮左一/左二；两人局（heads-up）庄家即小盲，另一人大盲
+      const sbSeat = seats.length === 2 ? btnSeat : order[1 % order.length];
+      const bbSeat = seats.length === 2 ? order[1 % order.length] : order[2 % order.length];
+      game.sbSeat = sbSeat;
+      game.bbSeat = bbSeat;
 
       const postBlind = (seat, amount) => {
         const p = game.seatOf(seat);
@@ -819,9 +829,17 @@
       if (canActCount <= 1) {
         return skipToShowdown('仅一名可行动玩家，直接发完公共牌');
       }
-      // 翻牌前：从大盲左手第一位开始
+      // 翻牌前：从大盲左手第一位开始（若该位已全下/弃牌，顺移到下一个可行动的人）
       const bbIdx = order.indexOf(bbSeat);
-      game.actionSeat = order[(bbIdx + 1) % order.length];
+      game.actionSeat = -1;
+      for (let k = 1; k <= order.length; k++) {
+        const cand = order[(bbIdx + k) % order.length];
+        const p = game.seatOf(cand);
+        if (p && !p.folded && !p.allIn) { game.actionSeat = cand; break; }
+      }
+      if (game.actionSeat === -1) {
+        return skipToShowdown('仅一名可行动玩家，直接发完公共牌');
+      }
       game.emit({ type: 'turn', seat: game.actionSeat });
       return { ok: true, actionSeat: game.actionSeat, street: game.street };
     };
@@ -981,10 +999,20 @@
     function nextStreet() {
       const seats = game.inHandPlayers().map(p => p.seat).sort((a, b) => a - b);
       const btnIdx = seats.indexOf(game.dealerSeat);
-      game.actionSeat = seats[(btnIdx + 1) % seats.length];
+      // 翻牌后从按钮左一开始；若其已弃牌/全下，顺移到下一个可行动的人（防卡死）
+      game.actionSeat = -1;
+      for (let k = 1; k <= seats.length; k++) {
+        const cand = seats[(btnIdx + k) % seats.length];
+        const p = game.seatOf(cand);
+        if (p && !p.folded && !p.allIn) { game.actionSeat = cand; break; }
+      }
       game.currentBet = 0;
       game.minRaise = game.bb;
       game.lastAggressor = null;
+
+      if (game.actionSeat === -1) {
+        return skipToShowdown('无人可行动，直接发完公共牌');
+      }
 
       if (game.street === STREET.PREFLOP) {
         game.street = STREET.FLOP;
@@ -1067,6 +1095,10 @@
     }
 
     function showdown() {
+      // 统一兜底置摊牌街次：skipToShowdown（全下跑马）路径只把 street 置到 RIVER，
+      // 若不在此处纠正，渲染层（street===SHOWDOWN 才亮牌）与快照（showAll）都会误判，
+      // 出现「桌上不亮牌、结算弹窗里才有牌」的现象。
+      game.street = STREET.SHOWDOWN;
       collectBets();
       const pots = buildSidePots(game.players);
       game.pots = pots;
@@ -1134,6 +1166,74 @@
     game.advance = advance;
     game._showdown = showdown;
 
+    /**
+     * 把云端广播的快照镜像进本地 game 对象（好友端专用：不跑引擎，只做渲染）。
+     * 座位重映射规则：myRoomSeat → 本地 0 号位，其余按房间座位号升序依次占 1..N，
+     * 这样好友端与房主端复用同一套「我在 0 号位」的渲染与操作逻辑。
+     * @param {object} snap 房主广播的 snapshot()
+     * @param {number} myRoomSeat 我在云端房间里的座位号
+     * @param {object} [opts] { legal } 房主下发的当前行动者合法性（快照里带不了 canRaise 细节）
+     */
+    game.loadSnapshot = function (snap, myRoomSeat, opts) {
+      if (!snap || !Array.isArray(snap.players)) return false;
+      const roomSeats = snap.players.map(p => p.seat).sort((a, b) => a - b);
+      const remap = {};
+      let nextLocal = 1;
+      roomSeats.forEach(s => {
+        remap[s] = (s === myRoomSeat) ? 0 : nextLocal++;
+      });
+      const loc = s => (s === undefined || s === null || s < 0) ? -1 : (remap[s] !== undefined ? remap[s] : -1);
+
+      game.players = snap.players.map(p => {
+        const hole = Array.isArray(p.hole) ? p.hole.map(codeToCard).filter(c => c >= 0) : [];
+        return {
+          id: p.id, name: p.name, seat: loc(p.seat),
+          stack: p.stack, isHuman: !!p.isHuman,
+          style: p.style || { aggro: 0.5, tight: 0.35 },
+          hole, folded: !!p.folded, allIn: !!p.allIn,
+          bet: p.bet || 0, committed: p.committed || 0,
+          actedBet: null, canRaise: true, sittingOut: !!p.sittingOut,
+          hands: 0, net: 0
+        };
+      });
+      game.board = (snap.boardCodes || []).map(codeToCard).filter(c => c >= 0);
+      game.street = snap.street || STREET.PREFLOP;
+      game.currentBet = snap.currentBet || 0;
+      game.minRaise = snap.minRaise || game.bb;
+      game.actionSeat = loc(snap.actionSeat);
+      game.dealerSeat = loc(snap.dealerSeat);
+      game.sbSeat = loc(snap.sbSeat);
+      game.bbSeat = loc(snap.bbSeat);
+      game.handNo = snap.handNo || 0;
+      game.pots = (snap.pots || []).map(p => ({ amount: p.amount, eligible: (p.eligible || []).map(loc), level: p.level }));
+      game.totalPot = Math.max(0, (snap.pot || 0) - game.players.reduce((s, p) => s + p.bet, 0));
+      game.lastAggressor = null;
+      game.over = false;
+
+      // 结算与摊牌亮牌：按重映射后的座位号重建（hole/hand 保持 code 字符串，渲染层直接用）
+      if (snap.result) {
+        const r = snap.result;
+        game.result = {
+          type: r.type,
+          winners: (r.winners || []).map(loc),
+          awards: (r.awards || []).map(a => Object.assign({}, a, { seat: loc(a.seat) })),
+          board: game.board.slice(),
+          evals: r.evals ? Object.keys(r.evals).reduce((m, k) => { m[loc(Number(k))] = r.evals[k]; return m; }, {}) : undefined
+        };
+      } else {
+        game.result = null;
+      }
+      game.showdownReveal = {};
+      if (snap.reveal) {
+        Object.keys(snap.reveal).forEach(k => {
+          game.showdownReveal[loc(Number(k))] = snap.reveal[k];
+        });
+      }
+      // 房主下发的合法性（供「轮到我了」时直接用，本地镜像算不出 canRaise）
+      game.remoteLegal = (opts && opts.legal && loc(opts.legal.seat) === 0) ? opts.legal : null;
+      return true;
+    };
+
     /* -------- 序列化（WebSocket 下发到小程序） -------- */
     game.snapshot = function (opts) {
       opts = opts || {};
@@ -1149,6 +1249,8 @@
         minRaise: game.minRaise,
         actionSeat: game.actionSeat,
         dealerSeat: game.dealerSeat,
+        sbSeat: game.sbSeat,
+        bbSeat: game.bbSeat,
         pots: game.pots.map(p => ({ amount: p.amount, eligible: p.eligible, level: p.level })),
         result: game.result,
         reveal: showAll ? game.showdownReveal : null,
@@ -1156,7 +1258,7 @@
         players: game.players.map(p => ({
           seat: p.seat, id: p.id, name: p.name, isHuman: p.isHuman,
           stack: p.stack, bet: p.bet, committed: p.committed,
-          folded: p.folded, allIn: p.allIn,
+          folded: p.folded, allIn: p.allIn, sittingOut: !!p.sittingOut,
           hole: (p.isHuman || showAll) ? p.hole.map(cardToCode) : null,
           holeCount: p.hole.length
         }))
@@ -1173,7 +1275,7 @@
   return {
     HAND, STREET, STREET_CN, ACTION, ACTION_CN,
     RANK_NAMES, SUIT_CHARS, SUIT_NAMES,
-    rankOf, suitOf, cardId, cardToStr, cardToCode,
+    rankOf, suitOf, cardId, cardToStr, cardToCode, codeToCard,
     createRng, shuffle,
     evaluate, compare, rankEval,
     buildSidePots,
