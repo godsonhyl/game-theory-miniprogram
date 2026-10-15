@@ -258,7 +258,8 @@ Page({
     this.syncLive = false;
     this.roomRows = [];        // 最近一次轮询到的座位行
     this.hostState = null;     // 房主广播的房间公开状态
-    this.appliedSeq = 0;       // 房主已消化的好友动作序号
+    this.appliedSeqBySeat = {};// 房主已消化的好友动作序号（按来源行座位分道，防跨设备时钟偏差丢动作）
+    this.hostStaleSince = 0;   // 好友端：房主心跳疑似停滞的起始时刻（超宽限判房间僵死）
     this.botSeats = {};        // 机器人座位（不会上行动作，超时不管）
     this.pendingSitMap = {};   // 好友「坐下」待下一手生效：seat → true
     this.pollTimer = null;
@@ -492,7 +493,7 @@ Page({
         const mine = rows.filter(r => r.is_host)[0];
         if (mine && mine.seat >= 0) seat = mine.seat;
         // 房主重进房间：把历史动作序号先推到最新，避免重放离开期间积压的动作
-        this.appliedSeq = roomSync.pendingActions(rows, 0).nextSeq;
+        this.appliedSeqBySeat = roomSync.pendingActions(rows, {}).nextBySeat;
       }
       // 名字：广播给同桌好友看的那份，默认用我的微信昵称；
       // ensureProfile 顺带把登录态里的档案补齐（否则 myName 只能回落兜底名）
@@ -567,7 +568,7 @@ Page({
 
   /**
    * 轮询一次房间：
-   *   房主 → 消费好友动作（按 appliedSeq 消化）、合并就绪计票、好友超时代弃牌、广播状态；
+   *   房主 → 消费好友动作（按座位分道的 appliedSeqBySeat 消化）、合并就绪计票、好友超时代弃牌、广播状态；
    *   好友 → 读取房主广播：等待室布局 / 牌局快照镜像。
    */
   async pollOnce() {
@@ -587,8 +588,8 @@ Page({
       if (!st && this.data.phase === 'playing') this.publishPlay();
       if (this.data.phase === 'waiting') { this.renderWait(); return; }
       this.dropOfflineSeats(rows);
-      const { actions, nextSeq } = roomSync.pendingActions(rows, this.appliedSeq);
-      this.appliedSeq = nextSeq;
+      const { actions, nextBySeat } = roomSync.pendingActions(rows, this.appliedSeqBySeat);
+      Object.keys(nextBySeat).forEach(s => { this.appliedSeqBySeat[s] = nextBySeat[s]; });
       actions.forEach(a => this.applyFriendAction(a));
       if (this.data.readyPhase) this.mergeFriendReady(rows);
       this.watchFriendAction();
@@ -598,7 +599,8 @@ Page({
     }
 
     // ---- 好友端 ----
-    if (!roomSync.hostRow(rows)) {
+    const host = roomSync.hostRow(rows);
+    if (!host) {
       if (this.sawHost) {
         // 房主行消失（离开/解散）→ 退回首屏
         this.sawHost = false;
@@ -606,6 +608,20 @@ Page({
         this.leaveRoom();
       }
       return;
+    }
+    // 房主心跳僵死检测：行还在但心跳超时——房主可能已崩溃/杀进程，
+    // 其行不会自己消失。给 HOST_STALE_EXIT_MS 宽限（覆盖一次长轮询/切后台恢复），
+    // 仍未恢复则判房间僵死退出，好友端绝不无限干等。
+    if (!roomSync.isOnline(host, Date.now())) {
+      this.hostStaleSince = this.hostStaleSince || Date.now();
+      if (Date.now() - this.hostStaleSince >= roomSync.SYNC.HOST_STALE_EXIT_MS) {
+        this.hostStaleSince = 0;
+        wx.showToast({ title: '房主长时间无响应，房间已解散', icon: 'none' });
+        this.leaveRoom();
+        return;
+      }
+    } else {
+      this.hostStaleSince = 0;
     }
     this.sawHost = true;
     if (!st) { if (this.data.phase === 'waiting') this.renderWait(); return; }
@@ -750,10 +766,16 @@ Page({
     }
   },
 
-  /** 房主消化一个好友动作 */
+  /**
+   * 房主消化一个好友动作。
+   * 座位一律取动作来源行自己的座位（a.rowSeat，由 pendingActions 绑定），
+   * 不信任 payload 里的 seat——否则任何好友可替他人（含房主）行动/站起。
+   * payload seat 与 rowSeat 不一致视为伪冒，整条丢弃。
+   */
   applyFriendAction(a) {
     if (!game) return;
-    const seat = Number(a.seat);
+    if (a.type === 'act' && Number(a.seat) !== Number(a.rowSeat)) return;   // 座位伪冒 → 丢弃
+    const seat = Number(a.rowSeat);
     if (a.type === 'act') {
       if (game.actionSeat === seat && !game.result) {
         const r = game.act(seat, a.action, a.amount || 0);
@@ -763,6 +785,7 @@ Page({
       return;
     }
     if (a.type === 'stand') {
+      if (Number(a.seat) !== Number(a.rowSeat)) return;   // 座位伪冒 → 丢弃
       const p = game.seatOf(seat);
       if (p && !p.sittingOut) {
         p.sittingOut = true;
@@ -783,6 +806,7 @@ Page({
       return;
     }
     if (a.type === 'sit') {
+      if (Number(a.seat) !== Number(a.rowSeat)) return;   // 座位伪冒 → 丢弃
       // 坐下下一手生效：先记下，startHand 时清理 sittingOut
       this.pendingSitMap[seat] = true;
       delete this.standingMap[seat];
@@ -903,7 +927,7 @@ Page({
       kind: 'playing',
       snapshot: game.snapshot(),
       legal: game.actionSeat >= 0 ? game.legalActions(game.actionSeat) : null,
-      appliedSeq: this.appliedSeq,
+      seqBySeat: this.appliedSeqBySeat,   // 调试口：房主已消化的动作序号（按座位分道）
       readyPhase: this.data.readyPhase,
       readyList: this.data.readyList || [],
       readyLeft: this.data.readyLeft || 0,

@@ -174,15 +174,28 @@ eq(roomSync.activeSeats([mkRow(2, 0), mkRow(1, 99999), mkRow(3, 5000)], now).map
     mkRow(2, 0, { action: { seq: 3, type: 'stand', seat: 2 } }),
     mkRow(3, 0, { action: { seq: 9, type: 'act', seat: 3 } })
   ];
-  const r1 = roomSync.pendingActions(rows, 0);
+  const r1 = roomSync.pendingActions(rows, {});
   eq(r1.actions.map(a => a.seq), [3, 5, 9], 'pendingActions 按序号升序取出');
-  eq(r1.nextSeq, 9, 'nextSeq = 最大已见序号');
-  const r2 = roomSync.pendingActions(rows, 5);
-  eq(r2.actions.map(a => a.seq), [9], 'appliedSeq=5 时只消费 5 以后的');
-  eq(r2.nextSeq, 9, 'nextSeq 仍是 9');
-  const r3 = roomSync.pendingActions(rows, 99);
-  eq(r3.actions.length, 0, '无新动作');
-  eq(r3.nextSeq, 99, '无新动作时 nextSeq 保持');
+  eq(r1.actions.map(a => a.rowSeat), [2, 1, 3], '每条动作绑定来源行自己的座位（rowSeat）');
+  eq(r1.nextBySeat, { 1: 5, 2: 3, 3: 9 }, 'nextBySeat 只含本轮有消费的座位');
+  const r2 = roomSync.pendingActions(rows, { 1: 5, 2: 3 });
+  eq(r2.actions.map(a => a.seq), [9], '已应用的座位不再重复消费（按行分道）');
+  eq(r2.nextBySeat, { 3: 9 }, '无新动作的座位不进 nextBySeat');
+  const r3 = roomSync.pendingActions(rows, { 1: 5, 2: 3, 3: 9 });
+  eq(r3.actions.length, 0, '全部已应用时无新动作');
+  eq(r3.nextBySeat, {}, '全部已应用时 nextBySeat 为空');
+  // 跨设备时钟偏差回归：好友 B 设备时钟慢 → 其 seq 数值比房主已见过的
+  // 别家 seq 还小。旧全局 appliedSeq 会把 B 的动作永久跳过；分道后按
+  // B 自己的行消化，不受别家影响。
+  const clockSkewRows = [
+    mkRow(1, 0, { action: { seq: 100000, type: 'act', seat: 1 } }),
+    mkRow(2, 0, { action: { seq: 50, type: 'act', seat: 2 } })   // B 慢钟
+  ];
+  const skew = roomSync.pendingActions(clockSkewRows, {});
+  const skewApplied = { 1: skew.nextBySeat[1] };   // 房主只消化过 1 号位
+  const skewAfter = roomSync.pendingActions(clockSkewRows, skewApplied);
+  ok(skewAfter.actions.filter(a => a.rowSeat === 2).length === 1,
+    '慢钟好友（seq 远小于别家）的动作不被别家的高 seq 淹没');
 }
 
 eq(roomSync.readySeats([mkRow(1, 0, { ready_hand: 4 }), mkRow(2, 0, { ready_hand: 3 })], 4, now),
@@ -243,8 +256,9 @@ eq(roomSync.readySeats([mkRow(1, 99999, { ready_hand: 4 })], 4, now), {}, '离�
   eq(rows.length, 2, '轮询拿到房间全部行（同房可读）');
   eq(rows.map(r => r.seat), [0, 3], '轮询按座位排序');
   ok(roomSync.hostStateOf(rows).kind === 'playing', '房主广播的状态可读');
-  const pa = roomSync.pendingActions(rows, 0);
+  const pa = roomSync.pendingActions(rows, {});
   eq(pa.actions.length, 1, '房主能看到 1 条待消费好友动作');
+  eq(pa.actions[0].rowSeat, 3, '动作绑定好友行座位 3（不信任 payload seat）');
 
   currentUid = 'uid_friend';
   await roomSync.leave('800001');
@@ -394,11 +408,11 @@ eq(roomSync.readySeats([mkRow(1, 99999, { ready_hand: 4 })], 4, now), {}, '离�
       friend.onCheckOrCall();
       friendActed = true;
     }
-    if (host.appliedSeq > 0) appliedAdvanced = true;
+    if (host.appliedSeqBySeat && Object.keys(host.appliedSeqBySeat).length > 0) appliedAdvanced = true;
   }
 
   ok(friendActed, '好友：本手轮到过并完成行动（三人局必行动）');
-  ok(appliedAdvanced, '房主：appliedSeq 已推进（消化过好友动作）');
+  ok(appliedAdvanced, '房主：按座位分道的 appliedSeqBySeat 已推进（消化过好友动作）');
   ok(!!host.data.result, '一手牌走到结算');
 
   if (host.data.result) {
@@ -496,6 +510,42 @@ eq(roomSync.readySeats([mkRow(1, 99999, { ready_hand: 4 })], 4, now), {}, '离�
           ok(hostGame.actionSeat !== 2, 'C-2：行动权已移交他人，不在掉线座位上卡死');
         }
       }
+    }
+
+    /* ---- 座位伪冒回归：好友动作的 payload seat 与来源行 seat 不一致 → 房主拒收 ---- */
+    {
+      const hostGame = host.requireGame();
+      const before = JSON.stringify(host.appliedSeqBySeat);
+      // 好友（行座位 2）伪报房主座位 0：站起他人 / 替他人行动都必须被丢弃
+      const spoofed = roomSync.pendingActions(
+        [{ seat: 2, action: { seq: Date.now() + 1, type: 'stand', seat: 0, rowSeat: 2 } }], {}
+      );
+      // applyFriendAction 校验 a.seat !== a.rowSeat → 整条丢弃
+      const spoofActs = spoofed.actions.filter(a => Number(a.seat) !== Number(a.rowSeat));
+      ok(spoofActs.length === 1, '伪冒动作可被 pendingActions 取出（分道正常）');
+      spoofActs.forEach(a => host.applyFriendAction(a));
+      ok(host.isStanding(0) === false, '伪冒站起房主座位 → 房主端拒收（未被站起）');
+      ok(JSON.stringify(host.appliedSeqBySeat) === before,
+        '伪冒站起不改变房主端的已消化水位');   // appliedSeqBySeat 由 pollOnce 维护，applyFriendAction 不动它
+    }
+
+    /* ---- 房主心跳僵死检测：行还在但心跳超时 → 好友等宽限期后退房 ---- */
+    {
+      const hostIdx = store.poker_room_seats.findIndex(r => r.is_host);
+      ok(hostIdx >= 0, '房主行仍在库中');
+      const savedHb = store.poker_room_seats[hostIdx].heartbeat_at;
+      // 房主心跳拨到 40s 前：行还在（房主崩溃不会删行），好友端不能无限干等
+      store.poker_room_seats[hostIdx].heartbeat_at = iso(Date.now() - 40000);
+      currentUid = 'uid_friend';   // leaveRoom 会删好友自己的行，别误删房主行
+      friend.hostStaleSince = 0;
+      global.__navBack = false;
+      await friend.pollOnce();
+      ok(friend.hostStaleSince > 0, '好友：首次发现房主心跳停滞 → 记录起点（宽限期计时中）');
+      ok(global.__navBack === false, '好友：宽限期内不退出（防一次网络抖动误杀）');
+      friend.hostStaleSince -= roomSync.SYNC.HOST_STALE_EXIT_MS + 1000;   // 模拟宽限期流逝
+      await friend.pollOnce();
+      ok(global.__navBack === true, '房主行存在但心跳僵死超宽限 → 好友端退出房间（不无限干等）');
+      store.poker_room_seats[hostIdx].heartbeat_at = savedHb;   // 还原，后续场景继续用
     }
 
     /* ---- 好友镜像新手数 ---- */

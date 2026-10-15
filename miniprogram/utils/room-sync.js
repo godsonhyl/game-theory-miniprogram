@@ -5,9 +5,9 @@
  *   - 每个真人（房主 + 好友）在房间里占一行，RLS 只允许改自己的行；
  *   - 房主那一行的 state 字段承载房间公开状态：
  *       waiting  → { kind:'waiting', seats:[机器人座位] }
- *       playing  → { kind:'playing', snapshot, legal, appliedSeq, readyList, readyLeft, handNo }
+ *       playing  → { kind:'playing', snapshot, legal, seqBySeat, readyList, readyLeft, handNo }
  *   - 好友的动作写在自己行的 action 字段上行（{seq, type, ...}），
- *     房主每 1.5s 轮询消费，按序号 appliedSeq 消化，避免重复应用；
+ *     房主每 1.5s 轮询消费，按「行座位分道」的 seq 消化，避免重复应用；
  *   - 好友的「准备就绪」写自己行的 ready_hand（存的是下一手手数，跨手天然自清理）；
  *   - 心跳 5s；超过 15s 无心跳视为离线，释放座位（房主端不会卡死）。
  *
@@ -25,7 +25,9 @@ const SYNC = {
   POLL_MS: 1500,           // 房主轮询好友动作的间隔
   HEARTBEAT_MS: 5000,      // 心跳间隔
   OFFLINE_MS: 15000,       // 超过该时长无心跳视为离线，释放座位
-  ACTION_TIMEOUT_SEC: 30   // 远端好友行动超时：房主代弃牌，防卡死
+  ACTION_TIMEOUT_SEC: 30,  // 远端好友行动超时：房主代弃牌，防卡死
+  // 房主行存在但心跳僵死时，好友端再等的宽限时长；超时仍未恢复 → 房间判僵死退出
+  HOST_STALE_EXIT_MS: 30000
 };
 
 /* ---------- 依赖注入（测试用内存库；默认走真实云端） ---------- */
@@ -104,7 +106,7 @@ async function leave(roomNo) {
   return true;
 }
 
-/** 动作上行（好友 → 房主）：action 带自增 seq，房主按 appliedSeq 消化 */
+/** 动作上行（好友 → 房主）：action 带自增 seq，房主按座位分道消化 */
 function pushAction(roomNo, action) {
   return upsertMe(roomNo, {
     action: Object.assign({ seq: nextSeq(), ts: Date.now() }, action || {})
@@ -165,19 +167,33 @@ function hostStateOf(rows) {
 }
 
 /**
- * 取出待消费的好友动作：seq 大于 appliedSeq 的按 seq 升序排列。
- * @returns {{actions: Array, nextSeq: number}}
+ * 取出待消费的好友动作：按行携带的 seat 分道、各道按 seq 升序全局排列。
+ *
+ * seq 只用于「同一行内」区分新旧动作（每行只有一列 action 槽，新动作覆盖旧的），
+ * 不再作为房主端的单一全局水位——设备间时钟偏差会让慢钟好友的动作被
+ * 全局 appliedSeq 永久跳过。跨行排序仅决定消费展示顺序，消化与否只看
+ * 行内 seq 是否大于该行已应用的 seq。
+ * 每条动作都绑定来源行自己的座位（rowSeat），不信任 payload 里的 seat。
+ *
+ * @param {Array} rows 房间全部行
+ * @param {Object<string,number>} appliedSeqBySeat 每个座位已应用的最高 seq
+ * @returns {{actions: Array<{...action, rowSeat: number}>, nextBySeat: Object}} nextBySeat 只含本轮有消费的座位
  */
-function pendingActions(rows, appliedSeq) {
-  const base = Number(appliedSeq) || 0;
+function pendingActions(rows, appliedSeqBySeat) {
+  const applied = appliedSeqBySeat || {};
   const actions = [];
+  const nextBySeat = {};
   (rows || []).forEach(r => {
     const a = r.action;
-    if (a && typeof a === 'object' && Number(a.seq) > base) actions.push(a);
+    if (!a || typeof a !== 'object') return;
+    const rowSeat = Number(r.seat);
+    const seq = Number(a.seq) || 0;
+    if (!(seq > (Number(applied[rowSeat]) || 0))) return;   // 该行无新动作
+    actions.push(Object.assign({}, a, { rowSeat }));
+    nextBySeat[rowSeat] = seq;
   });
   actions.sort((a, b) => a.seq - b.seq);
-  const nextSeq = actions.length ? actions[actions.length - 1].seq : base;
-  return { actions, nextSeq };
+  return { actions, nextBySeat };
 }
 
 /** 已准备到下一手的座位集合（ready_hand === nextHandNo 且在线） */
