@@ -618,11 +618,14 @@ while (guard++ < 400) {
 
   /* ---------- 微扑克式分区：折叠面板 ---------- */
   ok(dataStore.chatOpen === false && dataStore.menuOpen === false, '聊天与菜单默认折叠（不抢占主视觉）');
-  ok(Array.isArray(dataStore.raisePresets) && dataStore.raisePresets.length === 5,
-    '加注档位 5 档（最小 / ½池 / 底池 / 全下 / 自定义）');
+  ok(Array.isArray(dataStore.raisePresets) && dataStore.raisePresets.length === 7,
+    '加注档位 7 档（最小 / 33% / 50% / 67% / 100% / 全下 / 自定义）');
   ok(Array.isArray(dataStore.raisePresets) &&
-    dataStore.raisePresets[4].k === 'custom' && dataStore.raisePresets[4].t === '自定义',
-    '第 5 档为「自定义」入口（展开 0~MAX 连续可调的金额面板）');
+    dataStore.raisePresets[6].k === 'custom' && dataStore.raisePresets[6].t === '自定义',
+    '第 7 档为「自定义」入口（展开盲注步进的金额面板）');
+  ok(Array.isArray(dataStore.raisePresets) &&
+    dataStore.raisePresets.slice(1, 5).map(x => x.k).join(',') === 'p33,p50,p67,p100',
+    '中间四档为百分比 sizing（33/50/67/100%），可横向比较');
   pageCtx.toggleChat();
   ok(dataStore.chatOpen === true && dataStore.menuOpen === false, '点 💬 展开聊天并收起菜单');
   pageCtx.toggleMenu();
@@ -830,7 +833,7 @@ while (guard++ < 400) {
   ok(/\.rc-end\s*\{[^}]*flex:\s*none/.test(tableWxss),
     'WXSS：滑杆两端轴标签 flex:none（不与滑杆抢宽度，任意位数都不遮盖）');
   // 事件绑定与实现一一对应（onCustomTap 由「自定义」档经 onPresetTap 间接调用）
-  ['onRaiseSlider', 'onRaiseInput', 'onRaiseBlur', 'onCustomMin', 'onCustomHalf', 'onCustomPot',
+  ['onRaiseSlider', 'onRaiseInput', 'onRaiseBlur', 'onCustomMin', 'onCustomStep', 'onCustomPct',
     'onCustomMax', 'onCustomClose'].forEach(fn => {
     ok(wxmlSrc.indexOf(fn) >= 0 && new RegExp('\\n  ' + fn + '\\(').test(tableSrc),
       '自定义下注：WXML 绑定 ' + fn + ' 且 JS 已实现');
@@ -1121,29 +1124,94 @@ while (guard++ < 400) {
     ok(dataStore.raiseCustom === false, '「收起」→ 回到档位条');
     pageCtx.onCustomTap();
     ok(dataStore.raiseCustom === true, '再次展开成功');
+
+    // ---- 小盲注整数倍：本轮新增的核心口径 ----
+    const step = pageCtx.blindStep();
+    ok(step > 0 && Number.isInteger(step), '步进 = 小盲注 ' + step + '（整数）');
+
+    // 滑杆吸附到最近盲注倍数
     pageCtx.onRaiseSlider({ detail: { value: 346 } });
-    ok(dataStore.raiseTo === 346, '滑杆拖到 346 → raiseTo 同步为 346');
-    ok(dataStore.raiseSubmit === 346,
-      '滑杆拖到 346 → 加注按钮文案同步为 346（曾停在旧值 20），实际 ' + dataStore.raiseSubmit);
-    ok(dataStore.raiseAllIn === false, '346 未达上限 → 按钮显示「加注 346」而非「全下」');
-    pageCtx.onCustomHalf();
-    ok(dataStore.raiseSubmit === dataStore.raiseTo && dataStore.raiseTo >= minT,
-      '点「½池」→ 按钮文案与金额同步（' + dataStore.raiseTo + '）');
+    ok(dataStore.raiseTo % step === 0,
+      '滑杆拖到 346 → 吸附为小盲注整数倍 ' + dataStore.raiseTo + '（' + step + ' 的倍数）');
+    ok(Math.abs(dataStore.raiseTo - 346) <= step / 2,
+      '吸附取「就近」而非大幅偏离（偏差 ' + Math.abs(dataStore.raiseTo - 346) + ' ≤ ' + step / 2 + '）');
+    ok(dataStore.raiseSubmit === dataStore.raiseTo,
+      '吸附后加注按钮文案与金额同步为 ' + dataStore.raiseSubmit);
+
+    // ± 按钮：每按一次走一个小盲注
+    const before = dataStore.raiseTo;
+    pageCtx.onCustomStep({ currentTarget: { dataset: { dir: '1' } } });
+    ok(dataStore.raiseTo === before + step,
+      '点「+」→ 增加一个盲注（' + before + ' → ' + dataStore.raiseTo + '）');
+    pageCtx.onCustomStep({ currentTarget: { dataset: { dir: '1' } } });
+    ok(dataStore.raiseTo === before + 2 * step, '连点「+」→ 继续按盲注递增到 ' + dataStore.raiseTo);
+    pageCtx.onCustomStep({ currentTarget: { dataset: { dir: '-1' } } });
+    ok(dataStore.raiseTo === before + step, '点「−」→ 回退一个盲注到 ' + dataStore.raiseTo);
+    // 递进序列全程都是盲注倍数
+    ok(dataStore.raiseTo % step === 0, '递进后仍是小盲注整数倍（零头不残留）');
+
+    // 百分比快捷额：33/67/100% 且吸附到盲注倍数
+    pageCtx.onCustomPct({ currentTarget: { dataset: { pct: 0.33 } } });
+    const p33 = dataStore.raiseTo;
+    ok(p33 % step === 0, '面板 33% → 吸附为盲注倍数 ' + p33);
+    pageCtx.onCustomPct({ currentTarget: { dataset: { pct: 1 } } });
+    const p100 = dataStore.raiseTo;
+    ok(p100 > p33, '面板 100% > 33%（比例单调递增），实际 ' + p33 + ' → ' + p100);
+    ok(p100 % step === 0 || dataStore.raiseTo === maxT,
+      '面板 100% 也吸附为盲注倍数（或已到上限）');
+
     pageCtx.onCustomMin();
     ok(dataStore.raiseSubmit === minT, '点「最小」→ 按钮文案同步为 ' + minT);
     pageCtx.onCustomMax();
     ok(dataStore.raiseAllIn === true && dataStore.raiseSubmit === maxT,
       '点「最大」→ 按钮切换为「全下」（' + dataStore.raiseSubmit + ' = max ' + maxT + '）');
+
+    // 越界保护：+ 不越过上限（全下额常是零头，不能被抬高一档）
+    pageCtx.onCustomStep({ currentTarget: { dataset: { dir: '1' } } });
+    ok(dataStore.raiseTo === maxT,
+      '已在上限时点「+」→ 保持上限 ' + maxT + '，不被抬到 ' + (maxT + step));
+
     pageCtx.onRaiseInput({ detail: { value: '0' } });
     ok(dataStore.raiseTo === 0 && dataStore.raiseSubmit === minT,
-      '输入 0 → 输入框保留 0，但按钮按最小加注 ' + minT + ' 显示（与提交口径一致）');
+      '输入 0 → 输入框保留 0（输入中不吸附，否则没法接着输），按钮按最小加注显示');
     pageCtx.onRaiseBlur();
     ok(dataStore.raiseTo === minT && dataStore.raiseSubmit === minT,
-      '失焦 → 补正到最小加注 ' + minT + '，按钮同步');
+      '失焦 → 吸附并补正到最小加注 ' + minT + '，按钮同步');
+
+    // 失焦吸附：非倍数输入被收敛到最近的盲注倍数
+    pageCtx.onRaiseInput({ detail: { value: '137' } });
+    ok(dataStore.raiseTo === 137, '输入 137 → 输入中保留原值（不打断输入）');
+    pageCtx.onRaiseBlur();
+    ok(dataStore.raiseTo % step === 0 || dataStore.raiseTo === maxT,
+      '失焦 → 137 吸附为盲注倍数 ' + dataStore.raiseTo);
+
+    // 吸附不得越界：上限是零头时回落成上限而不是抬高一档
+    pageCtx.onRaiseInput({ detail: { value: String(maxT) } });
+    pageCtx.onRaiseBlur();
+    ok(dataStore.raiseTo <= maxT, '失焦吸附不越界：' + dataStore.raiseTo + ' ≤ ' + maxT);
+
     ok(dataStore.raiseCustom === true,
       '滑杆/输入全程保持面板展开（金额改动不应误收起面板）');
     pageCtx.onCustomClose();
     ok(dataStore.raiseCustom === false, '「收起」→ 回到档位条');
+  }
+
+  /* ---------- 回归：预设档改为百分比 + 盲注倍数吸附 ---------- */
+  {
+    const pctSrc = tableSrc;
+    ok(/RAISE_PRESET_PCT\s*=/.test(pctSrc), '存在比例表 RAISE_PRESET_PCT');
+    ['p33', 'p50', 'p67', 'p100'].forEach(k => {
+      ok(new RegExp(k + '\\s*:').test(pctSrc.slice(pctSrc.indexOf('RAISE_PRESET_PCT'), pctSrc.indexOf('RAISE_PRESET_PCT') + 200)),
+        '比例表含档位 ' + k);
+    });
+    ok(/step="\{\{raiseStep\}\}"/.test(wxmlSrc),
+      '滑杆绑定 step="{{raiseStep}}"（控件层就只能停在盲注倍数）');
+    ok(/bindtap="onCustomStep"/.test(wxmlSrc) && /data-dir="1"/.test(wxmlSrc) && /data-dir="-1"/.test(wxmlSrc),
+      '面板提供 ± 步进按钮（data-dir 双向）');
+    ok(/data-pct="0\.33"/.test(wxmlSrc) && /data-pct="0\.67"/.test(wxmlSrc) && /data-pct="1"/.test(wxmlSrc),
+      '面板提供 33%/67%/100% 快捷额');
+    ok(!/onCustomHalf|onCustomPot/.test(wxmlSrc + pctSrc),
+      '旧的 ½池/底池 快捷入口已移除（统一为百分比档）');
   }
 
   /* ---------- 静态守卫：金额入口全部收口到 setRaiseTo ---------- */
@@ -1159,7 +1227,7 @@ while (guard++ < 400) {
   const raiseEntry = (tableSrc.match(/setRaiseTo\(/g) || []).length;
   ok(raiseEntry >= 10, '金额设置入口全部走 setRaiseTo（1 定义 + 9 调用），实际 ' + raiseEntry);
   ['onCustomTap', 'onRaiseSlider', 'onRaiseInput', 'onRaiseBlur', 'onCustomMin',
-    'onCustomHalf', 'onCustomPot', 'onCustomMax', 'onPresetTap'].forEach(fn => {
+    'onCustomStep', 'onCustomPct', 'onCustomMax', 'onPresetTap'].forEach(fn => {
     const body = (tableSrc.match(new RegExp('\\n  ' + fn + '\\([\\s\\S]*?\\n  \\},')) || [''])[0];
     ok(!/setData\(\{ raiseTo/.test(body),
       '自定义下注：' + fn + ' 不直写 raiseTo（按钮文案必然同步）');

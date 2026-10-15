@@ -223,20 +223,25 @@
           <!-- 自定义下注面板：两行布局
                第 1 行 = 最小 / 滑杆 / 最大。两端数字是滑杆的「固定轴标签」（flex:none），
                         滑杆只吃剩余宽度 → 任意筹码位数下都不会被遮盖。
-               第 2 行 = 精确输入 + ½池 / 底池 快捷额 + 收起（收起后回到档位条）。 -->
+                        step=raiseStep（小盲注）让滑杆只能停在盲注整数倍。
+               第 2 行 = −/+ 步进 + 精确输入 + 百分比快捷额 + 收起。 -->
           <view class="raise-custom" wx:if="{{raiseCustom && legal && legal.canRaise}}">
             <view class="rc-axis">
               <view class="rc-end" bindtap="onCustomMin">最小<text class="rc-num">{{raiseMin}}</text></view>
               <slider class="rc-slider" min="{{raiseMin}}" max="{{raiseMax}}" value="{{raiseTo}}"
-                      block-size="14" activeColor="#e8a33d" backgroundColor="rgba(255,255,255,.16)"
+                      step="{{raiseStep}}" block-size="14"
+                      activeColor="#e8a33d" backgroundColor="rgba(255,255,255,.16)"
                       bindchanging="onRaiseSlider" bindchange="onRaiseSlider" />
               <view class="rc-end" bindtap="onCustomMax">最大<text class="rc-num">{{raiseMax}}</text></view>
             </view>
             <view class="rc-edit">
+              <view class="rc-step" bindtap="onCustomStep" data-dir="-1">−</view>
               <input class="rc-input" type="number" value="{{raiseTo}}"
                      bindinput="onRaiseInput" bindblur="onRaiseBlur" />
-              <view class="rc-q" bindtap="onCustomHalf">½池</view>
-              <view class="rc-q" bindtap="onCustomPot">底池</view>
+              <view class="rc-step" bindtap="onCustomStep" data-dir="1">+</view>
+              <view class="rc-q" bindtap="onCustomPct" data-pct="0.33">33%</view>
+              <view class="rc-q" bindtap="onCustomPct" data-pct="0.67">67%</view>
+              <view class="rc-q" bindtap="onCustomPct" data-pct="1">100%</view>
               <view class="rc-q" bindtap="onCustomClose">收起</view>
             </view>
           </view>

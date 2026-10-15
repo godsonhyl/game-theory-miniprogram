@@ -114,6 +114,16 @@ const RESULT_MODAL_MS = 10000;
  * 买入额随座位同步到云端，房主开局时按各人买入发筹码。
  */
 const DEFAULT_BUY_IN = 1000;
+
+/**
+ * 加注档位（sizing chips）的比例表：档位 key → 底池比例。
+ *
+ * 用百分比而不是 ½池/⅔池 这类分数，因为「池的三分之一」在不同轮次的实际筹码量
+ * 会让人算不清「我到底叫了多少」；百分比直接对应池子，横向可比。
+ * 33/67 取分数的近似整数倍（1/3、2/3），兼顾直觉与整齐的数字。
+ */
+const RAISE_PRESET_PCT = { p33: 1 / 3, p50: 0.5, p67: 2 / 3, p100: 1 };
+
 const BUY_IN_OPTIONS = [500, 1000, 2000, 5000];
 
 /* ---------- 牌桌互动与氛围（评审 2026-10-15 设计文档 docs/plans/2026-10-15-table-interaction-design.md） ---------- */
@@ -248,15 +258,18 @@ Page({
     // 加注档位（主流 App 的 bet sizing chips，替代占位很大的滑杆）
     raisePresets: [
       { k: 'min', t: '最小' },
-      { k: 'half', t: '½池' },
-      { k: 'pot', t: '底池' },
+      { k: 'p33', t: '33%' },
+      { k: 'p50', t: '50%' },
+      { k: 'p67', t: '67%' },
+      { k: 'p100', t: '100%' },
       { k: 'allin', t: '全下' },
       { k: 'custom', t: '自定义' }
     ],
-    // 自定义下注面板：数值范围 0 ~ raiseMax（MAX = 全下金额）
+    // 自定义下注面板：数值范围 0 ~ raiseMax（MAX = 全下金额），步进 = 小盲注
     raiseCustom: false,
     raiseMin: 0,
     raiseMax: 0,
+    raiseStep: 10,   // 小盲注整数倍，建局后由 render 按 game.sb 校正
     // 实际会提交的加注额 / 是否等价于全下（与 onRaise 同口径，仅用于按钮文案）
     raiseSubmit: 0,
     raiseAllIn: false,
@@ -2080,6 +2093,8 @@ Page({
       // 自定义下注面板的上下限：MAX = 全下金额（raiseTo 可达上限），最小值由合法下注决定
       const raiseMin = (isMyTurn && legal) ? legal.minRaiseTo : 0;
       const raiseMax = (isMyTurn && legal) ? legal.maxRaiseTo : 0;
+      // 步进 = 小盲注：滑杆与 ± 按钮都以它为单位，金额永不为零头
+      const raiseStep = isMyTurn ? this.blindStep() : 0;
       // 非我回合 / 不可加注时收起自定义面板，避免残留数值误导
       const raiseCustom = isMyTurn && legal && legal.canRaise ? this.data.raiseCustom : false;
       // 实际会提交的加注额（与 onRaise 钳制同口径，仅用于按钮文案）：
@@ -2104,6 +2119,7 @@ Page({
         raiseTo,
         raiseMin,
         raiseMax,
+        raiseStep,
         raiseCustom,
         raiseSubmit,
         raiseAllIn,
@@ -2742,15 +2758,51 @@ Page({
     if (v === 'custom') { this.onCustomTap(); return; }
     // 选预设档时收起自定义面板
     this.setData({ raiseCustom: false });
-    const curBet = game.currentBet;
-    const pot = game.potTotal();
-    let target;
-    if (v === 'min') target = legal.minRaiseTo;
-    else if (v === 'half') target = Math.min(legal.maxRaiseTo, Math.max(legal.minRaiseTo, curBet * 2 + pot * 0.5));
-    else if (v === 'pot') target = Math.min(legal.maxRaiseTo, Math.max(legal.minRaiseTo, curBet * 2 + pot));
-    else target = legal.maxRaiseTo;
-
+    const target = this.presetTarget(v);
+    if (target === null) return;
     this.setRaiseTo(target, v);
+  },
+
+  /**
+   * 预设档 → 目标「加注到」金额。返回 null 表示该档非法（不改动任何状态）。
+   *
+   * 口径：加注到 = 当前最高下注 × 2 + 底池 × 比例。
+   *   - 多轮加注后 currentBet 已抬高，直接用「×2 + 池×比例」能保证叫的量
+   *     始终是「池的百分之多少」（主流 App 的 sizing chips 就是这个口径）。
+   *   - 比例档一律向下吸附到小盲注整数倍（见 snapToBlind），避免出现 137 这种
+   *     零头数字，与自定义面板的步进口径保持一致。
+   *   - 全下不吸附：all-in 的金额就是玩家剩余筹码，本身可能不是盲注倍数。
+   */
+  presetTarget(v) {
+    const l = this.data.legal || {};
+    const min = Number(l.minRaiseTo) || 0;
+    const max = Number(l.maxRaiseTo) || 0;
+    if (v === 'min') return min;
+    if (v === 'allin') return max;
+    const pct = RAISE_PRESET_PCT[v];
+    if (pct === undefined) return null;
+    const raw = game.currentBet * 2 + game.potTotal() * pct;
+    return Math.min(max, Math.max(min, this.snapToBlind(Math.min(raw, max))));
+  },
+
+  /**
+   * 吸附到小盲注的整数倍（默认「就近」：不足半个盲注则进位，保证叫注不小于盲注粒度）。
+   * 超过上限时回落为上限——上限是玩家剩余筹码，可能不是盲注倍数，不能被抬高一档。
+   */
+  snapToBlind(v) {
+    const step = this.blindStep();
+    const n = Math.round(Number(v) || 0);
+    if (step <= 1) return n;
+    const snapped = Math.round(n / step) * step;
+    const max = Number((this.data.legal || {}).maxRaiseTo) || 0;
+    if (max && snapped > max) return max;
+    return Math.max(step, snapped);
+  },
+
+  /** 小盲注步长（缺省 10，与建局 sb 保持一致） */
+  blindStep() {
+    const sb = game && game.sb;
+    return sb > 0 ? sb : 10;
   },
 
   // 展开/收起自定义下注面板
@@ -2787,14 +2839,32 @@ Page({
     this.setRaiseTo(raiseTo, open ? 'custom' : this.data.raisePreset);
   },
 
-  // 滑杆拖动：0 ~ MAX 任意值（MAX = 全下）
+  // 滑杆拖动：按小盲注步长吸附（step 由 WXML 传入，控件本身也是离散步进）
   onRaiseSlider(e) {
-    this.setRaiseTo(e.detail.value, 'custom');
+    const step = this.blindStep();
+    let v = Number(e.detail.value);
+    if (step > 1) v = Math.round(v / step) * step;
+    this.setRaiseTo(v, 'custom');
   },
 
-  // 数字输入：只做清洗与上限。不在输入过程中抬到下限 —— 否则想输「500」时
-  // 刚打完第一个「5」就会被改写成最小加注，后面根本没法接着输。
-  // 上下限直接读 legal（唯一真源），不依赖 render 派生的 raiseMin/raiseMax 快照。
+  /** 面板 ± 一档（一个小盲注）：长按可连续调，金额永不为零头 */
+  onCustomStep(e) {
+    const l = this.data.legal || {};
+    const min = Number(l.minRaiseTo) || 0;
+    const max = Number(l.maxRaiseTo) || 0;
+    const dir = Number(e.currentTarget.dataset.dir) >= 0 ? 1 : -1;
+    const step = this.blindStep();
+    const cur = Number(this.data.raiseTo) || 0;
+    let v = cur + dir * step;
+    // 上限是剩余筹码，可能不是盲注倍数 —— 越界时直接落到边界值而不是叠加
+    if (max && v > max) v = max;
+    if (v < min) v = min;
+    this.setRaiseTo(v, 'custom');
+  },
+
+  // 数字输入：只做清洗与上限。不在输入过程中抬到下限/吸附 ——
+  // 否则想输「500」时刚打完第一个「5」就会被改写，后面根本没法接着输。
+  // 吸附与下限补正都推迟到失焦（onRaiseBlur）。
   onRaiseInput(e) {
     const l = this.data.legal || {};
     const max = l.maxRaiseTo || this.data.raiseMax || 0;
@@ -2804,28 +2874,36 @@ Page({
     this.setRaiseTo(v, 'custom');
   },
 
-  // 失焦：把低于最小加注的值补到下限，保证界面上显示的数字始终合法
+  /**
+   * 失焦归一：把任意输入收敛成「合法且是小盲注整数倍」的金额。
+   *   1) 先吸附到盲注整数倍（就近）；
+   *   2) 再钳到 [最小加注, 上限]。
+   * 顺序很重要：上限常是零头（如剩余 157），先钳上限再吸附会把它抬到 160 越界，
+   * 所以吸附在前、钳制在后，且 snapToBlind 内部已对越界值回落成上限。
+   */
   onRaiseBlur() {
     const l = this.data.legal || {};
-    const min = l.minRaiseTo || this.data.raiseMin || 0;
-    if (min && this.data.raiseTo < min) this.setRaiseTo(min, 'custom');
+    const min = Number(l.minRaiseTo) || 0;
+    const max = Number(l.maxRaiseTo) || 0;
+    let v = this.snapToBlind(this.data.raiseTo);
+    if (max && v > max) v = max;
+    if (min && v < min) v = min;
+    this.setRaiseTo(v, 'custom');
   },
 
-  // 收起自定义面板 → 恢复档位条（两者互斥，收起即回到「最小/½池/底池/全下」）
+  // 收起自定义面板 → 恢复档位条（两者互斥，收起即回到百分比档位条）
   onCustomClose() {
     this.setData({ raiseCustom: false });
   },
 
   onCustomMin() { const l = this.data.legal; if (l) this.setRaiseTo(l.minRaiseTo, 'custom'); },
-  onCustomHalf() {
+  onCustomPct(e) {
+    const pct = Number(e.currentTarget.dataset.pct);
+    if (isNaN(pct)) return;
     const l = this.data.legal; if (!l) return;
-    const target = Math.min(l.maxRaiseTo, Math.max(l.minRaiseTo, game.currentBet * 2 + game.potTotal() * 0.5));
-    this.setRaiseTo(target, 'custom');
-  },
-  onCustomPot() {
-    const l = this.data.legal; if (!l) return;
-    const target = Math.min(l.maxRaiseTo, Math.max(l.minRaiseTo, game.currentBet * 2 + game.potTotal()));
-    this.setRaiseTo(target, 'custom');
+    const raw = game.currentBet * 2 + game.potTotal() * pct;
+    const v = Math.min(l.maxRaiseTo, Math.max(l.minRaiseTo, this.snapToBlind(raw)));
+    this.setRaiseTo(v, 'custom');
   },
   onCustomMax() { const l = this.data.legal; if (l) this.setRaiseTo(l.maxRaiseTo, 'custom'); },
 

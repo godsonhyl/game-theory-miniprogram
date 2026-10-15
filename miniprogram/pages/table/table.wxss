@@ -478,6 +478,18 @@
 }
 .rc-q:active { background: rgba(232,163,61,.2); border-color: rgba(232,163,61,.62); }
 .rc-edit .rc-q { margin-left: calc(1.4 * var(--uw)); }
+
+/* ± 步进按钮：一个小盲注一档。flex:none 保证不被输入框挤扁 */
+.rc-step {
+  flex: none; width: calc(5.4 * var(--uw)); height: calc(5.2 * var(--uh));
+  text-align: center; user-select: none;
+  font-size: calc(3.6 * var(--uh)); font-weight: 700; line-height: calc(5 * var(--uh));
+  color: #ffd98a; background: rgba(232,163,61,.12);
+  border: 1rpx solid rgba(232,163,61,.42); border-radius: calc(1.4 * var(--uh));
+}
+.rc-step:active { background: rgba(232,163,61,.3); }
+.rc-step + .rc-input { margin-left: calc(1 * var(--uw)); }
+.rc-input + .rc-step { margin-left: calc(1 * var(--uw)); }
 .mytip {
   font-size: calc(3 * var(--uh)); color: var(--mut); line-height: 1.35; text-align: center;
   display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden;
