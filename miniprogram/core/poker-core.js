@@ -543,7 +543,11 @@
    * 六、AI 决策
    * ========================================================== */
 
-  /** 翻牌前起手牌打分（0~40+，越大越强） */
+  /** 翻牌前起手牌打分（0~40+，越大越强）。
+   *  ⚠️ rank 索引表：0='2' … 12='A'（见文件头），A 是 12 号不是 0 号。
+   *  历史事故（评审 2026-10-15）：这里曾写 `if (r1===0) v=4` 注释「A」——
+   *  实际命中的是 deuce；三条 A/K/Q 分支全是死代码或错位降分。
+   *  现统一为「点数越高牌越强」单调映射，无人为特判。 */
   function preflopScore(hole, opts) {
     opts = opts || {};
     const r1 = Math.max(rankOf(hole[0]), rankOf(hole[1]));
@@ -551,19 +555,18 @@
     const suited = suitOf(hole[0]) === suitOf(hole[1]);
     let score;
     if (r1 === r2) {
+      // 口袋对：所有对子按点数单调递增（A 对最强）
       score = 10 + r1 * 2.2;
     } else {
+      // 高牌为主体：A=12 → 24 分起步，与 K=22、Q=20 拉开档位
       let v = r1 * 2;
-      if (r1 === 0) v = 4;         // A
-      else if (r1 === 1) v = 3;    // K
-      else if (r1 === 2) v = 2;    // Q
       const gap = r1 - r2 - 1;
       if (gap === 1) v -= 1;
       else if (gap === 2) v -= 2;
       else if (gap === 3) v -= 4;
       else if (gap >= 4) v -= 5;
       if (suited) v += 2;
-      if (r2 >= 2 && r1 - r2 <= 2) v += 1;
+      if (r2 >= 10 && r1 - r2 <= 2) v += 1;   // 双高张（Q 以上连张）略加分
       score = v;
     }
     score += (opts.positionFactor || 0) * 12;
@@ -588,16 +591,32 @@
     const tight = style.tight !== undefined ? style.tight : 0.5;
     const rnd = ctx.rng || Math.random;
 
-    // 引擎给出的合法加注区间（缺失时退化为粗略估计）
-    const minRaiseTo = ctx.minRaiseTo || (currentBet + Math.max(1, Math.round(currentBet * 0.5)));
+    // 引擎给出的合法加注区间。调用方（table.js scheduleAI / 压力测试）都会传入。
+    // ⚠️ 退化路径（未传 minRaiseTo）下引擎的真实最小加注额无从得知——它源自
+    // 「上一手加注增量」而非大盲，按大盲估算必然错位（评审 2026-10-15 实测
+    // 3000 局退化路径 282 次 RAISE 被引擎拒绝）。因此退化路径一律不返回 RAISE，
+    // 由 raiseDecision 走全下/跟注兜底——二者无需区间即可保证合法。
+    // ctx.canRaise=false（被不足额全下封锁）时同理转跟注/全下。
+    const hasRange = ctx.minRaiseTo !== undefined;
+    const minRaiseTo = ctx.minRaiseTo || 0;
     const maxRaiseTo = Math.min(ctx.maxRaiseTo !== undefined ? ctx.maxRaiseTo : stack, stack);
 
     /**
      * 把「理想加注额」夹取到合法区间。
      * ⚠️ 必须夹取：引擎 act() 会严格拒绝非法加注额，
      *    若 AI 给出越界值会导致行动失败、牌局卡死。
+     *    无加注权（canRaise=false，被不足额全下封锁）时不得加注。
      */
     const raiseDecision = function (desiredTo, reason) {
+      if (ctx.canRaise === false || !hasRange) {
+        // 加注权被封锁（他人不足额全下）/ 退化路径无合法区间：
+        // 不加注，全下或跟注二选一（二者无需区间即可保证合法）
+        if (stack > 0 && (ctx.canRaise === false || maxRaiseTo > currentBet)) {
+          if (ctx.canRaise === false) return { action: ACTION.ALLIN, amount: stack, reason: reason + '（加注被封锁，转全下）' };
+          return { action: ACTION.CALL, amount: toCall, reason: reason + '（无合法区间，降级跟注）' };
+        }
+        return { action: ACTION.CALL, amount: toCall, reason: reason + '（降级跟注）' };
+      }
       if (maxRaiseTo <= currentBet) {
         // 已无加注空间 → 只能全下或跟注
         if (stack > 0) return { action: ACTION.ALLIN, amount: stack, reason: reason + '（加注空间不足，转全下）' };

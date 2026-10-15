@@ -2499,6 +2499,10 @@ Page({
           style: p.style,
           minRaiseTo: legal.minRaiseTo,
           maxRaiseTo: legal.maxRaiseTo,
+          // 加注权 & 大盲一并交给 AI：退化路径的估算区间不精确，
+          // 传全后 aiDecide 的夹取永远落在引擎合法区间内
+          canRaise: legal.canRaise,
+          bb: game.bb,
           rng: P.createRng('mp-' + game.handNo + '-' + seat + '-' + (aiStep++))
         });
 

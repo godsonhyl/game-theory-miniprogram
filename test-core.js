@@ -335,6 +335,58 @@ d = P.detectDraws([H.HA, H.HQ], [H.HJ, H.HT, H.C9, H.H2, H.S3]);
 eq(d.outs, 0, '河牌圈不输出听牌');
 
 console.log('\n【7】压力测试：2000 手全自动对局');
+// ——AI 决策健全性（评审 2026-10-15 MEDIUM 回归）——
+// 1) preflopScore 排位正确：A 是 rank 12 不是 0，历史版本 AA<KK<QQ 曾成立过
+{
+  const c = P.cardId;
+  const sc = (a, b, s) => P.preflopScore([c(a, s || 0), c(b, 1)], {});
+  ok(sc(12, 12) > sc(11, 11), `AA(${sc(12,12)}) > KK(${sc(11,11)})：高位点数单调`);
+  ok(sc(11, 11) > sc(0, 0), `KK(${sc(11,11)}) > 22(${sc(0,0)})：口袋对按点数单调`);
+  ok(sc(12, 12) > sc(12, 11), `AA(${sc(12,12)}) > AK(${sc(12,11)})：对子强于散高牌`);
+  ok(sc(12, 12) > sc(12, 5), `AA(${sc(12,12)}) > A7(${sc(12,5)})：踢脚人位置不反超`);
+}
+// 2) 退化路径（不传合法区间）：绝不返回会被引擎拒绝的 RAISE
+{
+  const deg = P.createGame({
+    players: [
+      { id: 'p0', name: 'P0', seat: 0, stack: 1000 },
+      { id: 'p1', name: 'P1', seat: 1, stack: 400, style: { aggro: 0.95, tight: 0 } }
+    ],
+    sb: 10, bb: 20, dealerSeat: 0, seed: 'ai-degraded'
+  });
+  deg.startHand();
+  let step = 0, rejected = 0;
+  while (!deg.result && step++ < 200) {
+    const s = deg.actionSeat;
+    if (s === -1) break;
+    const me = deg.seatOf(s);
+    const legal = deg.legalActions(s);
+    if (!legal) break;
+    const d = P.aiDecide({
+      hole: me.hole, board: deg.board, pot: deg.potTotal(),
+      toCall: legal.toCall, stack: me.stack, currentBet: deg.currentBet,
+      numActive: 2, style: { aggro: 0.95, tight: 0 },
+      // 故意不传 minRaiseTo / maxRaiseTo / canRaise → 退化路径
+      rng: P.createRng('deg' + step)
+    });
+    const r = deg.act(s, d.action, d.amount);
+    if (!r.ok) rejected++;
+  }
+  eq(rejected, 0, '退化路径（无合法区间）AI 动作 0 次被引擎拒绝');
+}
+// 3) canRaise=false（被不足额全下封锁）时不得加注
+{
+  const d = P.aiDecide({
+    hole: [P.cardId(12, 0), P.cardId(12, 1)], board: [], pot: 300,
+    toCall: 100, stack: 800, currentBet: 200, numActive: 3,
+    style: { aggro: 1, tight: 0 },
+    minRaiseTo: 400, maxRaiseTo: 1000,
+    canRaise: false,
+    rng: P.createRng('blocked')
+  });
+  ok(d.action !== 'raise', 'canRaise=false 时 AI 不返回加注，实际 ' + d.action);
+}
+
 let hands = 0;
 const errors = [];
 for (let round = 0; round < 2000; round++) {
