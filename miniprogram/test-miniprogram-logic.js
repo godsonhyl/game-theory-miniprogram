@@ -789,6 +789,21 @@ while (guard++ < 400) {
     '异步推进到「轮到我且可加注」（验证加注按钮文案的前置条件）');
   if (dataStore.isMyTurn && dataStore.legal && dataStore.legal.canRaise) {
     const minT = dataStore.legal.minRaiseTo, maxT = dataStore.legal.maxRaiseTo;
+    // 真机回归：点「自定义」无反应 —— onCustomTap 翻转了 open 却从未写 data.raiseCustom
+    ok(dataStore.raiseCustom === false, '初始：自定义面板收起，档位条可见');
+    pageCtx.onCustomTap();
+    ok(dataStore.raiseCustom === true,
+      '点「自定义」→ 面板真正展开（曾因漏写 raiseCustom 而点击无反应）');
+    ok(dataStore.raiseTo >= minT,
+      '展开时自动对齐到最小加注 ' + minT + '，当前 ' + dataStore.raiseTo);
+    pageCtx.onPresetTap({ currentTarget: { dataset: { v: 'min' } } });
+    ok(dataStore.raiseCustom === false, '切回预设档 → 面板收起（两者互斥）');
+    pageCtx.onPresetTap({ currentTarget: { dataset: { v: 'custom' } } });
+    ok(dataStore.raiseCustom === true, '从档位条点「自定义」→ 同样能展开');
+    pageCtx.onCustomClose();
+    ok(dataStore.raiseCustom === false, '「收起」→ 回到档位条');
+    pageCtx.onCustomTap();
+    ok(dataStore.raiseCustom === true, '再次展开成功');
     pageCtx.onRaiseSlider({ detail: { value: 346 } });
     ok(dataStore.raiseTo === 346, '滑杆拖到 346 → raiseTo 同步为 346');
     ok(dataStore.raiseSubmit === 346,
@@ -808,6 +823,8 @@ while (guard++ < 400) {
     pageCtx.onRaiseBlur();
     ok(dataStore.raiseTo === minT && dataStore.raiseSubmit === minT,
       '失焦 → 补正到最小加注 ' + minT + '，按钮同步');
+    ok(dataStore.raiseCustom === true,
+      '滑杆/输入全程保持面板展开（金额改动不应误收起面板）');
     pageCtx.onCustomClose();
     ok(dataStore.raiseCustom === false, '「收起」→ 回到档位条');
   }
@@ -819,6 +836,9 @@ while (guard++ < 400) {
     'setRaiseTo 同帧写入按钮文案派生字段（不依赖 render 触发）');
   ok(!/setData\(\{ raiseTo/.test(tableSrc),
     '所有改下注金额的入口均已收口到 setRaiseTo（无裸 setData({raiseTo}) 漏同步）');
+  // setRaiseTo 只管金额三件套，展开态必须由 onCustomTap 自己写 —— 曾漏写导致点「自定义」无反应
+  ok(/onCustomTap\(\)\s*\{[\s\S]{0,900}?setData\(\{\s*raiseCustom:\s*open\s*\}\)/.test(tableSrc),
+    'onCustomTap 显式写入 raiseCustom（否则面板永远不弹出）');
   const raiseEntry = (tableSrc.match(/setRaiseTo\(/g) || []).length;
   ok(raiseEntry >= 10, '金额设置入口全部走 setRaiseTo（1 定义 + 9 调用），实际 ' + raiseEntry);
   ['onCustomTap', 'onRaiseSlider', 'onRaiseInput', 'onRaiseBlur', 'onCustomMin',

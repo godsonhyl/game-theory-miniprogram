@@ -2039,6 +2039,9 @@ Page({
     const open = !this.data.raiseCustom;
     // 展开时若当前金额低于最小下注，自动对齐到最小（避免直接全下 0 这种非法值）
     const raiseTo = open && this.data.raiseTo < legal.minRaiseTo ? legal.minRaiseTo : this.data.raiseTo;
+    // ⚠️ 必须显式写 raiseCustom：setRaiseTo 只负责金额三件套（raiseTo/Submit/AllIn），
+    // 不碰展开态。漏写这里会导致点「自定义」面板永远不弹出（曾表现为点击无反应）。
+    this.setData({ raiseCustom: open });
     this.setRaiseTo(raiseTo, open ? 'custom' : this.data.raisePreset);
   },
 
