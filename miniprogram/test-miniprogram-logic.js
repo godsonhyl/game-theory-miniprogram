@@ -970,6 +970,34 @@ while (guard++ < 400) {
   ok(!/onRaiseChange/.test(tableSrc) && !/onRaiseChange/.test(wxmlSrc),
     '旧滑杆回调 onRaiseChange 无死代码、无悬空绑定');
 
+  /* ---------- 生命周期：onHide 全量暂停 + onShow 恢复（评审 MEDIUM 回归） ---------- */
+  {
+    ok(/onHide\(\)\s*\{\s*[\s\S]{0,120}?this\.onEnterBackground\(\)/.test(tableSrc),
+      'onHide 已定义并进入后台暂停（此前切后台轮询/看门狗/倒计时照跑）');
+    ok(/onEnterBackground\(\)\s*\{[\s\S]{0,2000}?this\.stopPolling\(\)/.test(tableSrc) &&
+      /onEnterBackground\(\)\s*\{[\s\S]{0,2000}?this\.stopEngineWatch\(\)/.test(tableSrc),
+      '后台暂停覆盖轮询与看门狗');
+    ok(/onEnterBackground\(\)\s*\{[\s\S]{0,2000}?clearTimeout\(aiTimer\)/.test(tableSrc),
+      '后台暂停覆盖 AI 调度');
+    ok(/onEnterBackground\(\)\s*\{[\s\S]{0,2400}?bgRemainSec = Number\(this\.data\.remainSec\)/.test(tableSrc) &&
+      /onLeaveBackground\(\)\s*\{[\s\S]{0,900}?startClock\(resume\)/.test(tableSrc),
+      '限时局后台断点续走（回前台从剩余秒数继续，后台时间不计入）');
+    // 行为级验证：onShow 幂等（未切后台时 onShow 不启动任何东西）
+    const pollBefore = dataStore.phase;
+    pageCtx.onShow();
+    ok(pageCtx.inBackground === false, 'onShow 在前台状态下消费后台标记（幂等）');
+    ok(dataStore.phase === pollBefore, 'onShow 不改变牌局阶段');
+    // onHide → onShow 完整回环：看门狗与音效泵恢复
+    pageCtx.onHide();
+    ok(pageCtx.inBackground === true, 'onHide 置后台标记');
+    ok(pageCtx.engineWatch === null, 'onHide 停掉引擎看门狗');
+    ok(pageCtx.sfxPump === null, 'onHide 停掉音效泵');
+    pageCtx.onShow();
+    ok(pageCtx.inBackground === false, 'onShow 清后台标记');
+    ok(pageCtx.engineWatch !== null, 'onShow 恢复引擎看门狗');
+    ok(pageCtx.sfxPump !== null, 'onShow 恢复音效泵');
+  }
+
   /* ---------- 输出 ---------- */
   console.log('\n' + '='.repeat(52));
   if (failures.length === 0) {

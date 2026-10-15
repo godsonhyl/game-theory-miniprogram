@@ -267,6 +267,8 @@ Page({
     this.publishTimer = null;
     this.friendActSince = 0;   // 房主端：好友行动开始时刻（超 30s 代弃牌）
     this.sawHost = false;      // 好友端：是否见过房主行（用于判断房间解散）
+    this.inBackground = false; // 前后台切换状态（onHide/onShow 配对消费）
+    this.bgRemainSec = undefined; // 限时局切后台时的剩余秒数（回前台断点续走）
     // 房间参数：限定人数与游戏时长（创建房间时设定）
     this.maxSeats = Math.min(9, Math.max(2, Number(opts.max) || 6));
     this.durationMin = Math.max(0, Number(opts.dur) || 0);
@@ -336,6 +338,56 @@ Page({
     // 从后台切回：iOS 会把 WebAudio 上下文挂起（currentTime 停走），
     // 这里补一次解锁尝试；用户下一次触摸也会再触发 onFirstTouch。
     if (this.sfxUnlockBound) { try { sfx.unlock(); } catch (e) {} }
+    this.onLeaveBackground();
+  },
+
+  /**
+   * onHide（切后台/跳分享面板）：全量暂停定时器与云端轮询。
+   * 评审 2026-10-15 MEDIUM：此前切后台时轮询/看门狗/倒计时/AI 调度照跑——
+   * 后台 JS 定时器被挂起后节奏失真（回来一次性补跑）、云端心跳白写、
+   * 限时局的时长在后台偷走。心跳不在暂停列表：房主掉线 15s 判离线是
+   * 房间语义（真·退后台超过 15s 本就该判离线），不能因切后台豁免。
+   */
+  onHide() {
+    this.onEnterBackground();
+  },
+
+  /** 切后台：停轮询/看门狗/AI 调度/个人计时环/时长倒计时/音效泵 */
+  onEnterBackground() {
+    if (!this.inBackground) {
+      this.inBackground = true;
+      this.saveSnapshot();   // 后台被系统直接回收时（不走 onUnload）也能续局
+    }
+    this.stopPolling();
+    this.stopEngineWatch();
+    if (aiTimer) { clearTimeout(aiTimer); aiTimer = null; }
+    if (timer) { clearInterval(timer); timer = null; }
+    this.stopSfxPump();
+    // 限时局：记下剩余秒数，回前台从断点继续（后台时间不计入牌局时长）
+    if (clock) {
+      this.bgRemainSec = Number(this.data.remainSec) || 0;
+      this.clearClock();
+    }
+  },
+
+  /** 回前台：恢复被 onEnterBackground 暂停的一切（幂等：没暂停过就不动） */
+  onLeaveBackground() {
+    if (!this.inBackground) return;
+    this.inBackground = false;
+    // 回前台：先补一轮轮询再看缺什么（好友端后台期间可能错过房主广播）
+    if (this.syncLive && this.roomNo && !this.pollTimer) this.startPolling();
+    // 看门狗在 initGame 启动、onEnterBackground 停掉；此处不区分模式——
+    // healEngine 内部自判「好友房仅房主端驱动」，双模式重启它最简单且幂等
+    if (!this.engineWatch) this.startEngineWatch();
+    if (!this.sfxPump) this.startSfxPump();
+    if (this.durationMin && this.bgRemainSec !== undefined) {
+      const resume = this.bgRemainSec;
+      this.bgRemainSec = undefined;
+      if (resume > 0 && !this.data.timeUp) this.startClock(resume);
+    }
+    // 回到页面的下一拍补一次全量刷新（好友端可能错过后台期间的房主广播）
+    if (this.syncLive && this.roomNo) this.pollOnce();
+    this.render();
   },
 
   /**
