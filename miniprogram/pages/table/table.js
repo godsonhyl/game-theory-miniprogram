@@ -21,6 +21,10 @@ const sfx = require('../../utils/sfx');   // 合成音效（发牌/下注/加注
  */
 const TICK_MAX = 20;
 
+/** 同类同步失败提示的最短间隔：心跳 5s 一发，10s 节流意味着最多偶发弹一次，
+ *  连续失败也只保持「约两条一次」的频率，不把 toast 叠成提示帘。 */
+const SYNC_FAIL_TOAST_MS = 10000;
+
 /**
  * 统一座位环坐标（WPK 式）：
  *   - 「我」锚定在椭圆底部中央（y 最大），底部区域完全留给我的手牌 + 操作条；
@@ -607,11 +611,24 @@ Page({
     if (this.pollTimer) { clearInterval(this.pollTimer); this.pollTimer = null; }
   },
 
+  /** 同步写的失败提示统一收口：同文案 10s 内只提示一次（心跳 5s 一发、
+   *  每发都弹 toast 会把界面刷成提示帘）。降级路径除外——降级已有
+   *  专门的「已转本地模式」提示，这里不再叠加。 */
+  syncFailToast(title) {
+    this.syncFailLast = this.syncFailLast || {};
+    const now = Date.now();
+    if (now - (this.syncFailLast[title] || 0) < SYNC_FAIL_TOAST_MS) return;
+    this.syncFailLast[title] = now;
+    console.error('[table] 同步上行失败', JSON.stringify({ room: this.roomNo, title }));
+    wx.showToast({ title, icon: 'none' });
+  },
+
   startHeartbeat() {
     this.stopHeartbeat();
     if (!this.syncLive || !this.roomNo) return;
     this.hbTimer = setInterval(() => {
-      roomSync.heartbeat(this.roomNo).catch(() => {});
+      roomSync.heartbeat(this.roomNo)
+        .catch(() => this.syncFailToast('网络不稳定，同步可能延迟'));
     }, roomSync.SYNC.HEARTBEAT_MS);
   },
 
@@ -733,7 +750,9 @@ Page({
     const bots = (this.data.waitSeats || [])
       .filter(s => s.isBot)
       .map(s => ({ seat: s.seat, kind: 'bot', name: s.name }));
-    roomSync.publishState(this.roomNo, { kind: 'waiting', seats: bots }).catch(() => {});
+    // 任何一处静默吞错都会让好友端 UI 与权威端静默撕裂；改回去前先读评审报告 MEDIUM 一节。
+    roomSync.publishState(this.roomNo, { kind: 'waiting', seats: bots })
+      .catch(() => this.syncFailToast('布局广播失败，好友端可能暂看不到'));
   },
 
   /**
@@ -1003,7 +1022,10 @@ Page({
       summary: this.data.summary || null,
       handNo: game.handNo
     };
-    roomSync.publishState(this.roomNo, state).catch(() => {});
+    // 房间公开状态写库失败必须提示：好友端下一帧就看不到牌局了，用户却完全不知情。
+    // 与其它上行共用 syncFailToast 节流，避免半路复活时连续失败屏被 toast 刷屏。
+    roomSync.publishState(this.roomNo, state)
+      .catch(() => this.syncFailToast('牌局同步失败，好友端可能暂看不到'));
   },
 
   /**
@@ -1626,8 +1648,10 @@ Page({
     this.pendingSit = false;
     this.pushChat(this.mySeat, this.meLabel(false), '站起观战');
     if (this.remoteMode) {
-      // 镜像端：站起动作上行，房主把该座位标记 sittingOut
-      roomSync.pushAction(this.roomNo, { type: 'stand', seat: this.roomSeat }).catch(() => {});
+      // 镜像端：站起动作上行，房主把该座位标记 sittingOut。
+      // 站起/坐下的上行失败必须提示——沉默失败会把 UI 观战态与权威端撕裂整个房间。
+      roomSync.pushAction(this.roomNo, { type: 'stand', seat: this.roomSeat })
+        .catch(() => this.syncFailToast('站起未同步成功，请检查网络'));
     }
     wx.showToast({ title: '已退出本局，可坐下重新加入', icon: 'none' });
     if (this.data.readyPhase) {
@@ -1657,8 +1681,10 @@ Page({
     this.myStanding = true;    // 本手仍观战，startHand 时才转为入局
     this.pushChat(this.mySeat, this.meLabel(false), '重新入局');
     if (this.remoteMode) {
-      // 镜像端：坐下的上行由房主记 pendingSitMap，下一手 startHand 才生效
-      roomSync.pushAction(this.roomNo, { type: 'sit', seat: this.roomSeat }).catch(() => {});
+      // 镜像端：坐下的上行由房主记 pendingSitMap，下一手 startHand 才生效。
+      // 同上：上行失败必须让用户知道，否则到下一手才发现自己没入局。
+      roomSync.pushAction(this.roomNo, { type: 'sit', seat: this.roomSeat })
+        .catch(() => this.syncFailToast('坐下未同步成功，请重试'));
     }
     wx.showToast({ title: '下一手开始发牌入局', icon: 'none' });
     if (this.data.readyPhase) {
@@ -2512,7 +2538,9 @@ Page({
       // 镜像端：写自己行的 ready_hand（下一手手数），房主轮询合入计票
       if (!game) return;
       const nextHand = game.handNo + 1;
-      roomSync.markReadyRow(this.roomNo, nextHand).catch(() => {});
+      // 就绪标记上行失败必须提示：房主收不到就绪 → 永远不发下一手，好友只会干等
+      roomSync.markReadyRow(this.roomNo, nextHand)
+        .catch(() => this.syncFailToast('准备未同步成功，请重试'));
       const list = (this.data.readyList || []).map(x =>
         Number(x.seat) === Number(this.roomSeat) ? Object.assign({}, x, { ready: true }) : x);
       this.setData({ myReady: true, readyList: list });

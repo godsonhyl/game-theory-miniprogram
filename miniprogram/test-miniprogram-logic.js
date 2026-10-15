@@ -998,6 +998,39 @@ while (guard++ < 400) {
     ok(pageCtx.sfxPump !== null, 'onShow 恢复音效泵');
   }
 
+  /* ---------- 同步上行吞错提示（评审 MEDIUM 回归）---------- */
+  {
+    // 静态守卫：table.js 的同步链路上不允许再出现裸 .catch(() => {})。
+    // 白名单只放行「离房清理」类（closeRoom/leave —— 人已离开，提示无意义，
+    // 具体见白名单数组注释）。出现新的静默吞错会在这里被拦截。
+    const silentCatches = (tableSrc.match(/\.catch\(\s*\(\s*\)\s*=>\s*\{\s*\}\s*\)/g) || []).length;
+    const SILENT_OK_COUNT = 3;   // closeRoom×2 + roomSync.leave×1（离房清理，人已走）
+    ok(silentCatches === SILENT_OK_COUNT,
+      '同步链路无静默吞错（裸 catch 仅剩离房清理 ' + SILENT_OK_COUNT + ' 处），实际 ' + silentCatches);
+    ok(/SYNC_FAIL_TOAST_MS = 10000/.test(tableSrc),
+      '同步失败提示节流常量 SYNC_FAIL_TOAST_MS 存在（心跳 5s 一发防刷屏）');
+    ok(/syncFailToast\(title\)/.test(tableSrc), '存在统一失败提示入口 syncFailToast');
+    ['heartbeat', 'pushAction', 'publishState', 'markReadyRow'].forEach(fn => {
+      const re = new RegExp('roomSync\\.' + fn + '\\([^)]*\\)[\\s\\S]{0,200}?\\.catch\\(\\(\\) => \\{\\s*\\}\\)');
+      ok(!re.test(tableSrc), 'roomSync.' + fn + ' 的失败不再被吞（必须有用户可见提示）');
+    });
+    ['站起未同步成功', '坐下未同步成功', '准备未同步成功', '牌局同步失败'].forEach(t => {
+      ok(tableSrc.indexOf(t) >= 0, '关键上行失败提示文案已定义：' + t);
+    });
+    // 行为级:同文案 10s 内节流(第二条不弹),不同文案互不影响,间隔过了恢复
+    toasts.length = 0;
+    pageCtx.syncFailLast = {};
+    pageCtx.syncFailToast('测试文案A');
+    ok(toasts[toasts.length - 1] === '测试文案A', 'syncFailToast 首次失败弹提示');
+    pageCtx.syncFailToast('测试文案A');
+    ok(toasts.filter(t => t === '测试文案A').length === 1, '同文案节流期内不重复弹');
+    pageCtx.syncFailToast('测试文案B');
+    ok(toasts.filter(t => t === '测试文案B').length === 1, '不同文案不受彼此节流影响');
+    pageCtx.syncFailLast['测试文案A'] = Date.now() - 10001;
+    pageCtx.syncFailToast('测试文案A');
+    ok(toasts.filter(t => t === '测试文案A').length === 2, '节流窗口过后恢复提示');
+  }
+
   /* ---------- 输出 ---------- */
   console.log('\n' + '='.repeat(52));
   if (failures.length === 0) {
