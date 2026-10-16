@@ -578,9 +578,7 @@ while (guard++ < 400) {
     const g = pageCtx.requireGame();
     const myTurnNow = g && !g.result && g.actionSeat === pageCtx.mySeat;
     // 静态守卫：缓存键存在 + 失效路径存在（离开我回合必须清 _adviceKey）
-    ok(adviceSrc.indexOf('_adviceKey') >= 0, 'renderAdvice 有缓存键（不再每帧重算）');
-    ok(/!isMyTurn \|\| this\.mode !== 'ai'\)[\s\S]*?_adviceKey = null/.test(adviceSrc),
-      '离开我的回合即失效缓存键（下一回合必是新局势）');
+    guardAdviceCache(adviceSrc);
     if (myTurnNow) {
       const beforeAdvice = JSON.stringify(pageCtx.data.advice || {});
       // 数引擎层调用次数：替换 P.advise 计数（页面 require 的 P 与本测试 P 同源）
@@ -683,136 +681,32 @@ while (guard++ < 400) {
   /* ---------- 「站起退出本局」入口可见性（WXML 静态检查） ---------- */
   const wxmlSrc = require('fs').readFileSync(
     path.join(__dirname, 'pages', 'table', 'table.wxml'), 'utf8');
-  const standCount = (wxmlSrc.match(/站起退出本局/g) || []).length;
-  ok(standCount >= 3, '「站起退出本局」至少 3 处入口（结算面板 / 局内弃牌后 / 菜单），实际 ' + standCount + ' 处');
-  ok(wxmlSrc.indexOf('rb-btn ghost') >= 0, '结算条含「站起退出本局」ghost 按钮（摊牌后可直接点）');
-  ok(wxmlSrc.indexOf('stand-link') >= 0, '局内弃牌后含「站起退出本局」行内入口');
-  ok(wxmlSrc.indexOf('用右侧「站起退出本局」') < 0, '退出弹窗文案不再指向已删除的右栏');
-  const sitCount = (wxmlSrc.match(/坐下加入游戏/g) || []).length;
-  ok(sitCount >= 3, '「坐下加入游戏」至少 3 处入口（局内观战 / 就绪面板 / 菜单），实际 ' + sitCount + ' 处');
-  ok((wxmlSrc.match(/onMenuSit/g) || []).length >= 3, 'onMenuSit 绑定覆盖观战、就绪面板与菜单');
+  guardStandEntryVisibility(wxmlSrc);
 
   /* ---------- ⑧ 结算条改版（resultbar）：文档流布局，不遮牌 ---------- */
-  ok(wxmlSrc.indexOf('result-banner') < 0, '旧的大弹窗 result-banner 已从 WXML 移除');
-  ok(wxmlSrc.indexOf('class="resultbar"') >= 0, '新增横向紧凑结算条 .resultbar');
-  ok(wxmlSrc.indexOf('resultbar') > wxmlSrc.indexOf('<!-- /felt -->'),
-    '回归护栏：结算条必须位于牌桌区（felt）之后，走文档流而非绝对定位浮层');
-  ok(wxmlSrc.indexOf('badge ready') >= 0 && wxmlSrc.indexOf('badge prewait') >= 0,
-    '就绪状态上座位：各座位亮出「已准备/准备中」徽章（不再在底部条逐人罗列）');
-  ok(wxmlSrc.indexOf('item.ready === true') >= 0, '座位徽章按就绪状态二态切换（true=已准备 / false=准备中）');
   const wxssSrc = require('fs').readFileSync(
     path.join(__dirname, 'pages', 'table', 'table.wxss'), 'utf8');
-  ok(wxssSrc.indexOf('.result-banner') < 0 && wxssSrc.indexOf('.result-btn') < 0,
-    '旧弹窗样式 .result-banner / .result-btn 已从 WXSS 删除');
-  ok(wxssSrc.indexOf('.resultbar {') >= 0, 'WXSS 新增 .resultbar 样式');
-  ok(/\.resultbar\s*\{[^}]*12 \* var\(--uh\)/.test(wxssSrc), '结算条高度约 12uh（横向紧凑条，纵向压缩后适配扁屏）');
-  ok(wxssSrc.indexOf('.rc-chip') >= 0 && wxssSrc.indexOf('.rb-btn') >= 0,
-    '结算条含胶囊（rc-chip）与按钮（rb-btn）样式');
+  guardResultbarLayout(wxmlSrc, wxssSrc);
 
   /* ---------- ⑨ 运行时环境守卫：禁止裸 process 引用 ---------- */
-  // 微信小程序没有 process 全局对象（Node 测试里一切正常）——一旦源码里
-  // 残留 process.env 调试语句，真机上直接 ReferenceError，且往往发生在
-  // render 等关键链路上，全局回退等待室。此处静态扫描运行时源码防复发。
-  {
-    const fs = require('fs');
-    const scanDirs = ['pages', 'utils', 'core', 'components'];
-    const bad = [];
-    const walk = dir => {
-      let entries = [];
-      try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch (e) { return; }
-      entries.forEach(en => {
-        const p = path.join(dir, en.name);
-        if (en.isDirectory()) walk(p);
-        else if (/\.js$/.test(en.name) && en.name.indexOf('test-') !== 0) {
-          const src = fs.readFileSync(p, 'utf8');
-          if (/(^|[^\w.])process\s*\./.test(src)) bad.push(path.relative(__dirname, p));
-        }
-      });
-    };
-    scanDirs.forEach(d => walk(path.join(__dirname, d)));
-    ok(bad.length === 0, '小程序运行时源码无裸 process 引用（真机无 process 全局）' +
-      (bad.length ? '，违规文件: ' + bad.join(', ') : ''));
-  }
+  guardNoBareProcess();
 
   /* ---------- ⑩ 结算展示阶段：摊牌后停留 ~5s 展示每人盈亏，再进就绪 ---------- */
   const tableSrc = require('fs').readFileSync(
     path.join(__dirname, 'pages', 'table', 'table.js'), 'utf8');
-  ok(/RESULT_SHOW_MS = 5000/.test(tableSrc), '结算展示时长常量 RESULT_SHOW_MS = 5000ms');
-  ok(tableSrc.indexOf('this.resultShowMs || RESULT_SHOW_MS') >= 0,
-    '一手结束后延迟进入就绪阶段（结算展示可被测试覆盖缩短）');
-  ok(tableSrc.indexOf("p.folded ? '弃牌'") >= 0,
-    '结算行覆盖弃牌者（未摊牌的弃牌者显示「弃牌」而非消失）');
-  ok(wxmlSrc.indexOf("item.net > 0 ? '+' + item.net") >= 0,
-    '结算胶囊显示每人净盈亏（赢 +N / 输 -N / 平 ±0）');
-  ok(wxssSrc.indexOf('.rc-gain.plus') >= 0 && wxssSrc.indexOf('.rc-gain.minus') >= 0,
-    '盈亏配色样式：赢（金）/ 输（红灰）');
+  guardResultShowPhase(tableSrc, wxmlSrc, wxssSrc);
 
   /* ---------- ⑩+ 单手结算弹窗：亮牌展示后独立弹窗显示每人净盈亏 ---------- */
   // 时序：摊牌亮牌在牌桌上停留 ~5s（不遮底牌）→ 弹出结算弹窗（逐人 net）
   // → 弹窗停留 10s 自动关闭进入就绪阶段（防无人操作卡局）。
-  ok(/RESULT_MODAL_MS = 10000/.test(tableSrc), '结算弹窗自动关闭时长常量 RESULT_MODAL_MS = 10000ms');
-  ok(tableSrc.indexOf('showResultModal') >= 0 && tableSrc.indexOf('closeResultModal') >= 0,
-    '结算弹窗开/关方法齐备（showResultModal / closeResultModal）');
-  ok(tableSrc.indexOf('resultModalHand') >= 0,
-    '每手只调度一次结算弹窗（resultModalHand 守卫，镜像端轮询不重弹）');
-  ok(tableSrc.indexOf('resultModal: this.data.result') >= 0,
-    '弹窗复用 buildResult 的每人净盈亏数据');
-  ok(tableSrc.indexOf('isMe: p.seat === this.mySeat') >= 0, '结算弹窗高亮我的行（rows 带 isMe）');
-  ok(tableSrc.indexOf('onResultNext') >= 0,
-    '弹窗按钮：房主/本地 = 下一手进就绪计票，镜像端 = 知道了仅关闭');
-  ok(wxmlSrc.indexOf('wx:if="{{resultModal}}"') >= 0, 'WXML 新增独立结算弹窗（resultModal）');
-  ok(wxmlSrc.indexOf('查看结算') >= 0, '亮牌展示期摘要条提供「查看结算」立即弹窗入口');
-  ok(wxmlSrc.indexOf("{{remoteMode || readyPhase ? '知道了' : '下一手'}}") >= 0,
-    '弹窗按钮文案按端/阶段区分（镜像端与就绪期「知道了」/ 亮牌期房主「下一手」）');
-  // 自动弹出时序：摊牌亮牌停留 RESULT_SHOW_MS 后自动开弹窗（用户明确要求）
-  ok(/this\.resultTimer = setTimeout\(\(\) => \{[\s\S]{0,200}this\.showResultModal\(\)/.test(tableSrc),
-    '结算弹窗在亮牌展示 RESULT_SHOW_MS 后**自动弹出**（非仅手动触发）');
-  ok(wxmlSrc.indexOf('sr-cards') >= 0 && wxssSrc.indexOf('.sr-cards') >= 0,
-    '结算弹窗行显示摊牌迷你手牌（弃牌者不亮牌，金边=参与最佳成手）');
-  ok(tableSrc.indexOf('buildResult') >= 0 && /d\.hi = !!\(bestSet && bestSet\.has\(code\)\)/.test(tableSrc),
-    'buildResult 为摊牌手牌打「参与最佳成手」高亮标记');
-  ok(wxmlSrc.indexOf('sr-hand') >= 0 && wxssSrc.indexOf('.sr-hand') >= 0,
-    '结算弹窗行显示牌型/状态列（sr-hand 样式齐备）');
-  ok(wxmlSrc.indexOf('wx:elif="{{result}}"') >= 0,
-    '结算摘要条与就绪条互斥切换（亮牌期不出现逐人盈亏胶囊）');
+  guardResultModal(tableSrc, wxmlSrc, wxssSrc);
 
   /* ---------- ⑪ 参照 WePoker 的牌桌细节：买入入座 / 状态徽章 / 中央筹码堆 ---------- */
-  ok(wxmlSrc.indexOf('buyin-dialog') >= 0 && wxmlSrc.indexOf('confirmBuyIn') >= 0,
-    '入座流程：点空位 → 选买入额 → 入座');
-  ok(tableSrc.indexOf('BUY_IN_OPTIONS') >= 0 && /DEFAULT_BUY_IN = 1000/.test(tableSrc),
-    '买入档位常量与默认买入 1000');
-  ok(/stack: Number\(s\.stack\) \|\| DEFAULT_BUY_IN/.test(tableSrc),
-    '开局按各人买入额发筹码（未指定回落默认）');
-  ok(wxmlSrc.indexOf('badge allin') >= 0 && wxmlSrc.indexOf('badge fold') >= 0,
-    '座位状态徽章：ALL-IN / 弃牌');
-  ok(wxmlSrc.indexOf('seat-win') >= 0 && tableSrc.indexOf('winGain') >= 0,
-    '摊牌后赢家座位直接飘出赢得筹码');
-  ok(wxssSrc.indexOf('.pot-chip') >= 0 && wxssSrc.indexOf('.bet-chip') >= 0,
-    '中央底池与下注筹码堆采用筹码图标（WPK 风格）');
+  guardWpkDetails(tableSrc, wxmlSrc, wxssSrc);
 
   /* ---------- ⑫ WPK 式布局回归：统一座位环 + 座位号 + 牌背 + 弃牌二次确认 ---------- */
   // 复用上方已读取的 tableSrc / wxmlSrc / wxssSrc
-
-  // ① 已移除旧的双坐标系（oppPos / genRing），统一为 ringPositions
-  ok(!/function oppPos\(/.test(tableSrc), '已移除旧对手布局函数 oppPos（统一座位环）');
-  ok(!/function genRing\(/.test(tableSrc), '已移除旧的等待室布局函数 genRing');
-  ok(/function ringPositions\(/.test(tableSrc), '存在统一座位环函数 ringPositions（锚定我的座位为底部中央）');
-
-  // ② 渲染所有玩家（含我）都在环上：render 用 ringPositions(allSeats, mySeat)
-  ok(/ringPositions\(allSeats, this\.mySeat\)/.test(tableSrc), 'render 用 ringPositions 含我的座位（WPK 式：我也在牌桌环上）');
-  ok(/buildWaitSeats[\s\S]*ringPositions\(list\.map\(s => s\.seat\)/.test(tableSrc), '等待室 buildWaitSeats 用 ringPositions（开局坐标连续无跳变）');
-
-  // ③ 座位号 / 牌背 / 弃牌确认在视图与样式中
-  ok(/item\.seatNo/.test(wxmlSrc), 'WXML：每个座位展示座位号 seatNo');
-  ok(/item\.cardsBack/.test(wxmlSrc), 'WXML：对手未摊牌时展示牌背 cardsBack');
-  ok(/card-xs back/.test(wxmlSrc), 'WXML：牌背用小牌样式 card-xs back');
-  ok(/\.seat-no\s*\{/.test(wxssSrc), 'WXSS：存在座位号样式 .seat-no');
-  ok(/ab-fold\.confirm/.test(wxssSrc), 'WXSS：存在弃牌确认态样式 .ab-fold.confirm');
-
-  // ④ 弃牌二次确认逻辑
-  ok(/onFold\(\)\s*\{[\s\S]*foldConfirm/.test(tableSrc), 'onFold 实现弃牌二次确认（首次进入确认态）');
-  ok(/clearFoldTimer\(\)/.test(tableSrc), '存在弃牌确认计时器清理 clearFoldTimer');
-  ok(/foldConfirm: isMyTurn \? this\.data\.foldConfirm : false/.test(tableSrc), '非我回合自动解除弃牌确认态');
+  guardWpkLayoutRegression(tableSrc, wxmlSrc, wxssSrc);
 
   // ⑤ 行为验证：首次点弃牌只是进入确认态，不真正弃牌
   pageCtx.data.isMyTurn = true;
@@ -826,125 +720,30 @@ while (guard++ < 400) {
   /* ---------- 自定义下注金额（最小 ~ MAX 全下，连续可调） ---------- */
   const tableWxss = require('fs').readFileSync(
     path.join(__dirname, 'pages', 'table', 'table.wxss'), 'utf8');
-  // 三层一致性守卫：历史 bug 正是「JS/WXML 已改、WXSS 漏改」导致面板裸奔
-  ok(/class="raise-custom"/.test(wxmlSrc), 'WXML：存在自定义下注面板容器 .raise-custom');
-  ['rc-axis', 'rc-end', 'rc-num', 'rc-slider', 'rc-edit', 'rc-input', 'rc-q'].forEach(cls => {
-    ok(new RegExp('\\.' + cls + '\\s*[,{]').test(tableWxss), 'WXSS：自定义面板样式齐全 .' + cls);
-  });
-  // 档位条与自定义面板互斥（并排会互相遮盖滑杆与轴标签）
-  ok(/class="presets" wx:if="\{\{isMyTurn && !raiseCustom\}\}"/.test(wxmlSrc),
-    'WXML：自定义面板展开时收起档位条（两者互斥，不并排挤在同一行）');
-  ok(/\.rc-end\s*\{[^}]*flex:\s*none/.test(tableWxss),
-    'WXSS：滑杆两端轴标签 flex:none（不与滑杆抢宽度，任意位数都不遮盖）');
-  // 事件绑定与实现一一对应（onCustomTap 由「自定义」档经 onPresetTap 间接调用）
-  ['onRaiseSlider', 'onRaiseInput', 'onRaiseBlur', 'onCustomMin', 'onCustomStep', 'onCustomPct',
-    'onCustomMax', 'onCustomClose'].forEach(fn => {
-    ok(wxmlSrc.indexOf(fn) >= 0 && new RegExp('\\n  ' + fn + '\\(').test(tableSrc),
-      '自定义下注：WXML 绑定 ' + fn + ' 且 JS 已实现');
-  });
-  ok(/data-v="\{\{item\.k\}\}" bindtap="onPresetTap"/.test(wxmlSrc) &&
-    /\n  onPresetTap\(/.test(tableSrc) && /\n  onCustomTap\(/.test(tableSrc) &&
-    /if \(v === 'custom'\) \{ this\.onCustomTap\(\); return; \}/.test(tableSrc),
-    '自定义下注：「自定义」档经 onPresetTap → onCustomTap 展开面板');
-  ok(/\n  onCustomClose\(\) \{[\s\S]{0,120}raiseCustom: false/.test(tableSrc),
-    '自定义下注：可「收起」面板回到档位条（两个入口并存不互斥死锁）');
-  // 输入过程不抬下限（否则想输 500 时打完第一个 5 就被改写），失焦才补正
-  ok(/onRaiseInput\(e\) \{[\s\S]{0,400}?if \(isNaN\(v\) \|\| v < 0\) v = 0;/.test(tableSrc) &&
-    /onRaiseInput[\s\S]{0,400}?\n  \},/.test(tableSrc),
-    '自定义下注：输入过程中只清洗与钳上限，不抢先抬到下限（否则无法连续输入目标值）');
-  // 滑杆范围 = 最小 ~ 全下上限，按钮文案与实际提交同口径
-  ok(/min="\{\{raiseMin\}\}" max="\{\{raiseMax\}\}"/.test(wxmlSrc),
-    'WXML：滑杆范围 最小加注 ~ 最大（全下金额）');
-  ok(/raiseSubmit/.test(tableSrc) && /raiseAllIn/.test(tableSrc),
-    'render 计算 raiseSubmit / raiseAllIn（按钮文案与实际提交同口径）');
-  ok(/raiseAllIn \? '全下'/.test(wxmlSrc), 'WXML：加注按钮按 raiseAllIn 显示「全下」');
-  ok(/Math\.max\(legal\.minRaiseTo, Math\.round\(this\.data\.raiseTo \|\| 0\)\)/.test(tableSrc),
-    'onRaise 钳制口径：低于最小加注按最小值提交（输入框填 0 也不会真下 0）');
+  guardCustomBet(tableSrc, wxmlSrc, tableWxss);
 
   /* ---------- 微信昵称：牌桌默认显示微信名 ---------- */
-  ok(/meLabel\(withOwner\)/.test(tableSrc) &&
-    /meLabel\(withOwner\) \{[\s\S]{0,200}?auth\.myName\('你'\)/.test(tableSrc),
-    '牌桌显示名统一走 meLabel()（默认取微信昵称）');
-  ok(!/"你（房主）"|\? '你' : '好友'/.test(tableSrc) || /meLabel/.test(tableSrc),
-    '牌桌不再硬编码「你 / 房主 / 好友」占位名');
-  ok(/\(withOwner && this\.mode === 'friend'\)/.test(tableSrc),
-    '「（房主）」后缀只在好友房出现（AI 桌无房主概念）');
   const authSrc = require('fs').readFileSync(
     path.join(__dirname, 'utils', 'auth.js'), 'utf8');
-  ok(/myName\(fallback\)/.test(authSrc) && /saveNickname\(nick\)/.test(authSrc) &&
-    /isDefaultNickname\(nick\)/.test(authSrc),
-    'auth 提供 myName / saveNickname / isDefaultNickname 昵称读写能力');
-  ok(/DEFAULT_NICK/.test(authSrc) && /module\.exports = \{[^}]*DEFAULT_NICK/.test(authSrc),
-    'auth 导出 DEFAULT_NICK 占位昵称（与各页判定口径一致）');
   const profSrc = require('fs').readFileSync(
     path.join(__dirname, 'pages', 'profile', 'profile.js'), 'utf8');
-  ok(/type="nickname"/.test(require('fs').readFileSync(
-    path.join(__dirname, 'pages', 'profile', 'profile.wxml'), 'utf8')),
-    '我的页提供 <input type="nickname">（微信唯一合规的取真名方式）');
-
-  /* ---------- 战绩游标分页 / 触底加载更多 ---------- */
-  ok(/listRecords\(limit = 20, cursor\)/.test(authSrc),
-    'auth.listRecords 支持 cursor 游标参数（分页查询）');
-  ok(/\.lt\('created_at', cursor\)/.test(authSrc),
-    'listRecords 用 .lt(created_at) 推进游标（深翻页不退化）');
-  ok(/PAGE_SIZE/.test(profSrc) && /loadRecords\(first\)/.test(profSrc),
-    'profile.js 抽出 loadRecords(first) 分页方法 + PAGE_SIZE 常量');
-  ok(/onReachBottom\(\)/.test(profSrc), 'profile.js 监听 onReachBottom 触底加载下一页');
-  ok(/recordsEnd/.test(profSrc) && /recordsLoading/.test(profSrc),
-    'profile.js 维护 recordsEnd / recordsLoading 状态（区分首屏与翻页加载）');
-  ok(/onReachBottomDistance/.test(require('fs').readFileSync(
-    path.join(__dirname, 'pages', 'profile', 'profile.json'), 'utf8')),
-    'profile.json 配置 onReachBottomDistance（提前触发触底加载）');
-  ok(/onPullDownRefresh\(\)/.test(profSrc) && /stopPullDownRefresh/.test(profSrc),
-    'profile.js 定义 onPullDownRefresh 并调用 wx.stopPullDownRefresh');
-  ok(/enablePullDownRefresh/.test(require('fs').readFileSync(
-    path.join(__dirname, 'pages', 'profile', 'profile.json'), 'utf8')),
-    'profile.json 启用 enablePullDownRefresh');
-  ok(/onShareTimeline\(\)/.test(tableSrc), 'table.js 定义 onShareTimeline（朋友圈分享）');
   const profWxml = require('fs').readFileSync(
     path.join(__dirname, 'pages', 'profile', 'profile.wxml'), 'utf8');
-  ok(/rec-more/.test(profWxml) && /rec-end/.test(profWxml),
-    'WXML 战绩列表底部有「加载更多 / 没有更多战绩」节点');
-  ok(/recordsError/.test(profSrc) && /onRetryRecords/.test(profSrc),
-    'profile.js 有 recordsError 状态 + onRetryRecords 重试方法（区分加载失败与空列表）');
-  ok(/recordsError/.test(profWxml) && /重试/.test(profWxml),
-    'profile.wxml 区分加载失败态（recordsError）并提供重试按钮');
-  // 失败分级守卫：catch 里只有首屏（first）才置 recordsError，翻页失败保留已加载列表
-  // （否则一次触底的瞬时网络抖动会丢掉已加载的全部记录）。源码须含「if (first) recordsError」。
-  ok(/if \(first\) patch\.recordsError = true/.test(profSrc),
-    'loadRecords catch 失败分级：仅首屏置 recordsError，翻页失败保留已有列表');
+  guardWechatNickname(tableSrc, authSrc, profWxml);
+
+  /* ---------- 战绩游标分页 / 触底加载更多 ---------- */
+  guardRecordsCursor(authSrc, profSrc, tableSrc, profWxml);
 
   /* ---------- 引擎：10 显示为「10」，但机读码仍是单字符 T ---------- */
   const coreSrc = require('fs').readFileSync(
     path.join(__dirname, '..', 'core', 'poker-core.js'), 'utf8');
-  ok(/const RANK_DISPLAY = \[[^\]]*'10'[^\]]*\]/.test(coreSrc),
-    '引擎新增 RANK_DISPLAY：界面显示 10 而非 T');
-  ok(/const RANK_NAMES = \[[^\]]*'T'[^\]]*\]/.test(coreSrc),
-    '引擎 RANK_NAMES 保持单字符 T（机读码，参与编解码，不可改成 10）');
-  ok(coreSrc.indexOf('RANK_NAMES') !== coreSrc.indexOf('RANK_DISPLAY') &&
-    /RANK_NAMES, RANK_DISPLAY,/.test(coreSrc), 'RANK_DISPLAY 与机读码字母表一并导出');
-  ok(/rank: P\.RANK_DISPLAY\[/.test(tableSrc), '牌桌牌面渲染使用 RANK_DISPLAY（T 显示为 10）');
+  guardEngineRankDisplay(coreSrc, tableSrc);
 
   /* ---------- AI 桌：先选座坐下、点开始才发牌 ---------- */
-  ok(/AI 对战：与好友房共用同一间等待室/.test(tableSrc) &&
-    /this\.initWaiting\(\);/.test(tableSrc), 'AI 对战进入等待室而非直接开局');
-  ok(/fillBots\(\) \{/.test(tableSrc) &&
-    /while \(seats\.filter\(s => s\.occupied\)\.length < 2\)/.test(tableSrc),
-    'AI 桌坐下后自动补位到 2 人（保证「坐下即可开始」，不一次加满）');
-  ok(/roomSeat = \(this\.mode === 'friend' && this\.isOwner\) \? 0 : -1/.test(tableSrc),
-    'AI 桌不预占座位（roomSeat = -1，由玩家自己挑位置）');
-  ok(/AI_WAIT_HINT/.test(tableSrc) &&
-    /sitting: '点任一空位选座位坐下/.test(tableSrc),
-    'AI 等待室按是否已坐下切换引导文案');
+  guardAiTableStart(tableSrc);
 
   /* ---------- 音效：引擎事件流 → 合成音 ---------- */
-  ok(require('fs').existsSync(path.join(__dirname, 'utils', 'sfx.js')),
-    '存在合成音效模块 utils/sfx.js（零音频资源）');
-  ok(/startSfxPump\(\)/.test(tableSrc) && /drainSfx\(\)/.test(tableSrc) &&
-    /this\.sfxPump = setInterval/.test(tableSrc),
-    'table 启动 300ms 音效事件泵（对手在计时器路径的动作也能发声）');
-  ok(/stopSfxPump\(\)/.test(tableSrc), '音效泵有明确的停止生命周期（onUnload 调用）');
-  ok(/this\.data\.soundOn/.test(tableSrc), '音效开关在事件泵内逐次判断（切换即时生效）');
+  guardSfxPump(tableSrc);
 
   /* ---------- 回归：真机完全没声音（WebAudio 未解锁） ----------
    * 现象：真机上一点声音都没有，控制台无任何报错。
@@ -958,16 +757,7 @@ while (guard++ < 400) {
   {
     const sfxPath = path.join(__dirname, 'utils', 'sfx.js');
     const sfxSrc = require('fs').readFileSync(sfxPath, 'utf8');
-    ok(/function unlock\(\)/.test(sfxSrc) && /module.exports\s*=\s*\{[^}]*unlock/.test(sfxSrc),
-      'sfx 导出 unlock()（音频解锁入口）');
-    ok(/c\.resume\(\)/.test(sfxSrc),
-      'unlock() 真正调用 resume()——suspended 上下文不 resume 就永不发声');
-    ok(!/if \(!c \|\| !c\.currentTime\) return/.test(sfxSrc),
-      'play() 不再用 currentTime 当守卫（该守卫会把解锁前的播放全部挡掉，形成死锁）');
-    ok(/bindtouchstart="onFirstTouch"/.test(wxmlSrc),
-      'table 根节点绑定 bindtouchstart="onFirstTouch"（在用户手势里解锁）');
-    ok(/onFirstTouch\(\)\s*\{[\s\S]{0,200}?sfx\.unlock\(\)/.test(tableSrc),
-      'onFirstTouch 调用 sfx.unlock()');
+    guardSfxUnlock(sfxSrc, tableSrc, wxmlSrc);
 
     // 行为仿真：造一个 suspended 的 WebAudioContext，验证「解锁前静默、解锁后有声」
     const calls = [];
@@ -1034,56 +824,7 @@ while (guard++ < 400) {
   {
     const sfxPath = path.join(__dirname, 'utils', 'sfx.js');
     const sfxSrc = require('fs').readFileSync(sfxPath, 'utf8');
-    ['warn', 'clock', 'timeout', 'chat'].forEach(k => {
-      ok(new RegExp('^\\s{2}' + k + '\\(c, t\\) \\{', 'm').test(sfxSrc),
-        'PRESETS 含新音色「' + k + '」（play() 按 PRESETS[name] 自动识别，无需改 play）');
-    });
-    // 静态守卫：4 处触发点 + 防重播标志位（全部在 soundOn 判断内）
-    ok(/tick === 5 \|\| tick === 3/.test(tableSrc) && /sfx\.play\('warn'\)/.test(tableSrc),
-      '行动计时环剩 5s/3s 滴答警告（防误超时代弃）');
-    ok(/sfxWarnedTick = 0/.test(tableSrc) && /this\.sfxWarnedTick !== tick/.test(tableSrc),
-      '警告音有防重播标志（同 tick 值只播一声，且回合重置清零）');
-    ok(/left === 60 && !this\.sfxClockWarned/.test(tableSrc) &&
-      /if \(this\.data\.soundOn\) sfx\.play\('clock'\)/.test(tableSrc),
-      '限时局最后 60s 钟音（与 UI 变橙 remainSec<=60 同阈值）');
-    ok(/this\.sfxClockWarned = left <= 60/.test(tableSrc),
-      '续局从断点恢复时若已过 60s 阈值不再补播钟音');
-    ok((tableSrc.match(/if \(this\.data\.soundOn\) sfx\.play\('timeout'\)/g) || []).length === 2,
-      '被动代弃与自动站起各播一声 timeout（中性偏负下行音，共 2 处且都在 soundOn 内）');
-    ok(tableSrc.indexOf('被动代弃提示') > 0 && tableSrc.indexOf('被动站起提示') > 0,
-      '两处 timeout 各有注释锚点（代弃 vs 站起，防止将来误删一处）');
-    // 超时被动处理偏保守：有注可跟 → 弃牌（不替玩家主动跟注/下注），无注 → 过牌。
-    // 与好友超时 watchFriendAction 同口径（无注过牌/有注弃牌），避免被动处理替玩家掏筹码。
-    const timeoutBlock = (tableSrc.match(/if \(tick <= 0\)\s*\{[\s\S]*?1000\);\r?\n\s*\}/) || [''])[0];
-    ok(/if \(legal\.toCall > 0\) this\.doAct\('fold', 0, '弃牌', 'act-f'\)/.test(timeoutBlock),
-      '超时有注 → 弃牌（不替玩家主动跟注，与好友超时同口径）');
-    ok(/else this\.doAct\('check', 0, '过牌', 'act-c'\)/.test(timeoutBlock),
-      '超时无注 → 过牌（被动处理偏保守，不主动下注）');
-    ok(!/legal\.toCall > 0\) this\.doAct\('call'/.test(timeoutBlock),
-      '超时不再替玩家跟注（旧实现 auto-call 已移除）');
-    // 好友超时 watchFriendAction 与本地超时同口径：无注（toCall===0）→ 过牌，有注 → 弃牌。
-    // 旧实现一律 fold（即便可免费 check 也弃），现对齐为「能免费看牌就不弃」。
-    const watchBlock = (tableSrc.match(/watchFriendAction\(\)\s*\{[\s\S]*?advance\(\);\s*\n\s*\},?/) || [''])[0];
-    ok(/legal\.toCall === 0 \? 'check' : 'fold'/.test(watchBlock),
-      '好友超时无注 → 过牌、有注 → 弃牌（与本地超时 startTimer 同口径）');
-    ok(/act === 'check' \? '超时未行动，自动过牌' : '超时未行动，自动弃牌'/.test(watchBlock),
-      '好友超时代行 chat 文案按动作区分（过牌/弃牌）');
-    ok(!/game\.act\(seat, 'fold'\);\s*\n\s*if \(r\.ok\)/.test(watchBlock),
-      '好友超时不再一律 fold（旧实现无脑弃牌已移除）');
-    ok(/this\.data\.soundOn && seat !== this\.mySeat\) sfx\.play\('chat'\)/.test(tableSrc),
-      '收到他人/AI 消息播 chat 轻提示；我主动发的（seat===mySeat）不响');
-    ok(/pushChat\(this\.mySeat/.test(tableSrc) && tableSrc.indexOf('我主动发，不响提示音') > 0,
-      'pushChat 头注释锁定「我发的不响」语义（聊天消息传 mySeat 快捷发送 + 系统消息除外）');
-    // 行为级的 sfx 拦截在此不可行：上方 WebAudio 解锁回归块会删 sfx.js 的
-    // require 缓存重载新实例，而 table.js 闭包持有的是最初那份单例——本块
-    // 拿到的模块对象不是 pushChat 实际调用的那份，spy 永远等不到调用。
-    // 退守静态守卫（方案原文：若 sfx 模块拦截成本高则退守静态守卫）。
-    // 聊天未读徽章静态守卫
-    ok(/chatUnread: 0/.test(tableSrc), 'data 有 chatUnread 未读计数字段');
-    ok(/patch\.chatUnread = \(this\.data\.chatUnread \|\| 0\) \+ 1/.test(tableSrc),
-      'pushChat 折叠期间收他人消息累计未读');
-    ok(/chatUnread > 0 && !chatOpen/.test(wxmlSrc), 'WXML 聊天按钮有未读徽章（chatUnread>0 且折叠时）');
-    ok(/\.chat-badge/.test(wxssSrc), 'WXSS 有 .chat-badge 未读徽章样式');
+    guardPromptSfx(sfxSrc, tableSrc, wxmlSrc, wxssSrc);
   }
 
   /* ---------- 回归：自定义金额必须同步加注按钮文案 ----------
@@ -1252,19 +993,7 @@ while (guard++ < 400) {
     // 结构守卫：锁死 resetRaiseState 必须在 startHand 里被调用
     const tableSrc2 = require('fs').readFileSync(
       require('path').join(__dirname, 'pages/table/table.js'), 'utf8');
-    const shIdx = tableSrc2.indexOf('startHand()');
-    ok(shIdx >= 0 && tableSrc2.indexOf('this.resetRaiseState()', shIdx) >= 0 &&
-      tableSrc2.indexOf('this.resetRaiseState()', shIdx) < tableSrc2.indexOf('this.render()', shIdx),
-      'startHand 里在 render() 之前调用了 resetRaiseState()（顺序锁死，否则时序兜底失效）');
-
-    // 语义守卫：锁死 render 里「每手首帧取最小额」的那行真的存在。
-    // 只断言字符串，锁结构不锁数值 —— 允许后续把 legal.minRaiseTo 换成别的口径。
-    ok(/const wasReset = !!this\._raiseResetPending/.test(tableSrc2) &&
-      /raiseTo = wasReset \? legal\.minRaiseTo/.test(tableSrc2),
-      'render 里用 wasReset 同步路径覆盖金额（否则只 setData 会读到上一手旧值）');
-    // 语义守卫：raiseSubmit 必须读局部 raiseTo，不能读 this.data.raiseTo
-    ok(/raiseSubmit = Math\.max\(legal\.minRaiseTo, Math\.round\(raiseTo \|\| 0\)\)/.test(tableSrc2),
-      '加注按钮文案读局部 raiseTo 而非 this.data.raiseTo（与档位高亮同帧自洽）');
+    guardResetRaiseState(tableSrc2);
 
     // ---- 行为闭环：新一局轮到我时，金额必须真的是最小加注（不只是清零）----
     // 这是本次修复的核心语义。清零只保证「不残留」，还得证明「高亮『最小』时
@@ -1300,41 +1029,14 @@ while (guard++ < 400) {
 
   /* ---------- 回归：预设档改为百分比 + 盲注倍数吸附 ---------- */
   {
-    const pctSrc = tableSrc;
-    ok(/RAISE_PRESET_PCT\s*=/.test(pctSrc), '存在比例表 RAISE_PRESET_PCT');
-    ['p33', 'p50', 'p67', 'p100'].forEach(k => {
-      ok(new RegExp(k + '\\s*:').test(pctSrc.slice(pctSrc.indexOf('RAISE_PRESET_PCT'), pctSrc.indexOf('RAISE_PRESET_PCT') + 200)),
-        '比例表含档位 ' + k);
-    });
-    ok(/step="\{\{raiseStep\}\}"/.test(wxmlSrc),
-      '滑杆绑定 step="{{raiseStep}}"（控件层就只能停在盲注倍数）');
-    ok(/bindtap="onCustomStep"/.test(wxmlSrc) && /data-dir="1"/.test(wxmlSrc) && /data-dir="-1"/.test(wxmlSrc),
-      '面板提供 ± 步进按钮（data-dir 双向）');
-    ok(/data-pct="0\.33"/.test(wxmlSrc) && /data-pct="0\.67"/.test(wxmlSrc) && /data-pct="1"/.test(wxmlSrc),
-      '面板提供 33%/67%/100% 快捷额');
-    ok(!/onCustomHalf|onCustomPot/.test(wxmlSrc + pctSrc),
-      '旧的 ½池/底池 快捷入口已移除（统一为百分比档）');
+    guardRaisePresetPct(tableSrc, wxmlSrc);
   }
 
   /* ---------- 回归：就绪按钮点完变灰禁用 + 倒计时 30s ---------- */
   {
     const wxssSrc = require('fs').readFileSync(
       require('path').join(__dirname, 'pages/table/table.wxss'), 'utf8');
-    ok(/const READY_TIMEOUT_SEC = 30;/.test(tableSrc),
-      '就绪倒计时 30 秒（超时自动站起）');
-    // 关键：按钮不能消失成一行小字（布局跳动 + 状态不明确），要就地变灰
-    ok(/class="rb-btn \{\{myReady \? 'done' : ''\}\}"/.test(wxmlSrc) &&
-       /disabled="\{\{myReady\}\}"/.test(wxmlSrc),
-      '就绪按钮用 done 态 + disabled 切换，而非 wx:if 消失成 rb-wait 小字');
-    ok(!/rb-wait" wx:elif/.test(wxmlSrc), '旧的 rb-wait「已准备」文本入口已移除');
-    ok(/\.rb-btn\.done\s*\{[\s\S]{0,300}?background:\s*rgba\(255,255,255/.test(wxssSrc),
-      '存在 .rb-btn.done 灰态样式（点完变灰）');
-    ok(/onReadyTap\(\)\s*\{[\s\S]{0,200}?if \(this\.data\.myReady\) return;/.test(tableSrc),
-      'onReadyTap 对已就绪幂等（重复点击无副作用）');
-    // 倒计时只该在未就绪时展示，就绪后数字消失
-    ok(/myReady \? '已准备' : '准备就绪'/.test(wxmlSrc) &&
-       /!myReady && readyLeft > 0/.test(wxmlSrc),
-      '就绪后按钮文案变「已准备」且不再显示倒计时秒数');
+    guardReadyButton(tableSrc, wxmlSrc, wxssSrc);
   }
 
   /* ---------- 行为：时长到点必须「打完这手再结束」，不能中途 game over ---------- */
@@ -1398,137 +1100,28 @@ while (guard++ < 400) {
 
   /* ---------- 回归：座位手牌不得遮挡底池/公共牌 ---------- */
   {
-    const feltSrc = tableSrc;
-    // 座位带最低点 + 块高必须 < 底池位置(22%)；否则顶/中座位的手牌直接压在底池上
-    const cy = Number((feltSrc.match(/cy = (\d+)/) || [0, 0])[1]);
-    const ry = Number((feltSrc.match(/ry = (\d+)/) || [0, 0])[1]);
-    ok(cy > 0 && ry > 0, 'ringPositions 椭圆参数可解析 cy=' + cy + ' ry=' + ry);
-    ok(cy - ry >= 10, '座位带最低点 ' + (cy - ry) + '% （≥10%，留出块延伸空间）');
-    // 座位锚点 y 上界必须小于公共牌位置
-    const yMax = Number((feltSrc.match(/y = Math\.max\(\d+, Math\.min\((\d+)/) || [0, 999])[1]);
-    ok(yMax < 80, '对手座位锚点 y 上界 ' + yMax + '%（<80%，不下探到公共牌区）');
-    // 中央盘面必须提层 + 有不透明底盘（双保险：即使重叠也是中央压住牌背）
-    ok(/\.pot-row \{[\s\S]{0,200}?z-index: 5/.test(wxssSrc),
-      '.pot-row z-index 5 高于 .seat(3)：底池不被牌背盖住');
-    ok(/\.board-row \{[\s\S]{0,200}?z-index: 5/.test(wxssSrc),
-      '.board-row z-index 5 高于 .seat(3)：公共牌不被牌背盖住');
-    ok(/\.pot-row::before/.test(wxssSrc) && /\.board-row::before/.test(wxssSrc),
-      '底池/公共牌有 ::before 不透明底盘（重叠时不透出牌背花纹）');
-    // 座位手牌紧凑叠放，块高减半
-    ok(/\.seat-cards \.card-xs \+ \.card-xs \{ margin-left: calc\(-[\d.]+ \* var\(--uw\)\)/.test(wxssSrc),
-      '座位两张手牌叠放（负 margin），座位块高度显著下降');
-
-    // 开始游戏按钮：主/副两行，主标题不折行
-    ok(/class="sb-main">开始游戏</.test(wxmlSrc) &&
-       /class="sb-sub" wx:if="\{\{!canStart\}\}">至少 2 人</.test(wxmlSrc),
-      '开始游戏按钮拆为主标题 + 副标题（不再把门槛塞进同一行括号）');
-    ok(!/开始游戏\{\{canStart \? '' : '（至少 2 人）'\}\}/.test(wxmlSrc),
-      '旧的同行括号写法已移除（那是折行的病根）');
-    ok(/\.wait-actions \.sb-main \{[\s\S]{0,120}?white-space: nowrap/.test(wxssSrc),
-      '开始游戏主标题 white-space:nowrap（永不折行）');
-    ok(/\.wait-actions \.start-btn \{[\s\S]{0,120}?flex-direction: column/.test(wxssSrc),
-      'start-btn 纵向排列，主副标题各占一行');
+    guardSeatCardNoOverlap(tableSrc, wxmlSrc, wxssSrc);
   }
 
   /* ---------- 回归：房主身份回收 + 唯一座位（不能出现两个自己） ---------- */
   {
     // isOwner 不得只由 URL 的 own=1 决定：邀请链接不带 own，房主自点自己分享的卡片会丢身份
-    ok(/auth\.findRoom\(this\.roomNo\)/.test(tableSrc),
-      'bootstrapSync 查询房间行（房主归属的权威来源）');
-    ok(/roomOwner === myUid\) this\.isOwner = true/.test(tableSrc),
-      '以 poker_rooms.owner_id 与登录 uid 比对回收房主身份（own 参数退化为乐观提示）');
-    ok(/this\.setData\(\{ isOwner: this\.isOwner \}\)/.test(tableSrc),
-      '房主身份回收后同步到 data（UI 的房主标/开始按钮跟着更新）');
-    // 顺序：必须先定身份再定座位，否则会出现「按访客坐 -1 号位之后又切成房主」
-    const iRoom = tableSrc.indexOf('auth.findRoom(this.roomNo)');
-    const iSeat = tableSrc.indexOf('let seat = this.isOwner ? 0 : -1');
-    ok(iRoom > 0 && iSeat > 0 && iRoom < iSeat, '先回收房主身份再决定座位（顺序不能反）');
-
-    // 离房必须释放自己的行：原先只删访客行，房主重进被判访客 → 同一人占两座
-    ok(/if \(this\.syncLive\) \{\s*roomSync\.leave\(this\.roomNo\)/.test(tableSrc),
-      '离房对所有人（含房主）释放自己的座位行，避免同一人占两个座位');
-    ok(!/if \(this\.syncLive && !this\.isOwner\)/.test(tableSrc),
-      '旧的「只给访客删行」写法已移除（那是两个自己的病根）');
-
-    // 同座位唯一性收敛（云端兜底）
     const syncSrc = require('fs').readFileSync(
       require('path').join(__dirname, 'utils/room-sync.js'), 'utf8');
-    ok(/upsertMe[\s\S]{0,600}?\.neq\('seat', Number\(patch\.seat\)\)/.test(syncSrc),
-      'upsertMe 写入座位前先清理同房间其他座位的自己的行（同用户唯一座位）');
-    ok(/const liveBySeat = \{\}/.test(syncSrc) && /rank\(r\) > rank\(cur\)/.test(syncSrc),
-      'buildWaitLayout 同座位多行去重（渲染层兜底，绝不画出两个自己）');
+    guardOwnerRecovery(tableSrc, syncSrc);
   }
 
   /* ---------- 静态守卫：金额入口全部收口到 setRaiseTo ---------- */
   {
-    // 时长到点不得中途掀桌：startClock 只能调 onClockExpired，不得直连 endGame
-    ok(/onClockExpired\(\)/.test(tableSrc), '存在 onClockExpired()：时长到点的决策入口');
-    ok(/left <= 0\) \{\s*this\.clearClock\(\);\s*this\.onClockExpired\(\);/.test(tableSrc),
-      'startClock 到点走 onClockExpired，不再直接 endGame（避免中途 game over）');
-    ok(/onClockExpired\(\)\s*\{[\s\S]{0,700}?inPlay[\s\S]{0,400}?if \(!inPlay\) \{ this\.endGame\(\); return; \}/.test(tableSrc),
-      'onClockExpired：不在打牌中才立即结束，打牌中则挂起');
-    ok(/enterReadyPhase\(\)\s*\{[\s\S]{0,300}?if \(this\.pendingTimeUp\) \{ this\.pendingTimeUp = false; this\.endGame\(\); return; \}/.test(tableSrc),
-      'enterReadyPhase 是「打完这手再总结束」的收口点');
-
-    // 结算单三件套：买入/剩余/盈亏必须同源（都读 startStacks[mySeat]）
-    ok(/myBuyIn: me \? me\.buyIn : 0/.test(tableSrc) && /myStack: me \? me\.stack : 0/.test(tableSrc),
-      'endGame 的 summary 输出 myBuyIn / myStack');
-    ok(/buyIn: this\.startStacks\[p\.seat\] !== undefined/.test(tableSrc),
-      '结算单每行带 buyIn（带入筹码）');
-    ok(/sum-bank/.test(wxmlSrc) && /带入/.test(wxmlSrc) && /剩余/.test(wxmlSrc),
-      '结算单与实时面板共用「带入/剩余/盈亏」三件套组件');
-
-    // 实时盈亏面板必须存在菜单入口 + 数据源
-    ok(/bindtap="onMenuBank"/.test(wxmlSrc) && /onMenuBank\(\)\s*\{[\s\S]{0,200}?bankShow: true/.test(tableSrc),
-      '菜单「我的筹码」入口打开实时盈亏面板');
-    ok(/onBankClose\(\)\s*\{[\s\S]{0,120}?bankShow: false/.test(tableSrc),
-      '实时盈亏面板可关闭');
-    ok(/myNetLive: myNetLive/.test(tableSrc) && /myNetLiveText:/.test(tableSrc),
-      'render 逐帧派生 myNetLive / myNetLiveText（面板实时刷新）');
-    // 挂起状态要跨端同步：好友端不能把 00:00 误读为断线
-    ok(/clockPendingEnd: !!this\.data\.clockPendingEnd/.test(tableSrc) &&
-       /clockPendingEnd: !st\.summary && st\.clockPendingEnd === true/.test(tableSrc),
-      'clockPendingEnd 随房主广播同步给好友端');
-    ok(/clockPendingEnd \? '本手后' : remainText/.test(wxmlSrc),
-      '顶栏到点挂起显示「本手后」而非停在 00:00');
+    guardClockExpiredAndSummary(tableSrc, wxmlSrc);
   }
 
   /* ---------- 静态守卫：金额入口全部收口到 setRaiseTo ---------- */
-  ok(/setRaiseTo\(amt, preset\)/.test(tableSrc),
-    '存在统一入口 setRaiseTo()：一次写入 raiseTo + raiseSubmit + raiseAllIn');
-  ok(/setRaiseTo[\s\S]{0,400}?raiseSubmit: submit, raiseAllIn:/.test(tableSrc),
-    'setRaiseTo 同帧写入按钮文案派生字段（不依赖 render 触发）');
-  ok(!/setData\(\{ raiseTo/.test(tableSrc),
-    '所有改下注金额的入口均已收口到 setRaiseTo（无裸 setData({raiseTo}) 漏同步）');
-  // setRaiseTo 只管金额三件套，展开态必须由 onCustomTap 自己写 —— 曾漏写导致点「自定义」无反应
-  ok(/onCustomTap\(\)\s*\{[\s\S]{0,900}?setData\(\{\s*raiseCustom:\s*open\s*\}\)/.test(tableSrc),
-    'onCustomTap 显式写入 raiseCustom（否则面板永远不弹出）');
-  const raiseEntry = (tableSrc.match(/setRaiseTo\(/g) || []).length;
-  ok(raiseEntry >= 10, '金额设置入口全部走 setRaiseTo（1 定义 + 9 调用），实际 ' + raiseEntry);
-  ['onCustomTap', 'onRaiseSlider', 'onRaiseInput', 'onRaiseBlur', 'onCustomMin',
-    'onCustomStep', 'onCustomPct', 'onCustomMax', 'onPresetTap'].forEach(fn => {
-    const body = (tableSrc.match(new RegExp('\\n  ' + fn + '\\([\\s\\S]*?\\n  \\},')) || [''])[0];
-    ok(!/setData\(\{ raiseTo/.test(body),
-      '自定义下注：' + fn + ' 不直写 raiseTo（按钮文案必然同步）');
-  });
-  ok(/Math\.max\(legal\.minRaiseTo, Math\.round\(this\.data\.raiseTo \|\| 0\)\)/.test(tableSrc),
-    'onRaise 钳制口径与按钮文案一致：低于最小加注按最小值提交');
-  ok(/raiseAllIn \? '全下'/.test(wxmlSrc), 'WXML：加注按钮按 raiseAllIn 显示「全下」');
-  ok(!/onRaiseChange/.test(tableSrc) && !/onRaiseChange/.test(wxmlSrc),
-    '旧滑杆回调 onRaiseChange 无死代码、无悬空绑定');
+  guardSetRaiseTo(tableSrc, wxmlSrc);
 
   /* ---------- 生命周期：onHide 全量暂停 + onShow 恢复（评审 MEDIUM 回归） ---------- */
   {
-    ok(/onHide\(\)\s*\{\s*[\s\S]{0,120}?this\.onEnterBackground\(\)/.test(tableSrc),
-      'onHide 已定义并进入后台暂停（此前切后台轮询/看门狗/倒计时照跑）');
-    ok(/onEnterBackground\(\)\s*\{[\s\S]{0,2000}?this\.stopPolling\(\)/.test(tableSrc) &&
-      /onEnterBackground\(\)\s*\{[\s\S]{0,2000}?this\.stopEngineWatch\(\)/.test(tableSrc),
-      '后台暂停覆盖轮询与看门狗');
-    ok(/onEnterBackground\(\)\s*\{[\s\S]{0,2000}?clearTimeout\(aiTimer\)/.test(tableSrc),
-      '后台暂停覆盖 AI 调度');
-    ok(/onEnterBackground\(\)\s*\{[\s\S]{0,2400}?bgRemainSec = Number\(this\.data\.remainSec\)/.test(tableSrc) &&
-      /onLeaveBackground\(\)\s*\{[\s\S]{0,900}?startClock\(resume\)/.test(tableSrc),
-      '限时局后台断点续走（回前台从剩余秒数继续，后台时间不计入）');
+    guardLifecyclePause(tableSrc);
     // 行为级验证：onShow 幂等（未切后台时 onShow 不启动任何东西）
     const pollBefore = dataStore.phase;
     pageCtx.onShow();
@@ -1550,20 +1143,7 @@ while (guard++ < 400) {
     // 静态守卫：table.js 的同步链路上不允许再出现裸 .catch(() => {})。
     // 离房清理（closeRoom/leave）原先用裸 catch 静默吞错，现已全部加 console.error
     // 日志——出现新的裸 .catch(() => {}) 会在这里被拦截。
-    const silentCatches = (tableSrc.match(/\.catch\(\s*\(\s*\)\s*=>\s*\{\s*\}\s*\)/g) || []).length;
-    const SILENT_OK_COUNT = 0;   // 离房清理已加日志，不再静默吞错
-    ok(silentCatches === SILENT_OK_COUNT,
-      '同步链路无静默吞错（裸 catch 已清零），实际 ' + silentCatches);
-    ok(/SYNC_FAIL_TOAST_MS = 10000/.test(tableSrc),
-      '同步失败提示节流常量 SYNC_FAIL_TOAST_MS 存在（心跳 5s 一发防刷屏）');
-    ok(/syncFailToast\(title\)/.test(tableSrc), '存在统一失败提示入口 syncFailToast');
-    ['heartbeat', 'pushAction', 'publishState', 'markReadyRow'].forEach(fn => {
-      const re = new RegExp('roomSync\\.' + fn + '\\([^)]*\\)[\\s\\S]{0,200}?\\.catch\\(\\(\\) => \\{\\s*\\}\\)');
-      ok(!re.test(tableSrc), 'roomSync.' + fn + ' 的失败不再被吞（必须有用户可见提示）');
-    });
-    ['站起未同步成功', '坐下未同步成功', '准备未同步成功', '牌局同步失败'].forEach(t => {
-      ok(tableSrc.indexOf(t) >= 0, '关键上行失败提示文案已定义：' + t);
-    });
+    guardSyncFailToast(tableSrc);
     // 行为级:同文案 10s 内节流(第二条不弹),不同文案互不影响,间隔过了恢复
     toasts.length = 0;
     pageCtx.syncFailLast = {};
@@ -1580,8 +1160,7 @@ while (guard++ < 400) {
 
   /* ---------- 轮询重入守卫 + bootstrapSync 失败清理（鲁棒性）---------- */
   {
-    ok(/if \(this\._polling\) return/.test(tableSrc), 'pollOnce 有重入守卫（_polling 标记）');
-    ok(/finally \{[\s\S]{0,60}?this\._polling = false/.test(tableSrc), 'pollOnce finally 释放 _polling 标记');
+    guardPollReentry(tableSrc);
     // 行为：置 _polling=true 后 pollOnce 直接返回，不触达 roomSync.poll（roomRows 不变）
     const pollBefore = pageCtx.roomRows;
     pageCtx._polling = true;
@@ -1589,65 +1168,28 @@ while (guard++ < 400) {
     ok(pageCtx._polling === true, 'pollOnce 重入时直接返回不执行（_polling 保持 true）');
     ok(pageCtx.roomRows === pollBefore, 'pollOnce 重入时不调用 roomSync.poll（roomRows 未变）');
     pageCtx._polling = false;
-    // bootstrapSync 失败时清理已起的定时器，防泄漏（stopSync 出现在 bootstrap-sync catch 块内）
-    ok(/bootstrap-sync[\s\S]{0,600}?this\.stopSync\(\)/.test(tableSrc) ||
-       /this\.stopSync\(\)[\s\S]{0,400}?bootstrap-sync/.test(tableSrc),
-      'bootstrapSync 失败 catch 调用 stopSync 清理可能已起的定时器');
+    // 静态守卫：bootstrapSync 失败时清理已起的定时器，防泄漏
+    guardBootstrapStopSync(tableSrc);
   }
 
   /* ---------- 弹窗 catchtap 显式化 + 对手计时环残值（评审 MEDIUM UI 细节回归）---------- */
   {
-    // 裸 catchtap（无属性值）吞冒泡是「无保证行为」，显式绑定空函数才随基础库稳定
-    ok(!/catchtap>/.test(wxmlSrc) && !/"catchtap"|catchtap=""/.test(wxmlSrc),
-      'table.wxml 无裸 catchtap（全部显式绑定了处理函数）');
-    ok(/onBlockTap\(\)\s*\{\s*\/\* 有意留空/.test(tableSrc),
-      '显式空处理函数 onBlockTap 已定义');
-    const idxWxml = require('fs').readFileSync(
-      path.join(__dirname, 'pages', 'index', 'index.wxml'), 'utf8');
-    ok(!/catchtap>/.test(idxWxml), 'index.wxml 同样无裸 catchtap');
+    guardCatchtapExplicit(tableSrc, wxmlSrc);
   }
 
   /* ---------- 对手计时环不显示我的残值（评审 MEDIUM UI 细节回归）---------- */
   {
-    // startTimer 每秒回调：我回合写 myTimer；对手回合按行动座位局部 setData（不写整条 seats，
-    // 也不碰 myTimer）。整帧 render 仍按行动座位写 tick 快照——保证不会把我的残值 setData 给对手环
-    const stBody = (tableSrc.match(/startTimer\(\)\s*\{[\s\S]*?1000\);\r?\n  \}/) || [''])[0];
-    ok(/myTimer: tick/.test(stBody), 'startTimer 回调写我的计时字段');
-    ok(!/seats:/.test(stBody), 'startTimer 每秒回调不写整条 seats 数组（局部路径更新单座位，不吃我的残值）');
-    // 对手回合的局部更新只写当前行动座位的 timer，不碰 myTimer
-    ok(/seats\[' \+ actIdx \+ '\]\.timer/.test(stBody),
-      '对手回合按行动座位局部 setData seats[actIdx].timer（消除跳秒）');
-    ok(/timer: !readyPhase && game\.actionSeat === p\.seat \? tick : ''/.test(tableSrc),
-      '对手环只在行动座位显示 tick（非行动座位为空串，环隐藏）');
+    guardTimerNoResidue(tableSrc);
   }
 
   /* ---------- 行动计时最后 5s 视觉强化（红+脉冲，与警告音同阈值）---------- */
   {
-    // 整帧 render 写 seats[].timerUrgent（对手环）与 myTimerUrgent（我的行动条）
-    ok(/timerUrgent: !readyPhase && game\.actionSeat === p\.seat && tick <= 5 && tick > 0/.test(tableSrc),
-      '对手行动座位最后 5s 标记 timerUrgent（计时环转红脉冲）');
-    ok(/myTimerUrgent: game\.actionSeat === this\.mySeat && !result && tick <= 5 && tick > 0/.test(tableSrc),
-      '我轮到时最后 5s 标记 myTimerUrgent（行动条脉冲）');
-    // startTimer 每秒回调也同步刷新 myTimerUrgent（不只在整帧 render 生效）
-    const stBody = (tableSrc.match(/startTimer\(\)\s*\{[\s\S]*?1000\);\r?\n  \}/) || [''])[0];
-    ok(/myTimerUrgent: tick <= 5 && tick > 0/.test(stBody),
-      'startTimer 每秒回调同步刷新 myTimerUrgent（最后 5s 持续脉冲）');
-    // WXML：计时环 urgent class + 行动条 urgent class
-    ok(/class="timer \{\{item\.timerUrgent \? 'urgent' : ''\}\}"/.test(wxmlSrc),
-      'WXML 计时环按 timerUrgent 切换 urgent class');
-    ok(/class="actbar \{\{myTimerUrgent \? 'urgent' : ''\}\}"/.test(wxmlSrc),
-      'WXML 行动条按 myTimerUrgent 切换 urgent class');
-    // WXSS：urgent 态有脉冲动画
-    ok(/\.timer\.urgent[\s\S]*?animation: timerPulse/.test(wxssSrc), 'WXSS 计时环 urgent 态有 timerPulse 动画');
-    ok(/\.actbar\.urgent[\s\S]*?animation: actbarPulse/.test(wxssSrc), 'WXSS 行动条 urgent 态有 actbarPulse 动画');
+    guardTimerUrgent(tableSrc, wxmlSrc, wxssSrc);
   }
 
   /* ---------- 结算弹窗注释与行为一致（评审 MEDIUM：注释曾写「只由用户触发、不自动弹出」）---------- */
   {
-    const mdoc = (tableSrc.match(/弹出单手结算弹窗[\s\S]{0,300}?由 render 末尾的统一调度[\s\S]{0,120}?自动触发/) || [])[0];
-    ok(!!mdoc, 'showResultModal 注释已改为「render 统一调度自动触发 + 用户可提前打开」（与代码一致）');
-    ok(/this\.resultTimer = setTimeout\(\(\) => \{[\s\S]{0,200}?showResultModal\(\)/.test(tableSrc),
-      'render 末尾确有自动弹出调度（注释与代码不再矛盾）');
+    guardResultModalDoc(tableSrc);
   }
 
   /* ---------- 同步脏检查（评审 2026-10-15 MEDIUM「全量写库/全量 setData 无脏检查」） ---------- */
@@ -1655,12 +1197,7 @@ while (guard++ < 400) {
   // 写库 / setData，避免每 500ms/1.5s 空转云端配额与全量重绘。
   {
     // 静态守卫：两处指纹键、跳过路径都存在
-    ok(tableSrc.indexOf('_lastPlayFp') >= 0, 'writePlayState 有房主指纹缓存键');
-    ok(/if \(this\._lastPlayFp === fingerprint\) return/.test(tableSrc),
-      '房主牌局未变时跳过本轮写库');
-    ok(tableSrc.indexOf('_lastRemoteFp') >= 0, 'enterRemote 有镜像指纹缓存键');
-    ok(/if \(this\._lastRemoteFp === fp\) return/.test(tableSrc),
-      '好友端快照未变时跳过本轮 setData + render');
+    guardDirtyCheckFingerprint(tableSrc);
 
     // 行为级：房主指纹比对。用本地模式（非好友房）取一个真实 game，直接调
     // writePlayState 验证「指纹相同不二次发布，指纹变化才发布」。
@@ -1728,21 +1265,12 @@ while (guard++ < 400) {
 
   /* ---------- 空闲超时提示静态守卫（提前 5 分钟显示倒计时） ---------- */
   {
-    ok(tableSrc.indexOf('IDLE_WARN_MS') > 0, '定义了空闲提示提前量 IDLE_WARN_MS');
-    ok(tableSrc.indexOf('tickExpireWarn') > 0, '定义了逐秒刷新倒计时文案方法 tickExpireWarn');
-    ok(tableSrc.indexOf('clearExpireWarn') > 0, '定义了清掉空闲提示方法 clearExpireWarn');
-    ok(/idleRemainText: '',/.test(tableSrc), 'data 声明空闲倒计时文案字段 idleRemainText');
-    ok(wxmlSrc.indexOf('wi-idle') > 0, 'WXML 等待室空闲倒计时提示节点 wi-idle');
-    ok(/\.wi-idle[\s\S]*?idlePulse/.test(wxssSrc), 'WXSS 空闲提示有 idlePulse 脉冲动画');
+    guardIdleTimeout(tableSrc, wxmlSrc, wxssSrc);
   }
 
   /* ---------- 页面层性能缓存：ringPositions + cardData ---------- */
   {
-    ok(/_ringCache/.test(tableSrc), 'ringPositions 有模块级缓存 _ringCache');
-    ok(/cacheKey/.test(tableSrc) && /_ringCache\[cacheKey\] = pos/.test(tableSrc),
-      'ringPositions 命中缓存时写回并返回（纯函数缓存）');
-
-    ok(/_cardCache/.test(tableSrc), 'cardData 有按 card id 缓存 _cardCache');
+    guardPerfCache(tableSrc);
     // 行为：同卡两次返回不同引用（浅克隆）但字段一致，markBest 可安全改 hi
     const c1 = pageCtx.cardData(0, 0);
     const c2 = pageCtx.cardData(0, 0);
@@ -1755,18 +1283,7 @@ while (guard++ < 400) {
 
   /* ---------- render 渲染指纹跳过（性能优化）---------- */
   {
-    ok(/_lastRenderFp/.test(tableSrc), 'render 有渲染指纹缓存键 _lastRenderFp');
-    ok(/if \(this\._lastRenderFp === fp\)/.test(tableSrc), 'render 指纹命中时跳过 setData');
-    ok(/_renderTail\(\)/.test(tableSrc), 'render 尾部调度抽出 _renderTail（指纹跳过时仍执行）');
-    ok(/tick,/.test(tableSrc) && /myActText,/.test(tableSrc),
-      '渲染指纹含 tick 与 myActText（计时环与动作气泡变化可触发重绘）');
-    // 指纹置位必须在主 setData 成功之后（评审 2026-10-16）：若 body 中途抛错，
-    // _lastRenderFp 不应被更新——否则下一帧同势命中跳过、降级态卡到下次实质变化。
-    // 守卫：赋值语句出现在主 setData 的 resultModal 行之后，而非跳过 return 之后。
-    ok(/resultModal: result \? this\.data\.resultModal : null[\s\S]{0,120}this\._lastRenderFp = fp/.test(tableSrc),
-      '指纹置位在主 setData 之后（异常帧不缓存指纹，下帧自动重试）');
-    ok(!/if \(this\._lastRenderFp === fp\)[\s\S]{0,40}this\._lastRenderFp = fp/.test(tableSrc),
-      '指纹赋值不在「命中跳过」之后紧跟（避免 body 抛错前就置位）');
+    guardRenderFingerprint(tableSrc);
     // 行为：同势二次 render 不增 setData；变势后重新 setData
     const g = pageCtx.requireGame();
     if (g) {
@@ -1829,11 +1346,7 @@ while (guard++ < 400) {
    * 跑到结算（pots 填充），驱动 render 后断言 dataStore.sidePots 是非空金额数组。 */
   {
     // 静态守卫：render 确有 sidePots 分层逻辑 + 进 setData
-    ok(/if \(!readyPhase && game\.pots && game\.pots\.length > 1\)/.test(tableSrc),
-      'render 有边池分层分支（pots.length > 1 才切边池）');
-    ok(/sidePots = game\.pots\.slice\(1\)\.map\(p => p\.amount\)/.test(tableSrc),
-      '边池取 pots.slice(1) 的 amount 数组（主池在 pot 字段单独展示）');
-    ok(/sidePots,/.test(tableSrc), 'sidePots 进 setData（渲染层可见）');
+    guardSidePotsRender(tableSrc);
 
     // 行为级：直接用引擎构造多路全下结算手，把 pots 填进去后调 render 断言。
     // 主循环留下一手牌局是 2 人桌（仅我 + 1 bot），构造多路全下需要 ≥3 玩家，
@@ -1904,12 +1417,7 @@ while (guard++ < 400) {
    * 行动权压到好友座位、friendActSince 推过 30s，调 watchFriendAction 断言代弃推进。 */
   {
     // 静态守卫：watchFriendAction 30s 阈值 + 无注过牌/有注弃牌同口径
-    ok(/roomSync\.SYNC\.ACTION_TIMEOUT_SEC \* 1000/.test(tableSrc),
-      'watchFriendAction 用 ACTION_TIMEOUT_SEC*1000 作 30s 阈值');
-    ok(/legal && legal\.toCall === 0 \? 'check' : 'fold'/.test(tableSrc),
-      '代行口径：无注过牌 / 有注弃牌（与本地 startTimer 超时同口径）');
-    ok(/超时未行动，自动过牌|超时未行动，自动弃牌/.test(tableSrc),
-      '代弃有 pushChat 系统消息（过牌/弃牌两案）');
+    guardWatchFriendTimeout(tableSrc);
 
     // 行为级：构造房主端 + 一个真人好友座位（非我非 bot），行动权压过去后超时代弃。
     // 不复用主循环留下的随机牌局状态（好友可能已被弃/全下/站起 → legalActions
@@ -1982,11 +1490,7 @@ while (guard++ < 400) {
    * 到期直发不挂 timer、未到期挂延后 timer 并在到点后发。 */
   {
     // 静态守卫：节流机制存在
-    ok(/publishDue\|publishTimer/.test(tableSrc) || (/publishDue/.test(tableSrc) && /publishTimer/.test(tableSrc)),
-      'publishPlay 用 publishDue/publishTimer 做 500ms 节流');
-    ok(/if \(now >= due\)/.test(tableSrc), 'publishPlay 到期分支（now >= due 直发）');
-    ok(/this\.publishTimer = setTimeout/.test(tableSrc),
-      'publishPlay 未到期分支挂延后 setTimeout');
+    guardPublishPlayThrottle(tableSrc);
 
     // 行为级：拨成房主态，第一次 publishPlay 因 publishDue=0 直发（不挂 timer）；
     // 再调一次在节流窗内 → 挂延后 timer，writePlayState 不立即执行。
@@ -2035,155 +1539,17 @@ while (guard++ < 400) {
    * 全部走 transform/opacity + keyframes，animOn=false 时 .no-anim 兜底禁用。
    * 表情走既有 emote 动作上行 + 房主随快照广播，上行失败静默降级（非关键路径）。 */
   {
-    // —— 常量与模块级状态 ——
-    ok(/const EMOTE_SET = \['👏', '🎉', '😏', '😅', '🤡', '💪'\]/.test(tableSrc),
-      'EMOTE_SET 恰好 6 个 emoji（渲染白名单，防伪造/超长 payload）');
-    ok(/EMOTE_THROTTLE_MS = 3000/.test(tableSrc), '表情频控 3s/座位（EMOTE_THROTTLE_MS）');
-    ok(/EMOTE_BUBBLE_MS = 2200/.test(tableSrc), '气泡消散时长 2.2s（EMOTE_BUBBLE_MS）');
-    ok(/EMOTE_QUEUE_MAX = 10/.test(tableSrc), '氛围队列广播上限 10 条（EMOTE_QUEUE_MAX，滚动截断）');
-    ok(/EMOTE_PLAY_WINDOW_MS = 1500/.test(tableSrc), '镜像端只放近 1.5s 内表情（EMOTE_PLAY_WINDOW_MS，防重放）');
-    ok(/BIG_HAND_MIN = 4/.test(tableSrc), '大牌粒子阈值 = 4（引擎 HAND.STRAIGHT，顺子及以上才出星光）');
-    ok(/WIN_STREAK_MIN = 2/.test(tableSrc), '连胜徽章阈值 = 2（WIN_STREAK_MIN，≥2 手显示 🔥xN）');
-    ok(/let winStreaks = \{\}/.test(tableSrc) && /let lastEmoteAt = \{\}/.test(tableSrc) && /let flySeed = 0/.test(tableSrc),
-      '模块级氛围状态：winStreaks / lastEmoteAt / flySeed（座位级计数与动画自增 id）');
+    // 静态守卫：氛围常量、字段、方法、WXML/WXSS 节点
+    guardAmbienceConstants(tableSrc, wxmlSrc, wxssSrc);
 
-    // —— data 字段齐备 ——
-    ['emoteShow', 'emoteSeat', 'emoteSet', 'emotes', 'spark', 'flyOut', 'flyIn', 'streaks', 'winFx'].forEach(f => {
-      ok(new RegExp(f + ':').test(tableSrc), 'data 声明氛围字段：' + f);
-    });
+    // 静态守卫：氛围渲染基线、animOn、映射、上行降级、清零、镜像
+    guardAmbienceRenderAndSync(tableSrc);
 
-    // —— 核心方法存在 ——
-    ['renderAmbience', '_snapBaseline', '_resultHandCat', '_fxPos',
-      '_spawnFlyOut', '_spawnFlyHome', '_spawnSpark', '_bumpStreaks',
-      'onAvatarTap', 'onEmoteClose', 'onEmotePick', '_showEmoteBubble', 'onEmoteTalk'].forEach(fn => {
-      ok(new RegExp(fn + '\\(').test(tableSrc), '定义氛围方法：' + fn);
-    });
+    // 静态守卫：WXML 节点齐备（飞行层/金光/轮盘/徽章/粒子/快捷语）
+    guardAmbienceWxml(wxmlSrc, wxssSrc, tableSrc);
 
-    // —— render 基线 diff：render 开头缓存 prevBase，末尾 _renderTail 调 renderAmbience ——
-    ok(/const prevBase = this\._base;/.test(tableSrc) && /this\._snapBaseline\(\);/.test(tableSrc) && /this\._prevBase = prevBase;/.test(tableSrc),
-      'render 开头缓存上一帧基线供 renderAmbience 比对（_prevBase）');
-    ok(/this\.renderAmbience\(\);/.test(tableSrc), '_renderTail 末尾调用 renderAmbience（每帧驱动氛围）');
-
-    // —— animOn 守卫：飞行/粒子/金光只在 animOn 时触发 ——
-    ok(/prev\.handNo === now\.handNo && this\.data\.animOn/.test(tableSrc),
-      '下注飞行只在 animOn 且同手内触发（跨手不误触）');
-    ok(/this\.data\.animOn && result_fresh/.test(tableSrc),
-      '收池飞行/金光/粒子只在 animOn 且结果新鲜时触发');
-
-    // —— HAND_NAME_TO_CAT 映射存在（evals 存中文名，映射回引擎枚举）——
-    ok(/HAND_NAME_TO_CAT = \{/.test(tableSrc), '牌型名→枚举映射 HAND_NAME_TO_CAT 存在（_resultHandCat 用）');
-    // fold 结算无 evals → cat=0 不触发粒子
-    ok(/if \(!evals\) return 0;/.test(tableSrc), '_resultHandCat：fold 结算无 evals 返回 0（不触发粒子）');
-
-    // —— 静默降级：emote 上行失败不接 syncFailToast（氛围非关键路径）——
-    ok(/pushAction\(this\.roomNo, \{ type: 'emote'/.test(tableSrc),
-      '好友房表情走既有 pushAction 上行（type:emote）');
-    ok(/\.catch\(\(\) => \{ \/\* 静默降级[^*]*\*\/ \}\)/.test(tableSrc),
-      '表情上行失败静默降级（不弹错不重试，与牌局关键上行 syncFailToast 语义不同）');
-
-    // —— startHand 清零氛围状态 ——
-    ok(/winStreaks = \{\};[^}]*this\.setData\(\{ spark: null, flyOut: \[\], flyIn: \[\], winFx: '', streaks: \{\} \}\)/.test(tableSrc),
-      'startHand 清零连胜计数 + 清空粒子/飞行/金光/徽章');
-
-    // —— applyFriendAction emote 分支：rowSeat 断言 + 白名单 ——
-    ok(/if \(a\.type === 'emote'\)/.test(tableSrc), 'applyFriendAction 有 emote 动作分支');
-    ok(/Number\(a\.seat\) !== Number\(a\.rowSeat\)/.test(tableSrc) && /EMOTE_SET\.indexOf\(a\.emoji\) < 0/.test(tableSrc),
-      'emote 分支：rowSeat 伪冒断言 + emoji 白名单双校验');
-
-    // —— applyFriendAction chat 分支（设计 §2.4 快捷语广播）：rowSeat 断言 + 白名单 ——
-    ok(/if \(a\.type === 'chat'\)/.test(tableSrc), 'applyFriendAction 有 chat 动作分支');
-    ok(/CHAT_TEXT_SET\.indexOf\(a\.text\) < 0/.test(tableSrc),
-      'chat 分支：文案过 CHAT_TEXT_SET 白名单（防伪造内容/超长 payload）');
-    ok(/if \(Number\(a\.seat\) !== Number\(a\.rowSeat\)\) return;[\s\S]*?CHAT_TEXT_SET/.test(tableSrc),
-      'chat 分支：rowSeat 伪冒断言先于白名单（与 emote 同防伪冒口径）');
-
-    // —— 快捷语上行：onQuickChat/onEmoji 好友房走 pushAction type:'chat' ——
-    ok(/pushAction\(this\.roomNo, \{ type: 'chat'/.test(tableSrc),
-      '好友房快捷语/表情走 pushAction 上行（type:chat，复用既有分道机制）');
-    ok(/CHAT_TEXT_SET\.indexOf\(text\) >= 0/.test(tableSrc),
-      'onQuickChat/onEmoji 上行前过 CHAT_TEXT_SET 白名单（面板外文案不上行）');
-
-    // —— writePlayState emotes 随快照广播 + 指纹含 emote ——
-    ok(/emotes: \(this\.data\.emotes \|\| \[\]\)\.slice\(-EMOTE_QUEUE_MAX\)/.test(tableSrc),
-      'writePlayState 快照带 emotes 队列（滚动 10 条上限）');
-    ok(/'e' \+ \(state\.emotes \|\| \[\]\.map/.test(tableSrc) || /'e' \+\s*\(state\.emotes/.test(tableSrc),
-      '房主写库指纹含 emotes 项（表情变化触发写库广播）');
-
-    // —— writePlayState chats 随快照广播 + 指纹含 chats ——
-    ok(/chats: \(this\.data\.chatLog \|\| \[\]\)\.slice\(-CHAT_QUEUE_MAX\)/.test(tableSrc),
-      'writePlayState 快照带 chats 队列（滚动 8 条上限）');
-    ok(/'c' \+ \(state\.chats \|\| \[\]\)\.map/.test(tableSrc),
-      '房主写库指纹含 chats 项（快捷语变化触发写库广播）');
-
-    // —— enterRemote 表情镜像 ——
-    ok(/st\.emotes/.test(tableSrc), 'enterRemote 读取房主广播的 emotes 字段');
-    ok(/const localSeat = remapS\[Number\(e\.seat\)\]/.test(tableSrc),
-      '镜像端按座次重映射 emote 的 seat（remapS，我=0 号位）');
-
-    // —— enterRemote 快捷语镜像：按座次重映射 + seenChatIds 防重放 ——
-    ok(/st\.chats/.test(tableSrc), 'enterRemote 读取房主广播的 chats 字段');
-    ok(/_seenChatIds/.test(tableSrc), '镜像端用 seenChatIds 记录已放过的快捷语 id（防轮询重放）');
-    ok(/CHAT_TEXT_SET\.indexOf\(c\.text\) < 0/.test(tableSrc),
-      '镜像端只回放白名单内的快捷语（系统消息由镜像端本地逻辑生成，不重复回放）');
-
-    // —— WXML 节点齐备 ——
-    ok(wxmlSrc.indexOf('class="fly-chip fly-out"') >= 0 && wxmlSrc.indexOf('class="fly-chip fly-in"') >= 0,
-      'WXML 筹码飞行层：fly-out / fly-in 两层');
-    // 金光脉冲 class 必须由 JS 预计算（曾内联在 WXML 里导致真机上传直接编译失败：
-    // Bad attr 'class' with message: unexpected token ':' —— WXML 表达式引擎不接受
-    // 「三元/逻辑运算里调用字符串方法」）。现在 WXML 只写 class="{{item.cls}}"，
-    // 语义校验改在 JS 侧与 check-wxml 规则 3 双重把关。
-    ok(/class="\{\{item\.cls\}\}"/.test(wxmlSrc),
-      'WXML 座位 class 由 JS 预计算（class="{{item.cls}}"）');
-    ok(!/winFx && \(',' \+ winFx/.test(wxmlSrc),
-      'WXML 已无「三元里调 .indexOf()」写法（真机上传编译失败的病根）');
-    ok(/_winFxSeats\.indexOf\(p\.seat\) >= 0 \? 'winfx'/.test(tableSrc),
-      'JS 侧用 _winFxSeats 判定 winfx（金光脉冲语义未变）');
-    // JS 预计算的 cls 必须覆盖原内联表达式的全部状态位，一个都不能漏
-    const clsBlock = (tableSrc.match(/const cls = \[[\s\S]{0,600}?\]\.filter\(Boolean\)\.join\(' '\)/) || [''])[0];
-    ok(clsBlock.length > 0, 'JS 侧存在座位 cls 预计算');
-    ['self', 'folded', 'active', 'win', 'standing', 'winfx'].forEach(k => {
-      ok(clsBlock.indexOf("'" + k + "'") >= 0, 'cls 含状态位 ' + k + '（与原内联表达式语义一致）');
-    });
-    // winFx 改为实例字段后，setData 异步不再影响本帧渲染
-    ok(/this\._winFxSeats = \[\]/.test(tableSrc), '新手/重开时清空 _winFxSeats（避免上把赢家残留金光）');
-    ok(wxmlSrc.indexOf('catchtap="onAvatarTap"') >= 0, 'WXML 头像绑 onAvatarTap（点头像弹轮盘）');
-    ok(wxmlSrc.indexOf('streak-badge') >= 0, 'WXML 连胜徽章节点 streak-badge');
-    ok(wxmlSrc.indexOf('emote-bubble') >= 0, 'WXML 表情气泡节点 emote-bubble');
-    ok(wxmlSrc.indexOf('class="spark"') >= 0, 'WXML 星光粒子节点 spark');
-    ok(wxmlSrc.indexOf('emote-mask') >= 0 && wxmlSrc.indexOf('emote-wheel') >= 0 &&
-      wxmlSrc.indexOf('emote-grid') >= 0 && wxmlSrc.indexOf('emote-cell') >= 0,
-      'WXML 表情轮盘弹层四件套：emote-mask/wheel/grid/cell');
-    // P3 观战快捷语：轮盘底部「快捷语」入口（onEmoteTalk 复用 onQuickChat 通道）
-    ok(wxmlSrc.indexOf('emote-talk') >= 0 && wxmlSrc.indexOf('onEmoteTalk') >= 0,
-      'WXML 表情轮盘含「快捷语」入口（emote-talk 节点 + onEmoteTalk 绑定）');
-    ok(wxssSrc.indexOf('.emote-talk') >= 0, 'WXSS 快捷语入口样式 .emote-talk 存在');
-    // onEmoteTalk 落地为触发一条快捷语（不再是只关轮盘的空预留位）
-    ok(/onEmoteTalk\(\)\s*\{[\s\S]*?onQuickChat\(/.test(tableSrc),
-      'onEmoteTalk 落地：复用 onQuickChat 通道发一条快捷语（P3 预留位已实现）');
-
-    // —— WXSS 样式 + keyframes 齐备，且只用 transform/opacity ——
-    ['.seat.winfx .avatar', '.streak-badge', '.emote-bubble', '.spark',
-      '.fly-chip', '.fly-chip.fly-out', '.fly-chip.fly-in',
-      '.emote-mask', '.emote-wheel', '.emote-grid', '.emote-cell'].forEach(c => {
-      ok(wxssSrc.indexOf(c) >= 0, 'WXSS 样式：' + c);
-    });
-    ['winGlow', 'streakPop', 'emoteFloat', 'sparkTwinkle',
-      'flyChipOut', 'flyChipIn', 'wheelPop'].forEach(kf => {
-      ok(new RegExp('@keyframes ' + kf).test(wxssSrc), 'WXSS @keyframes：' + kf);
-    });
-    // 重排红线：飞行动画只用 transform/opacity（不动 top/left/width）
-    const flyOutBlock = (wxssSrc.match(/@keyframes flyChipOut \{[\s\S]*?\}/) || [''])[0];
-    ok(/transform:/.test(flyOutBlock) && /opacity:/.test(flyOutBlock) &&
-      !/top:|left:/.test(flyOutBlock.replace(/translate/, '')),
-      'flyChipOut 只用 transform/opacity（不动 top/left，重排红线）');
-    // spark 用贴图 assets/spark.png
-    ok(/\.spark \{[\s\S]*?background:\s*url\(\.\.\/\.\.\/assets\/spark\.png\)/.test(wxssSrc),
-      'spark 粒子用 assets/spark.png 贴图（CSS background）');
-    // .no-anim 兜底禁用氛围
-    ok(/\.no-anim \.seat\.winfx \.avatar/.test(wxssSrc) && /\.no-anim \.spark/.test(wxssSrc) &&
-      /\.no-anim \.fly-chip/.test(wxssSrc),
-      'WXSS .no-anim 兜底禁用氛围动画（animOn=false 全关）');
+    // 静态守卫：WXSS 样式 + keyframes + 重排红线 + spark 贴图 + .no-anim
+    guardAmbienceWxss(wxssSrc);
 
     // —— 粒子资源文件存在且 < 50KB ——
     const fs = require('fs');
@@ -2258,16 +1624,8 @@ while (guard++ < 400) {
     const rs = require(path.join(__dirname, 'utils', 'replay-store.js'));
 
     /* ---- 静态守卫：replay-store.js 导出 + 上限常量 ---- */
-    ok(typeof rs.addReplay === 'function' && typeof rs.listAll === 'function' &&
-      typeof rs.latest === 'function' && typeof rs.findByDate === 'function',
-      'replay-store 导出 addReplay/listAll/latest/findByDate 四个方法');
-    ok(rs.MAX_REPLAYS === 20, 'replay-store 上限 20 局（FIFO 挤出）');
     const storeSrc = fs.readFileSync(path.join(__dirname, 'utils', 'replay-store.js'), 'utf8');
-    ok(/poker_replay_cache/.test(storeSrc), 'replay-store 用独立 storage 键 poker_replay_cache');
-    ok(/setStorageSync/.test(storeSrc), 'replay-store 走本地 wx.setStorageSync（不进云）');
-    // 存储失败静默：addReplay 的 try/catch 返回 false
-    ok(/return false/.test(storeSrc) && /catch \(e\)/.test(storeSrc),
-      'replay-store addReplay 失败静默降级（返回 false，不阻断）');
+    guardReplayStore(rs, storeSrc);
 
     /* ---- 行为级：addReplay 收割单手事件段 + FIFO 上限 ---- */
     // 用真机引擎跑一局，mock wx storage 注入
@@ -2449,22 +1807,8 @@ while (guard++ < 400) {
 
     // ---- table.js 接入静态守卫 ----
     const tableSrc = fs.readFileSync(path.join(__dirname, 'pages', 'table', 'table.js'), 'utf8');
-    ok(/require\(['"].+advisor['"]\)/.test(tableSrc), 'table.js 引入 advisor 模块');
-    ok(tableSrc.indexOf('advisor.classifyHole') >= 0,
-      'renderAdvice 调用 advisor.classifyHole（起手牌分类）');
-    ok(tableSrc.indexOf('advisor.explainAdvice') >= 0,
-      'renderAdvice 调用 advisor.explainAdvice（牌理解释）');
-    // 新增字段不破坏现有 5 字段
-    ok(/advBase\.holeLabel/.test(tableSrc) && /advBase\.explain/.test(tableSrc),
-      'advice setData 新增 holeLabel/explain 字段（不破坏 equityPct/potOdds/text/tone/drawDesc/drawOuts）');
-    // 合规：advisor 只在 renderAdvice 内调用（不新增调用点/绕门槛）
-    const advCalls = (tableSrc.match(/advisor\.(classifyHole|explainAdvice)/g) || []).length;
-    ok(advCalls === 2, 'advisor 调用只在 renderAdvice 内（classifyHole + explainAdvice 各 1，不绕 mode!==ai 门槛），共 ' + advCalls);
-
-    // ---- wxml 接入静态守卫 ----
     const wxmlSrc = fs.readFileSync(path.join(__dirname, 'pages', 'table', 'table.wxml'), 'utf8');
-    ok(/class="adv-explain"/.test(wxmlSrc), '建议栏 wxml 含 adv-explain 节点');
-    ok(/advice\.explain/.test(wxmlSrc), '建议栏 wxml 插值 advice.explain');
+    guardAdvisorIntegration(tableSrc, wxmlSrc);
 
     // ---- 行为级：轮到我时 advice 含 explain；翻前含 holeLabel、翻后不含 ----
     // 复用主流程已驱动到「轮到我」的 pageCtx/game（见上方「等到轮到我」块）。
@@ -2589,33 +1933,807 @@ while (guard++ < 400) {
 
     // ---- profile.js 接入静态守卫 ----
     const profSrc = fs.readFileSync(path.join(__dirname, 'pages', 'profile', 'profile.js'), 'utf8');
+    const profWxml = fs.readFileSync(path.join(__dirname, 'pages', 'profile', 'profile.wxml'), 'utf8');
+    const profWxss = fs.readFileSync(path.join(__dirname, 'pages', 'profile', 'profile.wxss'), 'utf8');
+    const saSrc = fs.readFileSync(path.join(__dirname, 'utils', 'style-analyzer.js'), 'utf8');
+    guardStyleIntegration(profSrc, profWxml, profWxss, saSrc);
+  })();
+
+  /* ---------- 静态守卫函数定义区 ----------
+   * 以下函数均在 async IIFE 作用域内声明，函数声明会提升，
+   * 故可在上方任意位置调用。每个函数封装一组纯源码字符串的
+   * 静态守卫断言（不依赖任何运行时状态），参数为所需的源码字符串。 */
+  function guardStandEntryVisibility(wxmlSrc) {
+    const standCount = (wxmlSrc.match(/站起退出本局/g) || []).length;
+    ok(standCount >= 3, '「站起退出本局」至少 3 处入口（结算面板 / 局内弃牌后 / 菜单），实际 ' + standCount + ' 处');
+    ok(wxmlSrc.indexOf('rb-btn ghost') >= 0, '结算条含「站起退出本局」ghost 按钮（摊牌后可直接点）');
+    ok(wxmlSrc.indexOf('stand-link') >= 0, '局内弃牌后含「站起退出本局」行内入口');
+    ok(wxmlSrc.indexOf('用右侧「站起退出本局」') < 0, '退出弹窗文案不再指向已删除的右栏');
+    const sitCount = (wxmlSrc.match(/坐下加入游戏/g) || []).length;
+    ok(sitCount >= 3, '「坐下加入游戏」至少 3 处入口（局内观战 / 就绪面板 / 菜单），实际 ' + sitCount + ' 处');
+    ok((wxmlSrc.match(/onMenuSit/g) || []).length >= 3, 'onMenuSit 绑定覆盖观战、就绪面板与菜单');
+  }
+
+  function guardResultbarLayout(wxmlSrc, wxssSrc) {
+    ok(wxmlSrc.indexOf('result-banner') < 0, '旧的大弹窗 result-banner 已从 WXML 移除');
+    ok(wxmlSrc.indexOf('class="resultbar"') >= 0, '新增横向紧凑结算条 .resultbar');
+    ok(wxmlSrc.indexOf('resultbar') > wxmlSrc.indexOf('<!-- /felt -->'),
+      '回归护栏：结算条必须位于牌桌区（felt）之后，走文档流而非绝对定位浮层');
+    ok(wxmlSrc.indexOf('badge ready') >= 0 && wxmlSrc.indexOf('badge prewait') >= 0,
+      '就绪状态上座位：各座位亮出「已准备/准备中」徽章（不再在底部条逐人罗列）');
+    ok(wxmlSrc.indexOf('item.ready === true') >= 0, '座位徽章按就绪状态二态切换（true=已准备 / false=准备中）');
+    ok(wxssSrc.indexOf('.result-banner') < 0 && wxssSrc.indexOf('.result-btn') < 0,
+      '旧弹窗样式 .result-banner / .result-btn 已从 WXSS 删除');
+    ok(wxssSrc.indexOf('.resultbar {') >= 0, 'WXSS 新增 .resultbar 样式');
+    ok(/\.resultbar\s*\{[^}]*12 \* var\(--uh\)/.test(wxssSrc), '结算条高度约 12uh（横向紧凑条，纵向压缩后适配扁屏）');
+    ok(wxssSrc.indexOf('.rc-chip') >= 0 && wxssSrc.indexOf('.rb-btn') >= 0,
+      '结算条含胶囊（rc-chip）与按钮（rb-btn）样式');
+  }
+
+  function guardNoBareProcess() {
+    // 微信小程序没有 process 全局对象（Node 测试里一切正常）——一旦源码里
+    // 残留 process.env 调试语句，真机上直接 ReferenceError，且往往发生在
+    // render 等关键链路上，全局回退等待室。此处静态扫描运行时源码防复发。
+    const fs = require('fs');
+    const scanDirs = ['pages', 'utils', 'core', 'components'];
+    const bad = [];
+    const walk = dir => {
+      let entries = [];
+      try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch (e) { return; }
+      entries.forEach(en => {
+        const p = path.join(dir, en.name);
+        if (en.isDirectory()) walk(p);
+        else if (/\.js$/.test(en.name) && en.name.indexOf('test-') !== 0) {
+          const src = fs.readFileSync(p, 'utf8');
+          if (/(^|[^\w.])process\s*\./.test(src)) bad.push(path.relative(__dirname, p));
+        }
+      });
+    };
+    scanDirs.forEach(d => walk(path.join(__dirname, d)));
+    ok(bad.length === 0, '小程序运行时源码无裸 process 引用（真机无 process 全局）' +
+      (bad.length ? '，违规文件: ' + bad.join(', ') : ''));
+  }
+
+  function guardResultShowPhase(tableSrc, wxmlSrc, wxssSrc) {
+    ok(/RESULT_SHOW_MS = 5000/.test(tableSrc), '结算展示时长常量 RESULT_SHOW_MS = 5000ms');
+    ok(tableSrc.indexOf('this.resultShowMs || RESULT_SHOW_MS') >= 0,
+      '一手结束后延迟进入就绪阶段（结算展示可被测试覆盖缩短）');
+    ok(tableSrc.indexOf("p.folded ? '弃牌'") >= 0,
+      '结算行覆盖弃牌者（未摊牌的弃牌者显示「弃牌」而非消失）');
+    ok(wxmlSrc.indexOf("item.net > 0 ? '+' + item.net") >= 0,
+      '结算胶囊显示每人净盈亏（赢 +N / 输 -N / 平 ±0）');
+    ok(wxssSrc.indexOf('.rc-gain.plus') >= 0 && wxssSrc.indexOf('.rc-gain.minus') >= 0,
+      '盈亏配色样式：赢（金）/ 输（红灰）');
+  }
+
+  function guardResultModal(tableSrc, wxmlSrc, wxssSrc) {
+    ok(/RESULT_MODAL_MS = 10000/.test(tableSrc), '结算弹窗自动关闭时长常量 RESULT_MODAL_MS = 10000ms');
+    ok(tableSrc.indexOf('showResultModal') >= 0 && tableSrc.indexOf('closeResultModal') >= 0,
+      '结算弹窗开/关方法齐备（showResultModal / closeResultModal）');
+    ok(tableSrc.indexOf('resultModalHand') >= 0,
+      '每手只调度一次结算弹窗（resultModalHand 守卫，镜像端轮询不重弹）');
+    ok(tableSrc.indexOf('resultModal: this.data.result') >= 0,
+      '弹窗复用 buildResult 的每人净盈亏数据');
+    ok(tableSrc.indexOf('isMe: p.seat === this.mySeat') >= 0, '结算弹窗高亮我的行（rows 带 isMe）');
+    ok(tableSrc.indexOf('onResultNext') >= 0,
+      '弹窗按钮：房主/本地 = 下一手进就绪计票，镜像端 = 知道了仅关闭');
+    ok(wxmlSrc.indexOf('wx:if="{{resultModal}}"') >= 0, 'WXML 新增独立结算弹窗（resultModal）');
+    ok(wxmlSrc.indexOf('查看结算') >= 0, '亮牌展示期摘要条提供「查看结算」立即弹窗入口');
+    ok(wxmlSrc.indexOf("{{remoteMode || readyPhase ? '知道了' : '下一手'}}") >= 0,
+      '弹窗按钮文案按端/阶段区分（镜像端与就绪期「知道了」/ 亮牌期房主「下一手」）');
+    // 自动弹出时序：摊牌亮牌停留 RESULT_SHOW_MS 后自动开弹窗（用户明确要求）
+    ok(/this\.resultTimer = setTimeout\(\(\) => \{[\s\S]{0,200}this\.showResultModal\(\)/.test(tableSrc),
+      '结算弹窗在亮牌展示 RESULT_SHOW_MS 后**自动弹出**（非仅手动触发）');
+    ok(wxmlSrc.indexOf('sr-cards') >= 0 && wxssSrc.indexOf('.sr-cards') >= 0,
+      '结算弹窗行显示摊牌迷你手牌（弃牌者不亮牌，金边=参与最佳成手）');
+    ok(tableSrc.indexOf('buildResult') >= 0 && /d\.hi = !!\(bestSet && bestSet\.has\(code\)\)/.test(tableSrc),
+      'buildResult 为摊牌手牌打「参与最佳成手」高亮标记');
+    ok(wxmlSrc.indexOf('sr-hand') >= 0 && wxssSrc.indexOf('.sr-hand') >= 0,
+      '结算弹窗行显示牌型/状态列（sr-hand 样式齐备）');
+    ok(wxmlSrc.indexOf('wx:elif="{{result}}"') >= 0,
+      '结算摘要条与就绪条互斥切换（亮牌期不出现逐人盈亏胶囊）');
+  }
+
+  function guardWpkDetails(tableSrc, wxmlSrc, wxssSrc) {
+    ok(wxmlSrc.indexOf('buyin-dialog') >= 0 && wxmlSrc.indexOf('confirmBuyIn') >= 0,
+      '入座流程：点空位 → 选买入额 → 入座');
+    ok(tableSrc.indexOf('BUY_IN_OPTIONS') >= 0 && /DEFAULT_BUY_IN = 1000/.test(tableSrc),
+      '买入档位常量与默认买入 1000');
+    ok(/stack: Number\(s\.stack\) \|\| DEFAULT_BUY_IN/.test(tableSrc),
+      '开局按各人买入额发筹码（未指定回落默认）');
+    ok(wxmlSrc.indexOf('badge allin') >= 0 && wxmlSrc.indexOf('badge fold') >= 0,
+      '座位状态徽章：ALL-IN / 弃牌');
+    ok(wxmlSrc.indexOf('seat-win') >= 0 && tableSrc.indexOf('winGain') >= 0,
+      '摊牌后赢家座位直接飘出赢得筹码');
+    ok(wxssSrc.indexOf('.pot-chip') >= 0 && wxssSrc.indexOf('.bet-chip') >= 0,
+      '中央底池与下注筹码堆采用筹码图标（WPK 风格）');
+  }
+
+  function guardWpkLayoutRegression(tableSrc, wxmlSrc, wxssSrc) {
+    // ① 已移除旧的双坐标系（oppPos / genRing），统一为 ringPositions
+    ok(!/function oppPos\(/.test(tableSrc), '已移除旧对手布局函数 oppPos（统一座位环）');
+    ok(!/function genRing\(/.test(tableSrc), '已移除旧的等待室布局函数 genRing');
+    ok(/function ringPositions\(/.test(tableSrc), '存在统一座位环函数 ringPositions（锚定我的座位为底部中央）');
+
+    // ② 渲染所有玩家（含我）都在环上：render 用 ringPositions(allSeats, mySeat)
+    ok(/ringPositions\(allSeats, this\.mySeat\)/.test(tableSrc), 'render 用 ringPositions 含我的座位（WPK 式：我也在牌桌环上）');
+    ok(/buildWaitSeats[\s\S]*ringPositions\(list\.map\(s => s\.seat\)/.test(tableSrc), '等待室 buildWaitSeats 用 ringPositions（开局坐标连续无跳变）');
+
+    // ③ 座位号 / 牌背 / 弃牌确认在视图与样式中
+    ok(/item\.seatNo/.test(wxmlSrc), 'WXML：每个座位展示座位号 seatNo');
+    ok(/item\.cardsBack/.test(wxmlSrc), 'WXML：对手未摊牌时展示牌背 cardsBack');
+    ok(/card-xs back/.test(wxmlSrc), 'WXML：牌背用小牌样式 card-xs back');
+    ok(/\.seat-no\s*\{/.test(wxssSrc), 'WXSS：存在座位号样式 .seat-no');
+    ok(/ab-fold\.confirm/.test(wxssSrc), 'WXSS：存在弃牌确认态样式 .ab-fold.confirm');
+
+    // ④ 弃牌二次确认逻辑
+    ok(/onFold\(\)\s*\{[\s\S]*foldConfirm/.test(tableSrc), 'onFold 实现弃牌二次确认（首次进入确认态）');
+    ok(/clearFoldTimer\(\)/.test(tableSrc), '存在弃牌确认计时器清理 clearFoldTimer');
+    ok(/foldConfirm: isMyTurn \? this\.data\.foldConfirm : false/.test(tableSrc), '非我回合自动解除弃牌确认态');
+  }
+
+  function guardCustomBet(tableSrc, wxmlSrc, tableWxss) {
+    // 三层一致性守卫：历史 bug 正是「JS/WXML 已改、WXSS 漏改」导致面板裸奔
+    ok(/class="raise-custom"/.test(wxmlSrc), 'WXML：存在自定义下注面板容器 .raise-custom');
+    ['rc-axis', 'rc-end', 'rc-num', 'rc-slider', 'rc-edit', 'rc-input', 'rc-q'].forEach(cls => {
+      ok(new RegExp('\\.' + cls + '\\s*[,{]').test(tableWxss), 'WXSS：自定义面板样式齐全 .' + cls);
+    });
+    // 档位条与自定义面板互斥（并排会互相遮盖滑杆与轴标签）
+    ok(/class="presets" wx:if="\{\{isMyTurn && !raiseCustom\}\}"/.test(wxmlSrc),
+      'WXML：自定义面板展开时收起档位条（两者互斥，不并排挤在同一行）');
+    ok(/\.rc-end\s*\{[^}]*flex:\s*none/.test(tableWxss),
+      'WXSS：滑杆两端轴标签 flex:none（不与滑杆抢宽度，任意位数都不遮盖）');
+    // 事件绑定与实现一一对应（onCustomTap 由「自定义」档经 onPresetTap 间接调用）
+    ['onRaiseSlider', 'onRaiseInput', 'onRaiseBlur', 'onCustomMin', 'onCustomStep', 'onCustomPct',
+      'onCustomMax', 'onCustomClose'].forEach(fn => {
+      ok(wxmlSrc.indexOf(fn) >= 0 && new RegExp('\\n  ' + fn + '\\(').test(tableSrc),
+        '自定义下注：WXML 绑定 ' + fn + ' 且 JS 已实现');
+    });
+    ok(/data-v="\{\{item\.k\}\}" bindtap="onPresetTap"/.test(wxmlSrc) &&
+      /\n  onPresetTap\(/.test(tableSrc) && /\n  onCustomTap\(/.test(tableSrc) &&
+      /if \(v === 'custom'\) \{ this\.onCustomTap\(\); return; \}/.test(tableSrc),
+      '自定义下注：「自定义」档经 onPresetTap → onCustomTap 展开面板');
+    ok(/\n  onCustomClose\(\) \{[\s\S]{0,120}raiseCustom: false/.test(tableSrc),
+      '自定义下注：可「收起」面板回到档位条（两个入口并存不互斥死锁）');
+    // 输入过程不抬下限（否则想输 500 时打完第一个 5 就被改写），失焦才补正
+    ok(/onRaiseInput\(e\) \{[\s\S]{0,400}?if \(isNaN\(v\) \|\| v < 0\) v = 0;/.test(tableSrc) &&
+      /onRaiseInput[\s\S]{0,400}?\n  \},/.test(tableSrc),
+      '自定义下注：输入过程中只清洗与钳上限，不抢先抬到下限（否则无法连续输入目标值）');
+    // 滑杆范围 = 最小 ~ 全下上限，按钮文案与实际提交同口径
+    ok(/min="\{\{raiseMin\}\}" max="\{\{raiseMax\}\}"/.test(wxmlSrc),
+      'WXML：滑杆范围 最小加注 ~ 最大（全下金额）');
+    ok(/raiseSubmit/.test(tableSrc) && /raiseAllIn/.test(tableSrc),
+      'render 计算 raiseSubmit / raiseAllIn（按钮文案与实际提交同口径）');
+    ok(/raiseAllIn \? '全下'/.test(wxmlSrc), 'WXML：加注按钮按 raiseAllIn 显示「全下」');
+    ok(/Math\.max\(legal\.minRaiseTo, Math\.round\(this\.data\.raiseTo \|\| 0\)\)/.test(tableSrc),
+      'onRaise 钳制口径：低于最小加注按最小值提交（输入框填 0 也不会真下 0）');
+  }
+
+  function guardWechatNickname(tableSrc, authSrc, profWxml) {
+    ok(/meLabel\(withOwner\)/.test(tableSrc) &&
+      /meLabel\(withOwner\) \{[\s\S]{0,200}?auth\.myName\('你'\)/.test(tableSrc),
+      '牌桌显示名统一走 meLabel()（默认取微信昵称）');
+    ok(!/"你（房主）"|\? '你' : '好友'/.test(tableSrc) || /meLabel/.test(tableSrc),
+      '牌桌不再硬编码「你 / 房主 / 好友」占位名');
+    ok(/\(withOwner && this\.mode === 'friend'\)/.test(tableSrc),
+      '「（房主）」后缀只在好友房出现（AI 桌无房主概念）');
+    ok(/myName\(fallback\)/.test(authSrc) && /saveNickname\(nick\)/.test(authSrc) &&
+      /isDefaultNickname\(nick\)/.test(authSrc),
+      'auth 提供 myName / saveNickname / isDefaultNickname 昵称读写能力');
+    ok(/DEFAULT_NICK/.test(authSrc) && /module\.exports = \{[^}]*DEFAULT_NICK/.test(authSrc),
+      'auth 导出 DEFAULT_NICK 占位昵称（与各页判定口径一致）');
+    ok(/type="nickname"/.test(profWxml),
+      '我的页提供 <input type="nickname">（微信唯一合规的取真名方式）');
+  }
+
+  function guardRecordsCursor(authSrc, profSrc, tableSrc, profWxml) {
+    ok(/listRecords\(limit = 20, cursor\)/.test(authSrc),
+      'auth.listRecords 支持 cursor 游标参数（分页查询）');
+    ok(/\.lt\('created_at', cursor\)/.test(authSrc),
+      'listRecords 用 .lt(created_at) 推进游标（深翻页不退化）');
+    ok(/PAGE_SIZE/.test(profSrc) && /loadRecords\(first\)/.test(profSrc),
+      'profile.js 抽出 loadRecords(first) 分页方法 + PAGE_SIZE 常量');
+    ok(/onReachBottom\(\)/.test(profSrc), 'profile.js 监听 onReachBottom 触底加载下一页');
+    ok(/recordsEnd/.test(profSrc) && /recordsLoading/.test(profSrc),
+      'profile.js 维护 recordsEnd / recordsLoading 状态（区分首屏与翻页加载）');
+    ok(/onReachBottomDistance/.test(require('fs').readFileSync(
+      path.join(__dirname, 'pages', 'profile', 'profile.json'), 'utf8')),
+      'profile.json 配置 onReachBottomDistance（提前触发触底加载）');
+    ok(/onPullDownRefresh\(\)/.test(profSrc) && /stopPullDownRefresh/.test(profSrc),
+      'profile.js 定义 onPullDownRefresh 并调用 wx.stopPullDownRefresh');
+    ok(/enablePullDownRefresh/.test(require('fs').readFileSync(
+      path.join(__dirname, 'pages', 'profile', 'profile.json'), 'utf8')),
+      'profile.json 启用 enablePullDownRefresh');
+    ok(/onShareTimeline\(\)/.test(tableSrc), 'table.js 定义 onShareTimeline（朋友圈分享）');
+    ok(/rec-more/.test(profWxml) && /rec-end/.test(profWxml),
+      'WXML 战绩列表底部有「加载更多 / 没有更多战绩」节点');
+    ok(/recordsError/.test(profSrc) && /onRetryRecords/.test(profSrc),
+      'profile.js 有 recordsError 状态 + onRetryRecords 重试方法（区分加载失败与空列表）');
+    ok(/recordsError/.test(profWxml) && /重试/.test(profWxml),
+      'profile.wxml 区分加载失败态（recordsError）并提供重试按钮');
+    // 失败分级守卫：catch 里只有首屏（first）才置 recordsError，翻页失败保留已加载列表
+    ok(/if \(first\) patch\.recordsError = true/.test(profSrc),
+      'loadRecords catch 失败分级：仅首屏置 recordsError，翻页失败保留已有列表');
+  }
+
+  function guardEngineRankDisplay(coreSrc, tableSrc) {
+    ok(/const RANK_DISPLAY = \[[^\]]*'10'[^\]]*\]/.test(coreSrc),
+      '引擎新增 RANK_DISPLAY：界面显示 10 而非 T');
+    ok(/const RANK_NAMES = \[[^\]]*'T'[^\]]*\]/.test(coreSrc),
+      '引擎 RANK_NAMES 保持单字符 T（机读码，参与编解码，不可改成 10）');
+    ok(coreSrc.indexOf('RANK_NAMES') !== coreSrc.indexOf('RANK_DISPLAY') &&
+      /RANK_NAMES, RANK_DISPLAY,/.test(coreSrc), 'RANK_DISPLAY 与机读码字母表一并导出');
+    ok(/rank: P\.RANK_DISPLAY\[/.test(tableSrc), '牌桌牌面渲染使用 RANK_DISPLAY（T 显示为 10）');
+  }
+
+  function guardAiTableStart(tableSrc) {
+    ok(/AI 对战：与好友房共用同一间等待室/.test(tableSrc) &&
+      /this\.initWaiting\(\);/.test(tableSrc), 'AI 对战进入等待室而非直接开局');
+    ok(/fillBots\(\) \{/.test(tableSrc) &&
+      /while \(seats\.filter\(s => s\.occupied\)\.length < 2\)/.test(tableSrc),
+      'AI 桌坐下后自动补位到 2 人（保证「坐下即可开始」，不一次加满）');
+    ok(/roomSeat = \(this\.mode === 'friend' && this\.isOwner\) \? 0 : -1/.test(tableSrc),
+      'AI 桌不预占座位（roomSeat = -1，由玩家自己挑位置）');
+    ok(/AI_WAIT_HINT/.test(tableSrc) &&
+      /sitting: '点任一空位选座位坐下/.test(tableSrc),
+      'AI 等待室按是否已坐下切换引导文案');
+  }
+
+  function guardSfxPump(tableSrc) {
+    ok(require('fs').existsSync(path.join(__dirname, 'utils', 'sfx.js')),
+      '存在合成音效模块 utils/sfx.js（零音频资源）');
+    ok(/startSfxPump\(\)/.test(tableSrc) && /drainSfx\(\)/.test(tableSrc) &&
+      /this\.sfxPump = setInterval/.test(tableSrc),
+      'table 启动 300ms 音效事件泵（对手在计时器路径的动作也能发声）');
+    ok(/stopSfxPump\(\)/.test(tableSrc), '音效泵有明确的停止生命周期（onUnload 调用）');
+    ok(/this\.data\.soundOn/.test(tableSrc), '音效开关在事件泵内逐次判断（切换即时生效）');
+  }
+
+  function guardSfxUnlock(sfxSrc, tableSrc, wxmlSrc) {
+    ok(/function unlock\(\)/.test(sfxSrc) && /module.exports\s*=\s*\{[^}]*unlock/.test(sfxSrc),
+      'sfx 导出 unlock()（音频解锁入口）');
+    ok(/c\.resume\(\)/.test(sfxSrc),
+      'unlock() 真正调用 resume()——suspended 上下文不 resume 就永不发声');
+    ok(!/if \(!c \|\| !c\.currentTime\) return/.test(sfxSrc),
+      'play() 不再用 currentTime 当守卫（该守卫会把解锁前的播放全部挡掉，形成死锁）');
+    ok(/bindtouchstart="onFirstTouch"/.test(wxmlSrc),
+      'table 根节点绑定 bindtouchstart="onFirstTouch"（在用户手势里解锁）');
+    ok(/onFirstTouch\(\)\s*\{[\s\S]{0,200}?sfx\.unlock\(\)/.test(tableSrc),
+      'onFirstTouch 调用 sfx.unlock()');
+  }
+
+  function guardPromptSfx(sfxSrc, tableSrc, wxmlSrc, wxssSrc) {
+    ['warn', 'clock', 'timeout', 'chat'].forEach(k => {
+      ok(new RegExp('^\\s{2}' + k + '\\(c, t\\) \\{', 'm').test(sfxSrc),
+        'PRESETS 含新音色「' + k + '」（play() 按 PRESETS[name] 自动识别，无需改 play）');
+    });
+    // 静态守卫：4 处触发点 + 防重播标志位（全部在 soundOn 判断内）
+    ok(/tick === 5 \|\| tick === 3/.test(tableSrc) && /sfx\.play\('warn'\)/.test(tableSrc),
+      '行动计时环剩 5s/3s 滴答警告（防误超时代弃）');
+    ok(/sfxWarnedTick = 0/.test(tableSrc) && /this\.sfxWarnedTick !== tick/.test(tableSrc),
+      '警告音有防重播标志（同 tick 值只播一声，且回合重置清零）');
+    ok(/left === 60 && !this\.sfxClockWarned/.test(tableSrc) &&
+      /if \(this\.data\.soundOn\) sfx\.play\('clock'\)/.test(tableSrc),
+      '限时局最后 60s 钟音（与 UI 变橙 remainSec<=60 同阈值）');
+    ok(/this\.sfxClockWarned = left <= 60/.test(tableSrc),
+      '续局从断点恢复时若已过 60s 阈值不再补播钟音');
+    ok((tableSrc.match(/if \(this\.data\.soundOn\) sfx\.play\('timeout'\)/g) || []).length === 2,
+      '被动代弃与自动站起各播一声 timeout（中性偏负下行音，共 2 处且都在 soundOn 内）');
+    ok(tableSrc.indexOf('被动代弃提示') > 0 && tableSrc.indexOf('被动站起提示') > 0,
+      '两处 timeout 各有注释锚点（代弃 vs 站起，防止将来误删一处）');
+    // 超时被动处理偏保守：有注可跟 → 弃牌（不替玩家主动跟注/下注），无注 → 过牌。
+    const timeoutBlock = (tableSrc.match(/if \(tick <= 0\)\s*\{[\s\S]*?1000\);\r?\n\s*\}/) || [''])[0];
+    ok(/if \(legal\.toCall > 0\) this\.doAct\('fold', 0, '弃牌', 'act-f'\)/.test(timeoutBlock),
+      '超时有注 → 弃牌（不替玩家主动跟注，与好友超时同口径）');
+    ok(/else this\.doAct\('check', 0, '过牌', 'act-c'\)/.test(timeoutBlock),
+      '超时无注 → 过牌（被动处理偏保守，不主动下注）');
+    ok(!/legal\.toCall > 0\) this\.doAct\('call'/.test(timeoutBlock),
+      '超时不再替玩家跟注（旧实现 auto-call 已移除）');
+    // 好友超时 watchFriendAction 与本地超时同口径
+    const watchBlock = (tableSrc.match(/watchFriendAction\(\)\s*\{[\s\S]*?advance\(\);\s*\n\s*\},?/) || [''])[0];
+    ok(/legal\.toCall === 0 \? 'check' : 'fold'/.test(watchBlock),
+      '好友超时无注 → 过牌、有注 → 弃牌（与本地超时 startTimer 同口径）');
+    ok(/act === 'check' \? '超时未行动，自动过牌' : '超时未行动，自动弃牌'/.test(watchBlock),
+      '好友超时代行 chat 文案按动作区分（过牌/弃牌）');
+    ok(!/game\.act\(seat, 'fold'\);\s*\n\s*if \(r\.ok\)/.test(watchBlock),
+      '好友超时不再一律 fold（旧实现无脑弃牌已移除）');
+    ok(/this\.data\.soundOn && seat !== this\.mySeat\) sfx\.play\('chat'\)/.test(tableSrc),
+      '收到他人/AI 消息播 chat 轻提示；我主动发的（seat===mySeat）不响');
+    ok(/pushChat\(this\.mySeat/.test(tableSrc) && tableSrc.indexOf('我主动发，不响提示音') > 0,
+      'pushChat 头注释锁定「我发的不响」语义（聊天消息传 mySeat 快捷发送 + 系统消息除外）');
+    // 聊天未读徽章静态守卫
+    ok(/chatUnread: 0/.test(tableSrc), 'data 有 chatUnread 未读计数字段');
+    ok(/patch\.chatUnread = \(this\.data\.chatUnread \|\| 0\) \+ 1/.test(tableSrc),
+      'pushChat 折叠期间收他人消息累计未读');
+    ok(/chatUnread > 0 && !chatOpen/.test(wxmlSrc), 'WXML 聊天按钮有未读徽章（chatUnread>0 且折叠时）');
+    ok(/\.chat-badge/.test(wxssSrc), 'WXSS 有 .chat-badge 未读徽章样式');
+  }
+
+  function guardRaisePresetPct(tableSrc, wxmlSrc) {
+    const pctSrc = tableSrc;
+    ok(/RAISE_PRESET_PCT\s*=/.test(pctSrc), '存在比例表 RAISE_PRESET_PCT');
+    ['p33', 'p50', 'p67', 'p100'].forEach(k => {
+      ok(new RegExp(k + '\\s*:').test(pctSrc.slice(pctSrc.indexOf('RAISE_PRESET_PCT'), pctSrc.indexOf('RAISE_PRESET_PCT') + 200)),
+        '比例表含档位 ' + k);
+    });
+    ok(/step="\{\{raiseStep\}\}"/.test(wxmlSrc),
+      '滑杆绑定 step="{{raiseStep}}"（控件层就只能停在盲注倍数）');
+    ok(/bindtap="onCustomStep"/.test(wxmlSrc) && /data-dir="1"/.test(wxmlSrc) && /data-dir="-1"/.test(wxmlSrc),
+      '面板提供 ± 步进按钮（data-dir 双向）');
+    ok(/data-pct="0\.33"/.test(wxmlSrc) && /data-pct="0\.67"/.test(wxmlSrc) && /data-pct="1"/.test(wxmlSrc),
+      '面板提供 33%/67%/100% 快捷额');
+    ok(!/onCustomHalf|onCustomPot/.test(wxmlSrc + pctSrc),
+      '旧的 ½池/底池 快捷入口已移除（统一为百分比档）');
+  }
+
+  function guardReadyButton(tableSrc, wxmlSrc, wxssSrc) {
+    ok(/const READY_TIMEOUT_SEC = 30;/.test(tableSrc),
+      '就绪倒计时 30 秒（超时自动站起）');
+    ok(/class="rb-btn \{\{myReady \? 'done' : ''\}\}"/.test(wxmlSrc) &&
+       /disabled="\{\{myReady\}\}"/.test(wxmlSrc),
+      '就绪按钮用 done 态 + disabled 切换，而非 wx:if 消失成 rb-wait 小字');
+    ok(!/rb-wait" wx:elif/.test(wxmlSrc), '旧的 rb-wait「已准备」文本入口已移除');
+    ok(/\.rb-btn\.done\s*\{[\s\S]{0,300}?background:\s*rgba\(255,255,255/.test(wxssSrc),
+      '存在 .rb-btn.done 灰态样式（点完变灰）');
+    ok(/onReadyTap\(\)\s*\{[\s\S]{0,200}?if \(this\.data\.myReady\) return;/.test(tableSrc),
+      'onReadyTap 对已就绪幂等（重复点击无副作用）');
+    ok(/myReady \? '已准备' : '准备就绪'/.test(wxmlSrc) &&
+       /!myReady && readyLeft > 0/.test(wxmlSrc),
+      '就绪后按钮文案变「已准备」且不再显示倒计时秒数');
+  }
+
+  function guardSeatCardNoOverlap(tableSrc, wxmlSrc, wxssSrc) {
+    const feltSrc = tableSrc;
+    const cy = Number((feltSrc.match(/cy = (\d+)/) || [0, 0])[1]);
+    const ry = Number((feltSrc.match(/ry = (\d+)/) || [0, 0])[1]);
+    ok(cy > 0 && ry > 0, 'ringPositions 椭圆参数可解析 cy=' + cy + ' ry=' + ry);
+    ok(cy - ry >= 10, '座位带最低点 ' + (cy - ry) + '% （≥10%，留出块延伸空间）');
+    const yMax = Number((feltSrc.match(/y = Math\.max\(\d+, Math\.min\((\d+)/) || [0, 999])[1]);
+    ok(yMax < 80, '对手座位锚点 y 上界 ' + yMax + '%（<80%，不下探到公共牌区）');
+    ok(/\.pot-row \{[\s\S]{0,200}?z-index: 5/.test(wxssSrc),
+      '.pot-row z-index 5 高于 .seat(3)：底池不被牌背盖住');
+    ok(/\.board-row \{[\s\S]{0,200}?z-index: 5/.test(wxssSrc),
+      '.board-row z-index 5 高于 .seat(3)：公共牌不被牌背盖住');
+    ok(/\.pot-row::before/.test(wxssSrc) && /\.board-row::before/.test(wxssSrc),
+      '底池/公共牌有 ::before 不透明底盘（重叠时不透出牌背花纹）');
+    ok(/\.seat-cards \.card-xs \+ \.card-xs \{ margin-left: calc\(-[\d.]+ \* var\(--uw\)\)/.test(wxssSrc),
+      '座位两张手牌叠放（负 margin），座位块高度显著下降');
+    ok(/class="sb-main">开始游戏</.test(wxmlSrc) &&
+       /class="sb-sub" wx:if="\{\{!canStart\}\}">至少 2 人</.test(wxmlSrc),
+      '开始游戏按钮拆为主标题 + 副标题（不再把门槛塞进同一行括号）');
+    ok(!/开始游戏\{\{canStart \? '' : '（至少 2 人）'\}\}/.test(wxmlSrc),
+      '旧的同行括号写法已移除（那是折行的病根）');
+    ok(/\.wait-actions \.sb-main \{[\s\S]{0,120}?white-space: nowrap/.test(wxssSrc),
+      '开始游戏主标题 white-space:nowrap（永不折行）');
+    ok(/\.wait-actions \.start-btn \{[\s\S]{0,120}?flex-direction: column/.test(wxssSrc),
+      'start-btn 纵向排列，主副标题各占一行');
+  }
+
+  function guardOwnerRecovery(tableSrc, syncSrc) {
+    ok(/auth\.findRoom\(this\.roomNo\)/.test(tableSrc),
+      'bootstrapSync 查询房间行（房主归属的权威来源）');
+    ok(/roomOwner === myUid\) this\.isOwner = true/.test(tableSrc),
+      '以 poker_rooms.owner_id 与登录 uid 比对回收房主身份（own 参数退化为乐观提示）');
+    ok(/this\.setData\(\{ isOwner: this\.isOwner \}\)/.test(tableSrc),
+      '房主身份回收后同步到 data（UI 的房主标/开始按钮跟着更新）');
+    const iRoom = tableSrc.indexOf('auth.findRoom(this.roomNo)');
+    const iSeat = tableSrc.indexOf('let seat = this.isOwner ? 0 : -1');
+    ok(iRoom > 0 && iSeat > 0 && iRoom < iSeat, '先回收房主身份再决定座位（顺序不能反）');
+    ok(/if \(this\.syncLive\) \{\s*roomSync\.leave\(this\.roomNo\)/.test(tableSrc),
+      '离房对所有人（含房主）释放自己的座位行，避免同一人占两个座位');
+    ok(!/if \(this\.syncLive && !this\.isOwner\)/.test(tableSrc),
+      '旧的「只给访客删行」写法已移除（那是两个自己的病根）');
+    ok(/upsertMe[\s\S]{0,600}?\.neq\('seat', Number\(patch\.seat\)\)/.test(syncSrc),
+      'upsertMe 写入座位前先清理同房间其他座位的自己的行（同用户唯一座位）');
+    ok(/const liveBySeat = \{\}/.test(syncSrc) && /rank\(r\) > rank\(cur\)/.test(syncSrc),
+      'buildWaitLayout 同座位多行去重（渲染层兜底，绝不画出两个自己）');
+  }
+
+  function guardClockExpiredAndSummary(tableSrc, wxmlSrc) {
+    ok(/onClockExpired\(\)/.test(tableSrc), '存在 onClockExpired()：时长到点的决策入口');
+    ok(/left <= 0\) \{\s*this\.clearClock\(\);\s*this\.onClockExpired\(\);/.test(tableSrc),
+      'startClock 到点走 onClockExpired，不再直接 endGame（避免中途 game over）');
+    ok(/onClockExpired\(\)\s*\{[\s\S]{0,700}?inPlay[\s\S]{0,400}?if \(!inPlay\) \{ this\.endGame\(\); return; \}/.test(tableSrc),
+      'onClockExpired：不在打牌中才立即结束，打牌中则挂起');
+    ok(/enterReadyPhase\(\)\s*\{[\s\S]{0,300}?if \(this\.pendingTimeUp\) \{ this\.pendingTimeUp = false; this\.endGame\(\); return; \}/.test(tableSrc),
+      'enterReadyPhase 是「打完这手再总结束」的收口点');
+    ok(/myBuyIn: me \? me\.buyIn : 0/.test(tableSrc) && /myStack: me \? me\.stack : 0/.test(tableSrc),
+      'endGame 的 summary 输出 myBuyIn / myStack');
+    ok(/buyIn: this\.startStacks\[p\.seat\] !== undefined/.test(tableSrc),
+      '结算单每行带 buyIn（带入筹码）');
+    ok(/sum-bank/.test(wxmlSrc) && /带入/.test(wxmlSrc) && /剩余/.test(wxmlSrc),
+      '结算单与实时面板共用「带入/剩余/盈亏」三件套组件');
+    ok(/bindtap="onMenuBank"/.test(wxmlSrc) && /onMenuBank\(\)\s*\{[\s\S]{0,200}?bankShow: true/.test(tableSrc),
+      '菜单「我的筹码」入口打开实时盈亏面板');
+    ok(/onBankClose\(\)\s*\{[\s\S]{0,120}?bankShow: false/.test(tableSrc),
+      '实时盈亏面板可关闭');
+    ok(/myNetLive: myNetLive/.test(tableSrc) && /myNetLiveText:/.test(tableSrc),
+      'render 逐帧派生 myNetLive / myNetLiveText（面板实时刷新）');
+    ok(/clockPendingEnd: !!this\.data\.clockPendingEnd/.test(tableSrc) &&
+       /clockPendingEnd: !st\.summary && st\.clockPendingEnd === true/.test(tableSrc),
+      'clockPendingEnd 随房主广播同步给好友端');
+    ok(/clockPendingEnd \? '本手后' : remainText/.test(wxmlSrc),
+      '顶栏到点挂起显示「本手后」而非停在 00:00');
+  }
+
+  function guardSetRaiseTo(tableSrc, wxmlSrc) {
+    ok(/setRaiseTo\(amt, preset\)/.test(tableSrc),
+      '存在统一入口 setRaiseTo()：一次写入 raiseTo + raiseSubmit + raiseAllIn');
+    ok(/setRaiseTo[\s\S]{0,400}?raiseSubmit: submit, raiseAllIn:/.test(tableSrc),
+      'setRaiseTo 同帧写入按钮文案派生字段（不依赖 render 触发）');
+    ok(!/setData\(\{ raiseTo/.test(tableSrc),
+      '所有改下注金额的入口均已收口到 setRaiseTo（无裸 setData({raiseTo}) 漏同步）');
+    ok(/onCustomTap\(\)\s*\{[\s\S]{0,900}?setData\(\{\s*raiseCustom:\s*open\s*\}\)/.test(tableSrc),
+      'onCustomTap 显式写入 raiseCustom（否则面板永远不弹出）');
+    const raiseEntry = (tableSrc.match(/setRaiseTo\(/g) || []).length;
+    ok(raiseEntry >= 10, '金额设置入口全部走 setRaiseTo（1 定义 + 9 调用），实际 ' + raiseEntry);
+    ['onCustomTap', 'onRaiseSlider', 'onRaiseInput', 'onRaiseBlur', 'onCustomMin',
+      'onCustomStep', 'onCustomPct', 'onCustomMax', 'onPresetTap'].forEach(fn => {
+      const body = (tableSrc.match(new RegExp('\\n  ' + fn + '\\([\\s\\S]*?\\n  \\},')) || [''])[0];
+      ok(!/setData\(\{ raiseTo/.test(body),
+        '自定义下注：' + fn + ' 不直写 raiseTo（按钮文案必然同步）');
+    });
+    ok(/Math\.max\(legal\.minRaiseTo, Math\.round\(this\.data\.raiseTo \|\| 0\)\)/.test(tableSrc),
+      'onRaise 钳制口径与按钮文案一致：低于最小加注按最小值提交');
+    ok(/raiseAllIn \? '全下'/.test(wxmlSrc), 'WXML：加注按钮按 raiseAllIn 显示「全下」');
+    ok(!/onRaiseChange/.test(tableSrc) && !/onRaiseChange/.test(wxmlSrc),
+      '旧滑杆回调 onRaiseChange 无死代码、无悬空绑定');
+  }
+
+  function guardLifecyclePause(tableSrc) {
+    ok(/onHide\(\)\s*\{\s*[\s\S]{0,120}?this\.onEnterBackground\(\)/.test(tableSrc),
+      'onHide 已定义并进入后台暂停（此前切后台轮询/看门狗/倒计时照跑）');
+    ok(/onEnterBackground\(\)\s*\{[\s\S]{0,2000}?this\.stopPolling\(\)/.test(tableSrc) &&
+      /onEnterBackground\(\)\s*\{[\s\S]{0,2000}?this\.stopEngineWatch\(\)/.test(tableSrc),
+      '后台暂停覆盖轮询与看门狗');
+    ok(/onEnterBackground\(\)\s*\{[\s\S]{0,2000}?clearTimeout\(aiTimer\)/.test(tableSrc),
+      '后台暂停覆盖 AI 调度');
+    ok(/onEnterBackground\(\)\s*\{[\s\S]{0,2400}?bgRemainSec = Number\(this\.data\.remainSec\)/.test(tableSrc) &&
+      /onLeaveBackground\(\)\s*\{[\s\S]{0,900}?startClock\(resume\)/.test(tableSrc),
+      '限时局后台断点续走（回前台从剩余秒数继续，后台时间不计入）');
+  }
+
+  function guardSyncFailToast(tableSrc) {
+    const silentCatches = (tableSrc.match(/\.catch\(\s*\(\s*\)\s*=>\s*\{\s*\}\s*\)/g) || []).length;
+    const SILENT_OK_COUNT = 0;
+    ok(silentCatches === SILENT_OK_COUNT,
+      '同步链路无静默吞错（裸 catch 已清零），实际 ' + silentCatches);
+    ok(/SYNC_FAIL_TOAST_MS = 10000/.test(tableSrc),
+      '同步失败提示节流常量 SYNC_FAIL_TOAST_MS 存在（心跳 5s 一发防刷屏）');
+    ok(/syncFailToast\(title\)/.test(tableSrc), '存在统一失败提示入口 syncFailToast');
+    ['heartbeat', 'pushAction', 'publishState', 'markReadyRow'].forEach(fn => {
+      const re = new RegExp('roomSync\\.' + fn + '\\([^)]*\\)[\\s\\S]{0,200}?\\.catch\\(\\(\\) => \\{\\s*\\}\\)');
+      ok(!re.test(tableSrc), 'roomSync.' + fn + ' 的失败不再被吞（必须有用户可见提示）');
+    });
+    ['站起未同步成功', '坐下未同步成功', '准备未同步成功', '牌局同步失败'].forEach(t => {
+      ok(tableSrc.indexOf(t) >= 0, '关键上行失败提示文案已定义：' + t);
+    });
+  }
+
+  function guardPollReentry(tableSrc) {
+    ok(/if \(this\._polling\) return/.test(tableSrc), 'pollOnce 有重入守卫（_polling 标记）');
+    ok(/finally \{[\s\S]{0,60}?this\._polling = false/.test(tableSrc), 'pollOnce finally 释放 _polling 标记');
+  }
+
+  function guardBootstrapStopSync(tableSrc) {
+    ok(/bootstrap-sync[\s\S]{0,600}?this\.stopSync\(\)/.test(tableSrc) ||
+       /this\.stopSync\(\)[\s\S]{0,400}?bootstrap-sync/.test(tableSrc),
+      'bootstrapSync 失败 catch 调用 stopSync 清理可能已起的定时器');
+  }
+
+  function guardCatchtapExplicit(tableSrc, wxmlSrc) {
+    ok(!/catchtap>/.test(wxmlSrc) && !/"catchtap"|catchtap=""/.test(wxmlSrc),
+      'table.wxml 无裸 catchtap（全部显式绑定了处理函数）');
+    ok(/onBlockTap\(\)\s*\{\s*\/\* 有意留空/.test(tableSrc),
+      '显式空处理函数 onBlockTap 已定义');
+    const idxWxml = require('fs').readFileSync(
+      path.join(__dirname, 'pages', 'index', 'index.wxml'), 'utf8');
+    ok(!/catchtap>/.test(idxWxml), 'index.wxml 同样无裸 catchtap');
+  }
+
+  function guardTimerNoResidue(tableSrc) {
+    const stBody = (tableSrc.match(/startTimer\(\)\s*\{[\s\S]*?1000\);\r?\n  \}/) || [''])[0];
+    ok(/myTimer: tick/.test(stBody), 'startTimer 回调写我的计时字段');
+    ok(!/seats:/.test(stBody), 'startTimer 每秒回调不写整条 seats 数组（局部路径更新单座位，不吃我的残值）');
+    ok(/seats\[' \+ actIdx \+ '\]\.timer/.test(stBody),
+      '对手回合按行动座位局部 setData seats[actIdx].timer（消除跳秒）');
+    ok(/timer: !readyPhase && game\.actionSeat === p\.seat \? tick : ''/.test(tableSrc),
+      '对手环只在行动座位显示 tick（非行动座位为空串，环隐藏）');
+  }
+
+  function guardTimerUrgent(tableSrc, wxmlSrc, wxssSrc) {
+    ok(/timerUrgent: !readyPhase && game\.actionSeat === p\.seat && tick <= 5 && tick > 0/.test(tableSrc),
+      '对手行动座位最后 5s 标记 timerUrgent（计时环转红脉冲）');
+    ok(/myTimerUrgent: game\.actionSeat === this\.mySeat && !result && tick <= 5 && tick > 0/.test(tableSrc),
+      '我轮到时最后 5s 标记 myTimerUrgent（行动条脉冲）');
+    const stBody = (tableSrc.match(/startTimer\(\)\s*\{[\s\S]*?1000\);\r?\n  \}/) || [''])[0];
+    ok(/myTimerUrgent: tick <= 5 && tick > 0/.test(stBody),
+      'startTimer 每秒回调同步刷新 myTimerUrgent（最后 5s 持续脉冲）');
+    ok(/class="timer \{\{item\.timerUrgent \? 'urgent' : ''\}\}"/.test(wxmlSrc),
+      'WXML 计时环按 timerUrgent 切换 urgent class');
+    ok(/class="actbar \{\{myTimerUrgent \? 'urgent' : ''\}\}"/.test(wxmlSrc),
+      'WXML 行动条按 myTimerUrgent 切换 urgent class');
+    ok(/\.timer\.urgent[\s\S]*?animation: timerPulse/.test(wxssSrc), 'WXSS 计时环 urgent 态有 timerPulse 动画');
+    ok(/\.actbar\.urgent[\s\S]*?animation: actbarPulse/.test(wxssSrc), 'WXSS 行动条 urgent 态有 actbarPulse 动画');
+  }
+
+  function guardResultModalDoc(tableSrc) {
+    const mdoc = (tableSrc.match(/弹出单手结算弹窗[\s\S]{0,300}?由 render 末尾的统一调度[\s\S]{0,120}?自动触发/) || [])[0];
+    ok(!!mdoc, 'showResultModal 注释已改为「render 统一调度自动触发 + 用户可提前打开」（与代码一致）');
+    ok(/this\.resultTimer = setTimeout\(\(\) => \{[\s\S]{0,200}?showResultModal\(\)/.test(tableSrc),
+      'render 末尾确有自动弹出调度（注释与代码不再矛盾）');
+  }
+
+  function guardDirtyCheckFingerprint(tableSrc) {
+    ok(tableSrc.indexOf('_lastPlayFp') >= 0, 'writePlayState 有房主指纹缓存键');
+    ok(/if \(this\._lastPlayFp === fingerprint\) return/.test(tableSrc),
+      '房主牌局未变时跳过本轮写库');
+    ok(tableSrc.indexOf('_lastRemoteFp') >= 0, 'enterRemote 有镜像指纹缓存键');
+    ok(/if \(this\._lastRemoteFp === fp\) return/.test(tableSrc),
+      '好友端快照未变时跳过本轮 setData + render');
+  }
+
+  function guardIdleTimeout(tableSrc, wxmlSrc, wxssSrc) {
+    ok(tableSrc.indexOf('IDLE_WARN_MS') > 0, '定义了空闲提示提前量 IDLE_WARN_MS');
+    ok(tableSrc.indexOf('tickExpireWarn') > 0, '定义了逐秒刷新倒计时文案方法 tickExpireWarn');
+    ok(tableSrc.indexOf('clearExpireWarn') > 0, '定义了清掉空闲提示方法 clearExpireWarn');
+    ok(/idleRemainText: '',/.test(tableSrc), 'data 声明空闲倒计时文案字段 idleRemainText');
+    ok(wxmlSrc.indexOf('wi-idle') > 0, 'WXML 等待室空闲倒计时提示节点 wi-idle');
+    ok(/\.wi-idle[\s\S]*?idlePulse/.test(wxssSrc), 'WXSS 空闲提示有 idlePulse 脉冲动画');
+  }
+
+  function guardPerfCache(tableSrc) {
+    ok(/_ringCache/.test(tableSrc), 'ringPositions 有模块级缓存 _ringCache');
+    ok(/cacheKey/.test(tableSrc) && /_ringCache\[cacheKey\] = pos/.test(tableSrc),
+      'ringPositions 命中缓存时写回并返回（纯函数缓存）');
+    ok(/_cardCache/.test(tableSrc), 'cardData 有按 card id 缓存 _cardCache');
+  }
+
+  function guardRenderFingerprint(tableSrc) {
+    ok(/_lastRenderFp/.test(tableSrc), 'render 有渲染指纹缓存键 _lastRenderFp');
+    ok(/if \(this\._lastRenderFp === fp\)/.test(tableSrc), 'render 指纹命中时跳过 setData');
+    ok(/_renderTail\(\)/.test(tableSrc), 'render 尾部调度抽出 _renderTail（指纹跳过时仍执行）');
+    ok(/tick,/.test(tableSrc) && /myActText,/.test(tableSrc),
+      '渲染指纹含 tick 与 myActText（计时环与动作气泡变化可触发重绘）');
+    ok(/resultModal: result \? this\.data\.resultModal : null[\s\S]{0,120}this\._lastRenderFp = fp/.test(tableSrc),
+      '指纹置位在主 setData 之后（异常帧不缓存指纹，下帧自动重试）');
+    ok(!/if \(this\._lastRenderFp === fp\)[\s\S]{0,40}this\._lastRenderFp = fp/.test(tableSrc),
+      '指纹赋值不在「命中跳过」之后紧跟（避免 body 抛错前就置位）');
+  }
+
+  function guardSidePotsRender(tableSrc) {
+    ok(/if \(!readyPhase && game\.pots && game\.pots\.length > 1\)/.test(tableSrc),
+      'render 有边池分层分支（pots.length > 1 才切边池）');
+    ok(/sidePots = game\.pots\.slice\(1\)\.map\(p => p\.amount\)/.test(tableSrc),
+      '边池取 pots.slice(1) 的 amount 数组（主池在 pot 字段单独展示）');
+    ok(/sidePots,/.test(tableSrc), 'sidePots 进 setData（渲染层可见）');
+  }
+
+  function guardWatchFriendTimeout(tableSrc) {
+    ok(/roomSync\.SYNC\.ACTION_TIMEOUT_SEC \* 1000/.test(tableSrc),
+      'watchFriendAction 用 ACTION_TIMEOUT_SEC*1000 作 30s 阈值');
+    ok(/legal && legal\.toCall === 0 \? 'check' : 'fold'/.test(tableSrc),
+      '代行口径：无注过牌 / 有注弃牌（与本地 startTimer 超时同口径）');
+    ok(/超时未行动，自动过牌|超时未行动，自动弃牌/.test(tableSrc),
+      '代弃有 pushChat 系统消息（过牌/弃牌两案）');
+  }
+
+  function guardPublishPlayThrottle(tableSrc) {
+    ok(/publishDue\|publishTimer/.test(tableSrc) || (/publishDue/.test(tableSrc) && /publishTimer/.test(tableSrc)),
+      'publishPlay 用 publishDue/publishTimer 做 500ms 节流');
+    ok(/if \(now >= due\)/.test(tableSrc), 'publishPlay 到期分支（now >= due 直发）');
+    ok(/this\.publishTimer = setTimeout/.test(tableSrc),
+      'publishPlay 未到期分支挂延后 setTimeout');
+  }
+
+  function guardAdviceCache(adviceSrc) {
+    ok(adviceSrc.indexOf('_adviceKey') >= 0, 'renderAdvice 有缓存键（不再每帧重算）');
+    ok(/!isMyTurn \|\| this\.mode !== 'ai'\)[\s\S]*?_adviceKey = null/.test(adviceSrc),
+      '离开我的回合即失效缓存键（下一回合必是新局势）');
+  }
+
+  function guardResetRaiseState(tableSrc2) {
+    const shIdx = tableSrc2.indexOf('startHand()');
+    ok(shIdx >= 0 && tableSrc2.indexOf('this.resetRaiseState()', shIdx) >= 0 &&
+      tableSrc2.indexOf('this.resetRaiseState()', shIdx) < tableSrc2.indexOf('this.render()', shIdx),
+      'startHand 里在 render() 之前调用了 resetRaiseState()（顺序锁死，否则时序兜底失效）');
+    // 语义守卫：锁死 render 里「每手首帧取最小额」的那行真的存在。
+    ok(/const wasReset = !!this\._raiseResetPending/.test(tableSrc2) &&
+      /raiseTo = wasReset \? legal\.minRaiseTo/.test(tableSrc2),
+      'render 里用 wasReset 同步路径覆盖金额（否则只 setData 会读到上一手旧值）');
+    // 语义守卫：raiseSubmit 必须读局部 raiseTo，不能读 this.data.raiseTo
+    ok(/raiseSubmit = Math\.max\(legal\.minRaiseTo, Math\.round\(raiseTo \|\| 0\)\)/.test(tableSrc2),
+      '加注按钮文案读局部 raiseTo 而非 this.data.raiseTo（与档位高亮同帧自洽）');
+  }
+
+  function guardAmbienceConstants(tableSrc, wxmlSrc, wxssSrc) {
+    // —— 常量与模块级状态 ——
+    ok(/const EMOTE_SET = \['👏', '🎉', '😏', '😅', '🤡', '💪'\]/.test(tableSrc),
+      'EMOTE_SET 恰好 6 个 emoji（渲染白名单，防伪造/超长 payload）');
+    ok(/EMOTE_THROTTLE_MS = 3000/.test(tableSrc), '表情频控 3s/座位（EMOTE_THROTTLE_MS）');
+    ok(/EMOTE_BUBBLE_MS = 2200/.test(tableSrc), '气泡消散时长 2.2s（EMOTE_BUBBLE_MS）');
+    ok(/EMOTE_QUEUE_MAX = 10/.test(tableSrc), '氛围队列广播上限 10 条（EMOTE_QUEUE_MAX，滚动截断）');
+    ok(/EMOTE_PLAY_WINDOW_MS = 1500/.test(tableSrc), '镜像端只放近 1.5s 内表情（EMOTE_PLAY_WINDOW_MS，防重放）');
+    ok(/BIG_HAND_MIN = 4/.test(tableSrc), '大牌粒子阈值 = 4（引擎 HAND.STRAIGHT，顺子及以上才出星光）');
+    ok(/WIN_STREAK_MIN = 2/.test(tableSrc), '连胜徽章阈值 = 2（WIN_STREAK_MIN，≥2 手显示 🔥xN）');
+    ok(/let winStreaks = \{\}/.test(tableSrc) && /let lastEmoteAt = \{\}/.test(tableSrc) && /let flySeed = 0/.test(tableSrc),
+      '模块级氛围状态：winStreaks / lastEmoteAt / flySeed（座位级计数与动画自增 id）');
+
+    // —— data 字段齐备 ——
+    ['emoteShow', 'emoteSeat', 'emoteSet', 'emotes', 'spark', 'flyOut', 'flyIn', 'streaks', 'winFx'].forEach(f => {
+      ok(new RegExp(f + ':').test(tableSrc), 'data 声明氛围字段：' + f);
+    });
+
+    // —— 核心方法存在 ——
+    ['renderAmbience', '_snapBaseline', '_resultHandCat', '_fxPos',
+      '_spawnFlyOut', '_spawnFlyHome', '_spawnSpark', '_bumpStreaks',
+      'onAvatarTap', 'onEmoteClose', 'onEmotePick', '_showEmoteBubble', 'onEmoteTalk'].forEach(fn => {
+      ok(new RegExp(fn + '\\(').test(tableSrc), '定义氛围方法：' + fn);
+    });
+  }
+
+  function guardAmbienceRenderAndSync(tableSrc) {
+    // —— render 基线 diff ——
+    ok(/const prevBase = this\._base;/.test(tableSrc) && /this\._snapBaseline\(\);/.test(tableSrc) && /this\._prevBase = prevBase;/.test(tableSrc),
+      'render 开头缓存上一帧基线供 renderAmbience 比对（_prevBase）');
+    ok(/this\.renderAmbience\(\);/.test(tableSrc), '_renderTail 末尾调用 renderAmbience（每帧驱动氛围）');
+
+    // —— animOn 守卫 ——
+    ok(/prev\.handNo === now\.handNo && this\.data\.animOn/.test(tableSrc),
+      '下注飞行只在 animOn 且同手内触发（跨手不误触）');
+    ok(/this\.data\.animOn && result_fresh/.test(tableSrc),
+      '收池飞行/金光/粒子只在 animOn 且结果新鲜时触发');
+
+    // —— HAND_NAME_TO_CAT 映射 ——
+    ok(/HAND_NAME_TO_CAT = \{/.test(tableSrc), '牌型名→枚举映射 HAND_NAME_TO_CAT 存在（_resultHandCat 用）');
+    ok(/if \(!evals\) return 0;/.test(tableSrc), '_resultHandCat：fold 结算无 evals 返回 0（不触发粒子）');
+
+    // —— 静默降级 ——
+    ok(/pushAction\(this\.roomNo, \{ type: 'emote'/.test(tableSrc),
+      '好友房表情走既有 pushAction 上行（type:emote）');
+    ok(/\.catch\(\(\) => \{ \/\* 静默降级[^*]*\*\/ \}\)/.test(tableSrc),
+      '表情上行失败静默降级（不弹错不重试，与牌局关键上行 syncFailToast 语义不同）');
+
+    // —— startHand 清零氛围状态 ——
+    ok(/winStreaks = \{\};[^}]*this\.setData\(\{ spark: null, flyOut: \[\], flyIn: \[\], winFx: '', streaks: \{\} \}\)/.test(tableSrc),
+      'startHand 清零连胜计数 + 清空粒子/飞行/金光/徽章');
+
+    // —— applyFriendAction emote 分支 ——
+    ok(/if \(a\.type === 'emote'\)/.test(tableSrc), 'applyFriendAction 有 emote 动作分支');
+    ok(/Number\(a\.seat\) !== Number\(a\.rowSeat\)/.test(tableSrc) && /EMOTE_SET\.indexOf\(a\.emoji\) < 0/.test(tableSrc),
+      'emote 分支：rowSeat 伪冒断言 + emoji 白名单双校验');
+
+    // —— applyFriendAction chat 分支 ——
+    ok(/if \(a\.type === 'chat'\)/.test(tableSrc), 'applyFriendAction 有 chat 动作分支');
+    ok(/CHAT_TEXT_SET\.indexOf\(a\.text\) < 0/.test(tableSrc),
+      'chat 分支：文案过 CHAT_TEXT_SET 白名单（防伪造内容/超长 payload）');
+    ok(/if \(Number\(a\.seat\) !== Number\(a\.rowSeat\)\) return;[\s\S]*?CHAT_TEXT_SET/.test(tableSrc),
+      'chat 分支：rowSeat 伪冒断言先于白名单（与 emote 同防伪冒口径）');
+
+    // —— 快捷语上行 ——
+    ok(/pushAction\(this\.roomNo, \{ type: 'chat'/.test(tableSrc),
+      '好友房快捷语/表情走 pushAction 上行（type:chat，复用既有分道机制）');
+    ok(/CHAT_TEXT_SET\.indexOf\(text\) >= 0/.test(tableSrc),
+      'onQuickChat/onEmoji 上行前过 CHAT_TEXT_SET 白名单（面板外文案不上行）');
+
+    // —— writePlayState emotes ——
+    ok(/emotes: \(this\.data\.emotes \|\| \[\]\)\.slice\(-EMOTE_QUEUE_MAX\)/.test(tableSrc),
+      'writePlayState 快照带 emotes 队列（滚动 10 条上限）');
+    ok(/'e' \+ \(state\.emotes \|\| \[\]\.map/.test(tableSrc) || /'e' \+\s*\(state\.emotes/.test(tableSrc),
+      '房主写库指纹含 emotes 项（表情变化触发写库广播）');
+
+    // —— writePlayState chats ——
+    ok(/chats: \(this\.data\.chatLog \|\| \[\]\)\.slice\(-CHAT_QUEUE_MAX\)/.test(tableSrc),
+      'writePlayState 快照带 chats 队列（滚动 8 条上限）');
+    ok(/'c' \+ \(state\.chats \|\| \[\]\)\.map/.test(tableSrc),
+      '房主写库指纹含 chats 项（快捷语变化触发写库广播）');
+
+    // —— enterRemote 表情镜像 ——
+    ok(/st\.emotes/.test(tableSrc), 'enterRemote 读取房主广播的 emotes 字段');
+    ok(/const localSeat = remapS\[Number\(e\.seat\)\]/.test(tableSrc),
+      '镜像端按座次重映射 emote 的 seat（remapS，我=0 号位）');
+
+    // —— enterRemote 快捷语镜像 ——
+    ok(/st\.chats/.test(tableSrc), 'enterRemote 读取房主广播的 chats 字段');
+    ok(/_seenChatIds/.test(tableSrc), '镜像端用 seenChatIds 记录已放过的快捷语 id（防轮询重放）');
+    ok(/CHAT_TEXT_SET\.indexOf\(c\.text\) < 0/.test(tableSrc),
+      '镜像端只回放白名单内的快捷语（系统消息由镜像端本地逻辑生成，不重复回放）');
+  }
+
+  function guardAmbienceWxml(wxmlSrc, wxssSrc, tableSrc) {
+    ok(wxmlSrc.indexOf('class="fly-chip fly-out"') >= 0 && wxmlSrc.indexOf('class="fly-chip fly-in"') >= 0,
+      'WXML 筹码飞行层：fly-out / fly-in 两层');
+    ok(/class="\{\{item\.cls\}\}"/.test(wxmlSrc),
+      'WXML 座位 class 由 JS 预计算（class="{{item.cls}}"）');
+    ok(!/winFx && \(',' \+ winFx/.test(wxmlSrc),
+      'WXML 已无「三元里调 .indexOf()」写法（真机上传编译失败的病根）');
+    ok(/_winFxSeats\.indexOf\(p\.seat\) >= 0 \? 'winfx'/.test(tableSrc),
+      'JS 侧用 _winFxSeats 判定 winfx（金光脉冲语义未变）');
+    const clsBlock = (tableSrc.match(/const cls = \[[\s\S]{0,600}?\]\.filter\(Boolean\)\.join\(' '\)/) || [''])[0];
+    ok(clsBlock.length > 0, 'JS 侧存在座位 cls 预计算');
+    ['self', 'folded', 'active', 'win', 'standing', 'winfx'].forEach(k => {
+      ok(clsBlock.indexOf("'" + k + "'") >= 0, 'cls 含状态位 ' + k + '（与原内联表达式语义一致）');
+    });
+    ok(/this\._winFxSeats = \[\]/.test(tableSrc), '新手/重开时清空 _winFxSeats（避免上把赢家残留金光）');
+    ok(wxmlSrc.indexOf('catchtap="onAvatarTap"') >= 0, 'WXML 头像绑 onAvatarTap（点头像弹轮盘）');
+    ok(wxmlSrc.indexOf('streak-badge') >= 0, 'WXML 连胜徽章节点 streak-badge');
+    ok(wxmlSrc.indexOf('emote-bubble') >= 0, 'WXML 表情气泡节点 emote-bubble');
+    ok(wxmlSrc.indexOf('class="spark"') >= 0, 'WXML 星光粒子节点 spark');
+    ok(wxmlSrc.indexOf('emote-mask') >= 0 && wxmlSrc.indexOf('emote-wheel') >= 0 &&
+      wxmlSrc.indexOf('emote-grid') >= 0 && wxmlSrc.indexOf('emote-cell') >= 0,
+      'WXML 表情轮盘弹层四件套：emote-mask/wheel/grid/cell');
+    ok(wxmlSrc.indexOf('emote-talk') >= 0 && wxmlSrc.indexOf('onEmoteTalk') >= 0,
+      'WXML 表情轮盘含「快捷语」入口（emote-talk 节点 + onEmoteTalk 绑定）');
+    ok(wxssSrc.indexOf('.emote-talk') >= 0, 'WXSS 快捷语入口样式 .emote-talk 存在');
+    ok(/onEmoteTalk\(\)\s*\{[\s\S]*?onQuickChat\(/.test(tableSrc),
+      'onEmoteTalk 落地：复用 onQuickChat 通道发一条快捷语（P3 预留位已实现）');
+  }
+
+  function guardAmbienceWxss(wxssSrc) {
+    ['.seat.winfx .avatar', '.streak-badge', '.emote-bubble', '.spark',
+      '.fly-chip', '.fly-chip.fly-out', '.fly-chip.fly-in',
+      '.emote-mask', '.emote-wheel', '.emote-grid', '.emote-cell'].forEach(c => {
+      ok(wxssSrc.indexOf(c) >= 0, 'WXSS 样式：' + c);
+    });
+    ['winGlow', 'streakPop', 'emoteFloat', 'sparkTwinkle',
+      'flyChipOut', 'flyChipIn', 'wheelPop'].forEach(kf => {
+      ok(new RegExp('@keyframes ' + kf).test(wxssSrc), 'WXSS @keyframes：' + kf);
+    });
+    const flyOutBlock = (wxssSrc.match(/@keyframes flyChipOut \{[\s\S]*?\}/) || [''])[0];
+    ok(/transform:/.test(flyOutBlock) && /opacity:/.test(flyOutBlock) &&
+      !/top:|left:/.test(flyOutBlock.replace(/translate/, '')),
+      'flyChipOut 只用 transform/opacity（不动 top/left，重排红线）');
+    ok(/\.spark \{[\s\S]*?background:\s*url\(\.\.\/\.\.\/assets\/spark\.png\)/.test(wxssSrc),
+      'spark 粒子用 assets/spark.png 贴图（CSS background）');
+    ok(/\.no-anim \.seat\.winfx \.avatar/.test(wxssSrc) && /\.no-anim \.spark/.test(wxssSrc) &&
+      /\.no-anim \.fly-chip/.test(wxssSrc),
+      'WXSS .no-anim 兜底禁用氛围动画（animOn=false 全关）');
+  }
+
+  function guardReplayStore(rs, storeSrc) {
+    ok(typeof rs.addReplay === 'function' && typeof rs.listAll === 'function' &&
+      typeof rs.latest === 'function' && typeof rs.findByDate === 'function',
+      'replay-store 导出 addReplay/listAll/latest/findByDate 四个方法');
+    ok(rs.MAX_REPLAYS === 20, 'replay-store 上限 20 局（FIFO 挤出）');
+    ok(/poker_replay_cache/.test(storeSrc), 'replay-store 用独立 storage 键 poker_replay_cache');
+    ok(/setStorageSync/.test(storeSrc), 'replay-store 走本地 wx.setStorageSync（不进云）');
+    ok(/return false/.test(storeSrc) && /catch \(e\)/.test(storeSrc),
+      'replay-store addReplay 失败静默降级（返回 false，不阻断）');
+  }
+
+  function guardAdvisorIntegration(tableSrc, wxmlSrc) {
+    ok(/require\(['"].+advisor['"]\)/.test(tableSrc), 'table.js 引入 advisor 模块');
+    ok(tableSrc.indexOf('advisor.classifyHole') >= 0,
+      'renderAdvice 调用 advisor.classifyHole（起手牌分类）');
+    ok(tableSrc.indexOf('advisor.explainAdvice') >= 0,
+      'renderAdvice 调用 advisor.explainAdvice（牌理解释）');
+    ok(/advBase\.holeLabel/.test(tableSrc) && /advBase\.explain/.test(tableSrc),
+      'advice setData 新增 holeLabel/explain 字段（不破坏 equityPct/potOdds/text/tone/drawDesc/drawOuts）');
+    const advCalls = (tableSrc.match(/advisor\.(classifyHole|explainAdvice)/g) || []).length;
+    ok(advCalls === 2, 'advisor 调用只在 renderAdvice 内（classifyHole + explainAdvice 各 1，不绕 mode!==ai 门槛），共 ' + advCalls);
+    ok(/class="adv-explain"/.test(wxmlSrc), '建议栏 wxml 含 adv-explain 节点');
+    ok(/advice\.explain/.test(wxmlSrc), '建议栏 wxml 插值 advice.explain');
+  }
+
+  function guardStyleIntegration(profSrc, profWxml, profWxss, saSrc) {
     ok(/require\(['"].+replay-store['"]\)/.test(profSrc), 'profile.js 引入 replay-store');
     ok(/require\(['"].+style-analyzer['"]\)/.test(profSrc), 'profile.js 引入 style-analyzer');
     ok(/styleAnalyzer\.analyze\(replayStore\.listAll\(\)\)/.test(profSrc),
       'profile.js 调用 styleAnalyzer.analyze(replayStore.listAll())');
     ok(/styleAnalysis/.test(profSrc), 'profile.js 维护 styleAnalysis 状态字段');
-    // 旧 style（云端胜率代理）保留，与新行为画像分区不删
     ok(/激进型|保守型|稳健型/.test(profSrc), 'profile.js 保留旧 style（胜率倾向），与新 styleAnalysis 分区显示');
-
-    // ---- profile.wxml 静态守卫 ----
-    const profWxml = fs.readFileSync(path.join(__dirname, 'pages', 'profile', 'profile.wxml'), 'utf8');
     ok(/styleAnalysis\.insufficient/.test(profWxml), '我的页 wxml 含样本不足分支');
     ok(/styleAnalysis\.quadrant/.test(profWxml), '我的页 wxml 插值打法象限');
     ok(/styleAnalysis\.observations/.test(profWxml) && /wx:for/.test(profWxml),
       '我的页 wxml 用 wx:for 渲染观察列表');
-    // wxml 用 {{styleAnalysis.quadrantTag}} 插值类名；配色定义在 wxss（tag 选择器）
     ok(/styleAnalysis\.quadrantTag/.test(profWxml),
       '我的页 wxml 用 quadrantTag 插值类名（象限配色）');
-    const profWxss = fs.readFileSync(path.join(__dirname, 'pages', 'profile', 'profile.wxss'), 'utf8');
     ok(/tight-aggressive/.test(profWxss) && /loose-passive/.test(profWxss),
       '我的页 wxss 定义四象限配色（tight-aggressive/loose-passive 等）');
-
-    // ---- 合规/边界静态守卫 ----
-    const saSrc = fs.readFileSync(path.join(__dirname, 'utils', 'style-analyzer.js'), 'utf8');
     ok(!/wx\.request|require\(['"]https?/.test(saSrc), 'style-analyzer 不含网络调用（纯本地）');
     ok(/不接 LLM|样本不足|不硬算|描述性|不评判/.test(saSrc),
       'style-analyzer 头注释声明边界（不接 LLM / 样本不足不硬算 / 描述性不评判）');
-  })();
+  }
 
   /* ---------- 输出 ---------- */
   console.log('\n' + '='.repeat(52));
