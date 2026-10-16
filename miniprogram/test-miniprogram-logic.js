@@ -1937,6 +1937,10 @@ while (guard++ < 400) {
     const profWxss = fs.readFileSync(path.join(__dirname, 'pages', 'profile', 'profile.wxss'), 'utf8');
     const saSrc = fs.readFileSync(path.join(__dirname, 'utils', 'style-analyzer.js'), 'utf8');
     guardStyleIntegration(profSrc, profWxml, profWxss, saSrc);
+
+    // ---- 战绩深化图表（方向 A）接入静态守卫 ----
+    const csSrc = fs.readFileSync(path.join(__dirname, 'utils', 'chart-stats.js'), 'utf8');
+    guardChartsIntegration(profSrc, profWxml, profWxss, csSrc);
   })();
 
   /* ---------- 静态守卫函数定义区 ----------
@@ -2733,6 +2737,44 @@ while (guard++ < 400) {
     ok(!/wx\.request|require\(['"]https?/.test(saSrc), 'style-analyzer 不含网络调用（纯本地）');
     ok(/不接 LLM|样本不足|不硬算|描述性|不评判/.test(saSrc),
       'style-analyzer 头注释声明边界（不接 LLM / 样本不足不硬算 / 描述性不评判）');
+  }
+
+  /* 战绩深化图表集成守卫（方向 A）：纯 CSS 无 canvas 无新依赖，重排红线遵守 */
+  function guardChartsIntegration(profSrc, profWxml, profWxss, csSrc) {
+    // chart-stats.js 纯函数模块约束
+    ok(/computeWinRate/.test(csSrc) && /computeHandTypes/.test(csSrc) && /computeNetTrend/.test(csSrc),
+      'chart-stats.js 导出 computeWinRate/computeHandTypes/computeNetTrend');
+    ok(/CHUNK_SIZE/.test(csSrc), 'chart-stats.js 导出 CHUNK_SIZE 常量');
+    ok(!/require\(['"].*wx/.test(csSrc), 'chart-stats.js 不依赖 wx 运行时');
+    ok(!/cloud\.database|cloud\.from|require\(['"].*cloud/.test(csSrc),
+      'chart-stats.js 不依赖云服务');
+    ok(!/Math\.random/.test(csSrc), 'chart-stats.js 无 RNG（纯函数）');
+
+    // profile.js 接入
+    ok(/require\(['"].+chart-stats['"]\)/.test(profSrc), 'profile.js 引入 chart-stats');
+    ok(/CHART_LIMIT/.test(profSrc), 'profile.js 定义 CHART_LIMIT 常量');
+    ok(/loadCharts/.test(profSrc), 'profile.js 定义 loadCharts 方法');
+    ok(/computeWinRate/.test(profSrc) && /computeHandTypes/.test(profSrc) && /computeNetTrend/.test(profSrc),
+      'profile.js 调用三个 chart-stats 函数');
+    ok(/chartHands/.test(profSrc) && /chartLoading/.test(profSrc),
+      'profile.js 维护 chartHands/chartLoading 状态字段');
+
+    // profile.wxml 纯 CSS 图表节点
+    ok(/战绩深化/.test(profWxml), '我的页 wxml 含「战绩深化」section');
+    ok(/chart-card/.test(profWxml), '我的页 wxml 含 chart-card 容器');
+    ok(/wr-bar/.test(profWxml), '我的页 wxml 含胜率曲线柱（wr-bar）');
+    ok(/ht-row/.test(profWxml), '我的页 wxml 含牌型分布行（ht-row）');
+    ok(/net-bar/.test(profWxml), '我的页 wxml 含盈亏走势柱（net-bar）');
+    ok(!/canvas/.test(profWxml), '我的页 wxml 无 canvas（纯 CSS 图表硬约束）');
+
+    // profile.wxss 重排红线：chart 区无 width/top/left 的 transition 或 keyframe 动画
+    ok(/transform-origin/.test(profWxss), '我的页 wxss 含 transform-origin（scaleY 锚点）');
+    // 提取 chart 区 wxss 片段，检查重排红线
+    const chartWxss = profWxss.slice(profWxss.indexOf('chart-card'));
+    ok(!/transition[^;]*\b(width|top|left)\b/.test(chartWxss),
+      'chart 区 wxss 无 width/top/left 的 transition（重排红线）');
+    ok(!/@keyframes[^{]*\{[^}]*\b(width|top|left)\b/.test(chartWxss),
+      'chart 区 wxss 无 keyframe 动画 width/top/left（重排红线）');
   }
 
   /* ---------- 输出 ---------- */

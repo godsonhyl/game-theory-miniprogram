@@ -54,6 +54,8 @@ function matches(row, filters) {
     const v = row[f[0]];
     // PostgREST 语义：eq(NULL 列, 任何值) 永不命中；is(col, null) 命中 NULL 列
     if (f[1] === null) return v === null || v === undefined;
+    // lt 过滤：字段值 < 指定值才命中（NULL 不命中，与 PostgREST 一致）
+    if (f[2] === 'lt') return v !== null && v !== undefined && v < f[1];
     return v !== null && v !== undefined && String(v) === String(f[1]);
   });
 }
@@ -61,15 +63,19 @@ function matches(row, filters) {
 const makeQuery = table => {
   const q = {
     _table: table, _op: 'select', _payload: null, _filters: [],
-    _wantSelect: false, _single: false, _maybeSingle: false, _cols: '*'
+    _wantSelect: false, _single: false, _maybeSingle: false, _cols: '*',
+    _order: null, _limit: null
   };
   q.select = cols => { q._cols = cols || '*'; q._wantSelect = true; return q; };
   q.insert = row => { q._op = 'insert'; q._payload = row; return q; };
   q.update = patch => { q._op = 'update'; q._payload = patch; return q; };
   q.eq = (a, b) => { q._filters.push([a, b]); return q; };
   q.is = (a, b) => { q._filters.push([a, b === null ? null : b]); return q; };
-  q.order = () => q;
-  q.limit = () => q;
+  q.lt = (a, b) => { q._filters.push([a, b, 'lt']); return q; };
+  // .order/.limit 功能化：记录排序字段与截断条数，在 then 里真正执行
+  // （之前是 no-op，listRecords 的游标分页依赖 .lt + .order + .limit 协作）
+  q.order = (col, opts) => { q._order = { col: col, asc: !!(opts && opts.ascending) }; return q; };
+  q.limit = n => { q._limit = n; return q; };
   q.single = () => { q._single = true; return q; };
   q.maybeSingle = () => { q._maybeSingle = true; return q; };
 
@@ -95,7 +101,20 @@ const makeQuery = table => {
         out = { data: q._wantSelect ? rows.filter(r => hitIds.has(r.id)) : hit, error: null };
       } else {
         const hit = rows.filter(r => matches(r, q._filters));
-        out = { data: hit, error: null };
+        // select 分支：按 .order 指定字段排序（默认 created_at 降序未指定时保持原序）
+        let sorted = hit;
+        if (q._order) {
+          sorted = hit.slice().sort((a, b) => {
+            const av = a[q._order.col], bv = b[q._order.col];
+            if (av === bv) return 0;
+            if (av === null || av === undefined) return 1;
+            if (bv === null || bv === undefined) return -1;
+            return q._order.asc ? (av < bv ? -1 : 1) : (av < bv ? 1 : -1);
+          });
+        }
+        // .limit 截断
+        if (q._limit != null) sorted = sorted.slice(0, q._limit);
+        out = { data: sorted, error: null };
       }
       if (q._maybeSingle) out = { data: out.data.length ? out.data[0] : null, error: null };
       if (q._single) {
@@ -329,6 +348,120 @@ Module.prototype.require = origRequire;
     '房卡不足弹窗给出「去领卡 / AI 桌」两条出路');
   ok(indexJs.indexOf('去领卡') >= 0 && '去领卡'.length <= 4 && 'AI 桌'.length <= 4,
     '弹窗按钮文案 ≤ 4 字（超长真机静默失败）');
+
+  /* ---------- 战绩深化图表（方向 A）纯函数单测 ---------- */
+  const chartStats = require(path.join(__dirname, 'utils', 'chart-stats'));
+
+  // ---- 空数组容错 ----
+  eq(chartStats.computeWinRate([]), { chunks: [], overallPct: 0 },
+    'computeWinRate 空数组 → { chunks:[], overallPct:0 }');
+  eq(chartStats.computeHandTypes([]), [], 'computeHandTypes 空数组 → []');
+  eq(chartStats.computeNetTrend([]), { bars: [], sum: 0, sumText: '0' },
+    'computeNetTrend 空数组 → { bars:[], sum:0, sumText:"0" }');
+  eq(chartStats.computeWinRate(null).overallPct, 0, 'computeWinRate null 入参容错 → overallPct=0');
+  eq(chartStats.computeNetTrend(null).sumText, '0', 'computeNetTrend null 入参容错 → sumText="0"');
+
+  // ---- CHUNK_SIZE 常量 ----
+  eq(chartStats.CHUNK_SIZE, 10, 'CHUNK_SIZE = 10');
+
+  // ---- 胜率曲线：10 手 60% 胜（6 won）→ 一块 ----
+  const rows10 = Array.from({ length: 10 }, (_, i) => ({ won: i < 6, net: 10, hand_type: '' }));
+  const wr10 = chartStats.computeWinRate(rows10);
+  eq(wr10.chunks.length, 1, '10 手 → 1 块');
+  eq(wr10.chunks[0].pct, 60, '10 手 6 胜 → 块 pct=60');
+  eq(wr10.chunks[0].color, '#4caf7d', '60% 胜率 → 绿色（≥50%）');
+  eq(wr10.chunks[0].scale, 0.6, '60% 胜率 → scale=0.6');
+  eq(wr10.chunks[0].range, '1-10', '10 手块 range="1-10"');
+  eq(wr10.overallPct, 60, '总胜率 overallPct=60');
+
+  // ---- 胜率曲线：25 手 → 3 块（10+10+5）----
+  const rows25 = Array.from({ length: 25 }, (_, i) => ({ won: i < 10, net: 5, hand_type: '' }));
+  const wr25 = chartStats.computeWinRate(rows25);
+  eq(wr25.chunks.length, 3, '25 手 → 3 块');
+  eq(wr25.chunks[2].range, '21-25', '25 手第 3 块 range="21-25"');
+  eq(wr25.chunks[2].pct, 0, '第 3 块 5 手仅 0 胜 → pct=0（<30% 红）');
+  eq(wr25.chunks[2].color, '#e05c4b', '20% 胜率 → 红色（<30%）');
+
+  // ---- 胜率曲线颜色阈值：30–50% 金 ----
+  const rowsGold = Array.from({ length: 10 }, (_, i) => ({ won: i < 4, net: 0, hand_type: '' }));
+  eq(chartStats.computeWinRate(rowsGold).chunks[0].color, '#d9a441', '40% 胜率 → 金色（30–50%）');
+
+  // ---- 牌型分布：降序 + 获胜兜底（won=true 无 hand_type → '获胜'）----
+  const rowsTypes = [
+    { won: true, net: 10, hand_type: '同花' },
+    { won: true, net: 20, hand_type: '同花' },
+    { won: true, net: 5, hand_type: '一对' },
+    { won: false, net: -10, hand_type: '' },   // won=false 无 hand_type → '未中牌'
+    { won: true, net: 30, hand_type: '' }      // won=true 无 hand_type → '获胜'
+  ];
+  const ht = chartStats.computeHandTypes(rowsTypes);
+  eq(ht.length, 4, '牌型分布返回 4 种（零计数类型不返回）');
+  eq(ht[0].name, '同花', '牌型降序：同花（2 次）排第一');
+  eq(ht[0].count, 2, '同花 count=2');
+  eq(ht[0].pct, 100, '同花出现最多 → pct=100');
+  ok(ht.findIndex(e => e.name === '获胜') >= 0, '牌型分布含「获胜」兜底（won=true 无 hand_type）');
+  ok(ht.findIndex(e => e.name === '未中牌') >= 0, '牌型分布含「未中牌」兜底（won=false 无 hand_type）');
+  eq(ht.filter(e => e.name === '高牌').length, 0, '零计数类型「高牌」不返回');
+
+  // ---- 盈亏走势：sum/maxAbs/scale/cls 正负符号 ----
+  const rowsNet = [
+    { won: true, net: 100, hand_type: '' },
+    { won: false, net: -50, hand_type: '' },
+    { won: true, net: 200, hand_type: '' },
+    { won: false, net: -200, hand_type: '' }
+  ];
+  const nt = chartStats.computeNetTrend(rowsNet);
+  eq(nt.bars.length, 4, '盈亏走势 4 根柱');
+  eq(nt.sum, 50, '净盈亏 sum=100-50+200-200=50');
+  eq(nt.sumText, '+50', '正净盈亏 sumText="+50"');
+  eq(nt.bars[0].val, 100, '第 1 根 val=100');
+  eq(nt.bars[0].cls, 'up', '正 net → cls=up');
+  eq(nt.bars[1].cls, 'down', '负 net → cls=down');
+  eq(nt.bars[2].scale, 1, 'maxAbs=200 → |200|/200=1（scale 最大）');
+  eq(nt.bars[0].scale, 0.5, '|100|/200=0.5');
+
+  // ---- 盈亏走势：负净盈亏 sumText 带负号 ----
+  const rowsNeg = [{ won: false, net: -100, hand_type: '' }, { won: false, net: -50, hand_type: '' }];
+  const ntNeg = chartStats.computeNetTrend(rowsNeg);
+  eq(ntNeg.sum, -150, '负净盈亏 sum=-150');
+  eq(ntNeg.sumText, '-150', '负净盈亏 sumText="-150"');
+
+  // ---- 盈亏走势：全零 net → sumText='0'，scale=0 ----
+  const rowsZero = [{ won: true, net: 0, hand_type: '' }, { won: false, net: 0, hand_type: '' }];
+  const ntZero = chartStats.computeNetTrend(rowsZero);
+  eq(ntZero.sum, 0, '全零 net → sum=0');
+  eq(ntZero.sumText, '0', '全零 net → sumText="0"');
+  eq(ntZero.bars[0].scale, 0, 'maxAbs=0 → scale=0（不除零）');
+
+  /* ---------- listRecords 大窗口 + .lt 游标分页 ---------- */
+  // 造 105 条 poker_records，验证 .order（created_at 降序）+ .limit + .lt 协作
+  {
+    store.poker_records = [];
+    for (let i = 0; i < 105; i++) {
+      store.poker_records.push({
+        id: 1000 + i,
+        owner_id: 'mock_uid',
+        hand_no: i + 1,
+        net: i % 2 === 0 ? 10 : -5,
+        won: i % 3 === 0,
+        hand_type: i % 4 === 0 ? '同花' : '',
+        created_at: '2026-01-' + String(i + 1).padStart(2, '0') + 'T00:00:00.000Z'
+      });
+    }
+    // 第一页：limit=100，从最新开始（created_at 降序）→ 应返回 100 条
+    const page1 = await auth.listRecords(100, null);
+    eq(page1.length, 100, 'listRecords(100, null) 返回恰好 100 条');
+    // 最新一条 created_at 应是 2026-01-105 不存在，实际是按 id/created_at 倒序
+    // 因造数时 created_at 日期为 01-105（不存在月份日），用字符串比较仍按字典序
+    // 第 105 条 created_at 最大 → 排第一
+    ok(page1[0].created_at >= page1[1].created_at, 'listRecords 按 created_at 降序排列');
+
+    // 第二页：用第一页最后一条的 created_at 作游标，.lt 返回剩余 5 条
+    const cursor = page1[page1.length - 1].created_at;
+    const page2 = await auth.listRecords(100, cursor);
+    eq(page2.length, 5, 'listRecords(100, cursor) 第二页返回剩余 5 条');
+    ok(page2.every(r => r.created_at < cursor), '第二页所有记录 created_at < 游标（.lt 生效）');
+  }
 
   /* ---------- 输出 ---------- */
   console.log('\n' + '='.repeat(52));

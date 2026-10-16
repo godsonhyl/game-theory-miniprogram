@@ -129,3 +129,72 @@
 .rec-more { text-align: center; padding: 20rpx 0 8rpx; }
 .rec-loading { font-size: 22rpx; color: #8fa8a0; }
 .rec-end { font-size: 22rpx; color: #6b7f78; }
+
+/* 战绩深化图表（方向 A）：纯 CSS，无 canvas 无图表库。
+   重排红线：动态视觉只靠 transform: scaleY + opacity，不动画 width/top/left。
+   颜色沿用既有色系：绿 #4caf7d / 金 #d9a441 / 红 #e05c4b / 灰 #8fa8a0。 */
+.chart-card {
+  background: rgba(255,255,255,.045); border: 1rpx solid rgba(255,255,255,.09);
+  border-radius: 24rpx; padding: 24rpx 26rpx; margin-bottom: 18rpx;
+}
+.chart-title {
+  font-size: 24rpx; font-weight: 600; color: #cfe0d9; margin-bottom: 18rpx;
+}
+
+/* 胜率曲线：flex 行，柱底对齐，transform: scaleY 撑柱高（transform-origin 在底部固定） */
+.wr-bars {
+  display: flex; align-items: flex-end; height: 140rpx; gap: 8rpx;
+}
+.wr-col {
+  flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: flex-end;
+  height: 120rpx;
+}
+.wr-bar {
+  width: 60%; height: 120rpx; border-radius: 8rpx 8rpx 0 0;
+  transform-origin: bottom center; transform: scaleY(0);
+}
+.wr-range { font-size: 18rpx; color: #6b7f78; margin-top: 6rpx; }
+
+/* 牌型分布：横向条形，width:{{x}}% 静态内联（一次性渲染、不进 keyframe） */
+.ht-list { display: flex; flex-direction: column; gap: 12rpx; }
+.ht-row {
+  display: flex; align-items: center; gap: 12rpx;
+}
+.ht-name {
+  font-size: 22rpx; color: #8fa8a0; width: 120rpx; flex: none; text-align: right;
+}
+.ht-track {
+  flex: 1; height: 20rpx; background: rgba(255,255,255,.06); border-radius: 999rpx;
+  overflow: hidden;
+}
+.ht-fill {
+  height: 100%; border-radius: 999rpx;
+  background: linear-gradient(90deg, #4caf7d, #d9a441);
+}
+.ht-count {
+  font-size: 22rpx; color: #cfe0d9; width: 48rpx; flex: none; text-align: right;
+}
+
+/* 盈亏走势：逐手柱，中心线在 50%，正柱向上、负柱向下（align-self 按 cls 定） */
+.net-bars {
+  display: flex; align-items: center; height: 140rpx; gap: 4rpx;
+  position: relative;
+}
+.net-axis {
+  position: absolute; left: 0; right: 0; top: 50%; height: 1rpx;
+  background: rgba(255,255,255,.12);
+}
+.net-col {
+  flex: 1; display: flex; align-items: center; justify-content: center;
+  height: 120rpx;
+}
+.net-bar {
+  width: 70%; height: 120rpx; border-radius: 4rpx;
+  transform-origin: center center; transform: scaleY(0);
+}
+.net-bar.up {
+  background: #4caf7d; transform-origin: bottom center; align-self: flex-end;
+}
+.net-bar.down {
+  background: #e05c4b; transform-origin: top center; align-self: flex-start;
+}

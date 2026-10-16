@@ -2,8 +2,10 @@ const app = getApp();
 const { auth, DEFAULT_NICK, NICK_MAX } = require('../../utils/auth');
 const replayStore = require('../../utils/replay-store');           // 复盘缓存（本地存量）
 const styleAnalyzer = require('../../utils/style-analyzer');       // 个人风格分析（吃复盘缓存存量）
+const chartStats = require('../../utils/chart-stats');             // 战绩深化图表数据（方向 A，纯客户端）
 
 const PAGE_SIZE = 20;   // 战绩每页条数（游标分页，触底加载下一页）
+const CHART_LIMIT = 100; // 战绩深化图表取样上限（单次拉取、不分页）
 
 Page({
   data: {
@@ -21,7 +23,16 @@ Page({
     records: [],
     recordsLoading: false,   // 战绩加载中（区分首屏 loading 与翻页 loading）
     recordsEnd: false,       // 已加载到底（无更多战绩），隐藏触底加载条
-    recordsError: false      // 战绩加载失败（与「没有记录」区分，提供重试入口）
+    recordsError: false,     // 战绩加载失败（与「没有记录」区分，提供重试入口）
+    // 战绩深化图表（方向 A）：胜率曲线 / 牌型分布 / 盈亏走势，纯 CSS 渲染
+    chartLoading: false,
+    chartHands: 0,
+    chartWinRate: null,       // 胜率曲线分块数组
+    chartWinPct: 0,           // 总胜率%
+    chartHandTypes: [],        // 牌型分布
+    chartNet: null,           // 盈亏走势柱数组
+    chartNetSum: 0,           // 净盈亏总和
+    chartNetSumText: '0'     // 净盈亏带符号文案
   },
 
   onShow() {
@@ -63,6 +74,8 @@ Page({
     await this.loadRecords(true);
     // 风格画像：吃本地复盘缓存的行为统计（第三期），与云端战绩独立、无网络。
     this.loadStyleAnalysis();
+    // 战绩深化图表：吃云端战绩流水，纯客户端聚合（方向 A），不阻塞主链路
+    this.loadCharts();
   },
 
   /**
@@ -108,6 +121,32 @@ Page({
    *  insufficient 态，UI 显示「样本不足」不硬算——避免小样本误导（设计硬约束）。 */
   loadStyleAnalysis() {
     this.setData({ styleAnalysis: styleAnalyzer.analyze(replayStore.listAll()) });
+  },
+
+  /** 战绩深化图表（方向 A）：拉取最近 CHART_LIMIT 手战绩流水，纯客户端聚合
+   *  后交给 wxml 用 transform: scaleY / width:{{x}}% 渲染。非关键路径，失败静默
+   *  降级（与 replay-store 同级，不弹 toast、不 console.error 刷屏）。 */
+  async loadCharts() {
+    this.setData({ chartLoading: true });
+    try {
+      const rows = await auth.listRecords(CHART_LIMIT, null);
+      const winRate = chartStats.computeWinRate(rows);
+      const handTypes = chartStats.computeHandTypes(rows);
+      const net = chartStats.computeNetTrend(rows);
+      this.setData({
+        chartLoading: false,
+        chartHands: rows.length,
+        chartWinRate: winRate.chunks,
+        chartWinPct: winRate.overallPct,
+        chartHandTypes: handTypes,
+        chartNet: net.bars,
+        chartNetSum: net.sum,
+        chartNetSumText: net.sumText
+      });
+    } catch (err) {
+      // 图表属非关键路径，失败仅静默清空（不弹 toast、不刷屏）
+      this.setData({ chartLoading: false, chartHands: 0 });
+    }
   },
 
   /** 战绩加载失败后重试 */

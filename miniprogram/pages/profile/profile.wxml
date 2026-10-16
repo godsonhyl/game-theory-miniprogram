@@ -82,6 +82,47 @@
     </view>
   </view>
 
+  <!-- 战绩深化（方向 A）：胜率曲线 / 牌型分布 / 盈亏走势，纯 CSS 图表 -->
+  <view class="section" wx:if="{{chartHands>0}}">
+    <view class="sec-head"><view class="sec-ico ic ic-spade"></view><text class="sec-title">战绩深化</text></view>
+
+    <!-- 胜率曲线：每 10 手一块，transform: scaleY 撑柱高 -->
+    <view class="chart-card">
+      <view class="chart-title">胜率曲线（总胜率 {{chartWinPct}}%）</view>
+      <view class="wr-bars">
+        <view class="wr-col" wx:for="{{chartWinRate}}" wx:for-item="item" wx:key="range">
+          <view class="wr-bar" style="transform:scaleY({{item.scale}});background:{{item.color}}"></view>
+          <text class="wr-range">{{item.range}}</text>
+        </view>
+      </view>
+    </view>
+
+    <!-- 牌型分布：横向条形，width:{{x}}% 静态内联 -->
+    <view class="chart-card">
+      <view class="chart-title">牌型分布</view>
+      <view class="ht-list">
+        <view class="ht-row" wx:for="{{chartHandTypes}}" wx:for-item="item" wx:key="name">
+          <text class="ht-name">{{item.name}}</text>
+          <view class="ht-track">
+            <view class="ht-fill" style="width:{{item.pct}}%"></view>
+          </view>
+          <text class="ht-count">{{item.count}}</text>
+        </view>
+      </view>
+    </view>
+
+    <!-- 盈亏走势：逐手柱，正柱绿、负柱红，中心线在 50% -->
+    <view class="chart-card">
+      <view class="chart-title">盈亏走势（{{chartNetSumText}}）</view>
+      <view class="net-bars">
+        <view class="net-axis"></view>
+        <view class="net-col" wx:for="{{chartNet}}" wx:for-item="item" wx:key="index">
+          <view class="net-bar {{item.cls}}" style="transform:scaleY({{item.scale}})"></view>
+        </view>
+      </view>
+    </view>
+  </view>
+
   <view class="section">
     <view class="sec-head"><view class="sec-ico ic ic-trophy"></view><text class="sec-title">历史战绩</text></view>
     <view class="empty" wx:if="{{recordsError}}">
