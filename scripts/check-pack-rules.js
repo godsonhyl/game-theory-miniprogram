@@ -56,6 +56,22 @@ const uploadSrc = fs.readFileSync(path.join(__dirname, '..', 'upload.js'), 'utf8
 ok(uploadSrc.indexOf('pack-rules') >= 0 && uploadSrc.indexOf('RULES.ciIgnores()') >= 0,
   'upload.js 通过 pack-rules.ciIgnores 排除');
 
+/* ---------- 5) 入包前必须规范化行尾（.gitattributes 只管入库，管不到工作区） ---------- */
+// 事故背景：仓库有 `* text=auto eol=lf` 保证入库是 LF，但 Windows 编辑器仍会把
+// 工作区写成 CRLF，而 pack.js 读的正是工作区 → 包内行尾与仓库不一致。
+// 后果：解压后与仓库 diff 整片红，分不清是真改动还是行尾噪音。
+ok(/text=auto eol=lf/.test(
+    fs.readFileSync(path.join(__dirname, '..', '.gitattributes'), 'utf8')),
+  '.gitattributes 锁定 LF（* text=auto eol=lf）');
+// 语义守卫：锁死 pack.js 里的 CRLF→LF 转换与去 BOM 两步都还在
+ok(/replace\(\/\\r\\n\/g, '\\n'\)/.test(packSrc) && /replace\(\/\\r\/g, '\\n'\)/.test(packSrc),
+  'pack.js 入包前把 CRLF / 裸 CR 统一转 LF');
+ok(/0xEF && .*0xBB && .*0xBF/.test(packSrc),
+  'pack.js 入包前剥掉 UTF-8 BOM（wcc 对 BOM 比对 CRLF 更敏感）');
+// 体积报数口径：必须用规范化后的实际字节，而非 files[].size
+ok(/entries\.reduce\(\(s, e\) => s \+ e\.data\.length, 0\)/.test(packSrc),
+  'pack.js 体积按规范化后的实际入包字节统计（与 limit 判定的原始 size 口径不同）');
+
 console.log('\n' + '='.repeat(52));
 console.log('打包排除清单校验（单一来源：scripts/pack-rules.js）');
 if (failures.length === 0) {
