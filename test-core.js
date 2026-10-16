@@ -479,6 +479,79 @@ ok(ge.events.some(e => e.type === 'hand_start'), '含 hand_start');
 ok(ge.events.some(e => e.type === 'action' && e.action === 'raise'), '含 raise 动作事件');
 ok(ge.events.some(e => e.type === 'turn'), '含 turn 轮次事件');
 
+/* ---------- events 封顶（MAX_EVENTS=600，startHand 手边界截断）----------
+ * events 跨手累积不清——长会话只增不减。封顶到最近 600 条（保留复盘所需的
+ * 最后一手完整段），截断只发生在 startHand 顶部、本手事件尚未 emit，绝不切
+ * 到进行中的当前手。startHand 截断后会 emit 自身的 hand_start/deal 等事件，
+ * 且本手进行中继续 emit，故「手内峰值」会略超 600（截断在手边界不在手内）；
+ * 但跨手不再线性增长——这正是封顶的价值。
+ * 验证四件事：
+ * ① 累积必然过 600（封顶被真正触发，不是空跑）；
+ * ② 跨手峰值有界、不随手数线性增长（无封顶则 100 手 ≈ 6000+ 事件）；
+ * ③ 手边界截断确实把数组缩短（截断后长度 < 手内峰值）；
+ * ④ 截断后最后一个 hand_start 仍在数组内、对应当前 handNo（复盘可切）。
+ * 说明：截断后 emit 仍按当前 length 赋 seq，保留段内 seq 沿用原始全局 seq
+ * （从截断点延续），不再等于截断后数组下标——replay-store 按插入位置排序、
+ * drainSfx 的 sfxSeq 超界收敛，均不依赖 seq===index，保留原始 seq 反利追溯。 */
+{
+  const mkP = (s, st, h) => ({ id: 'p' + s, name: 'P' + s, seat: s, stack: st, isHuman: !!h });
+  const mkGame = () => P.createGame({ players: [mkP(0, 1000, true), mkP(1, 1000), mkP(2, 1000),
+    mkP(3, 1000), mkP(4, 1000), mkP(5, 1000)], sb: 10, bb: 20, dealerSeat: 0, seed: 'cap' });
+  const playHands = (gc, n, rngTag) => {
+    let hands = 0, peak = 0;
+    const ai = (h, step) => P.aiDecide({
+      hole: gc.seatOf(gc.actionSeat).hole, board: gc.board, pot: gc.potTotal(),
+      toCall: gc.legalActions(gc.actionSeat).toCall, stack: gc.seatOf(gc.actionSeat).stack,
+      currentBet: gc.currentBet, numActive: gc.activePlayers().length,
+      positionFactor: 0.5, style: gc.seatOf(gc.actionSeat).style,
+      minRaiseTo: gc.legalActions(gc.actionSeat).minRaiseTo,
+      maxRaiseTo: gc.legalActions(gc.actionSeat).maxRaiseTo,
+      canRaise: gc.legalActions(gc.actionSeat).canRaise, bb: gc.bb,
+      rng: P.createRng(rngTag + '-' + h + '-' + step)
+    });
+    for (let h = 0; h < n; h++) {
+      if (!gc.startHand().ok) break;
+      let step = 0;
+      while (!gc.result && step++ < 300) {
+        const s = gc.actionSeat;
+        if (s === -1) break;
+        const legal = gc.legalActions(s);
+        if (!legal) break;
+        const d = ai(hands, step);
+        gc.act(s, d.action, d.amount);
+        if (gc.events.length > peak) peak = gc.events.length;
+      }
+      if (gc.result) hands++;
+      gc.players.forEach(p => { if (p.stack < 20) p.stack = 1000; });
+    }
+    return { hands, peak };
+  };
+
+  const gc = mkGame();
+  const r50 = playHands(gc, 50, 'cap-a');
+  const r100 = playHands(gc, 50, 'cap-b');   // 再打 50 手，累计 100 手
+  const totalHands = r50.hands + r100.hands;
+  ok(totalHands >= 80, '封顶测试打了足够多手（实打 ' + totalHands + ' 手）');
+  ok(Math.max(r50.peak, r100.peak) > 600, '累积必然过 600（封顶被触发，峰值 ' + Math.max(r50.peak, r100.peak) + '）');
+  // 核心：跨手峰值有界、不随手数线性增长。无封顶时 100 手 6 人桌 ≈ 6000+ 事件，
+  // 后 50 手峰值应远超前 50 手；封顶后两者接近（仅差单手事件量级的波动）。
+  ok(r100.peak < r50.peak + 300,
+    '跨手峰值有界、不线性增长（前50手峰值 ' + r50.peak + '，后50手峰值 ' + r100.peak + '，无封顶应≈2倍）');
+  // 手边界截断确实缩短数组：再开一手（触发截断），其返回时长度 < 手内峰值
+  ok(gc.startHand().ok, '截断触发手 startHand 成功');
+  ok(gc.events.length < Math.max(r50.peak, r100.peak),
+    '手边界截断缩短数组（截断后 ' + gc.events.length + ' < 手内峰值 ' + Math.max(r50.peak, r100.peak) + '）');
+  // 最后一个 hand_start 仍在保留段内，对应当前 handNo（复盘可切出最后一手）
+  let lastStart = -1;
+  for (let i = gc.events.length - 1; i >= 0; i--) {
+    if (gc.events[i].type === 'hand_start') { lastStart = i; break; }
+  }
+  ok(lastStart >= 0, '封顶后最后一个 hand_start 仍在数组内（复盘可切出最后一手）');
+  ok(gc.events[lastStart].handNo === gc.handNo, '保留的最后一手 hand_start 对应当前 handNo');
+}
+
+
+
 const snap = ge.snapshot();
 eq(snap.players.length, 3, 'snapshot 含全部玩家');
 ok(!!snap.streetCn, '街道中文名: ' + snap.streetCn);

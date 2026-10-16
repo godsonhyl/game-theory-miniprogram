@@ -68,6 +68,12 @@
     fold: '弃牌', check: '过牌', call: '跟注', raise: '加注', allin: '全下'
   };
 
+  // 事件流封顶：events 跨手累积、startHand 不清——长会话（多手连续对战）只增不减，
+  // drainSfx 每 300ms 读全数组、replay-store 从后向前找 hand_start 线性扫。封顶到
+  // 最近 MAX_EVENTS 条，保留复盘所需的「最后一手」完整段（单手约 20-60 事件，
+  // 600 留足 ~10 手余量）。截断只在 startHand 手边界发生，绝不切到进行中的当前手。
+  const MAX_EVENTS = 600;
+
   /* ============================================================
    * 二、随机数：xorshift128+（可复现）
    * ========================================================== */
@@ -514,9 +520,14 @@
     let win = 0, tie = 0;
     const t0 = Date.now();
 
+    // 预分配池跨迭代复用：rest 只读不改（固定未用牌序），每迭代开头用复制循环把
+    // rest 灌回 pool 复位到洗牌前干净态，再原地 Fisher-Yates。省去每迭代分配 ~50
+    // 元素数组的开销（蒙特卡洛内层热路径：AI 翻牌后 420 iter、建议 1800 iter）。
+    // 不变性：每迭代复位后 pool 起态完全一致 → 同 seed 同 rng 同结果（确定性回放）。
+    const pool = rest.slice();
     for (let it = 0; it < iters; it++) {
-      // 每次迭代从 rest 重新洗牌，保证无放回抽样
-      const pool = rest.slice();
+      // 复位：把 rest 重新灌回 pool（pool 上轮已洗乱，需还原成 rest 的有序态）
+      for (let i = 0; i < pool.length; i++) pool[i] = rest[i];
       for (let i = 0; i < need && i < pool.length; i++) {
         const j = i + rng.int(pool.length - i);
         const t = pool[i]; pool[i] = pool[j]; pool[j] = t;
@@ -807,6 +818,14 @@
     /* -------- 开新一手 -------- */
     game.startHand = function () {
       if (game.over) return { ok: false, error: '牌局已结束' };
+
+      // events 封顶（手边界）：跨手累积的旧事件只用于复盘回看，保留最近 MAX_EVENTS
+      // 条即可。截断发生在新手开始前、本手事件尚未 emit，绝不切到进行中的当前手。
+      // 截断后 drainSfx 的 sfxSeq 超界收敛（sfxSeq > length → sfxSeq = length）自动
+      // 适配，replay-store 从后向前找最后一个 hand_start 必落在保留段内。
+      if (game.events.length > MAX_EVENTS) {
+        game.events.splice(0, game.events.length - MAX_EVENTS);
+      }
 
       game.players.forEach(p => {
         p.hole = []; p.folded = false; p.allIn = false;
