@@ -783,7 +783,7 @@ Page({
 
   /**
    * 轮询一次房间：
-   *   房主 → 消费好友动作（按座位分道的 appliedSeqBySeat 消化）、合并就绪计票、好友超时代弃牌、广播状态；
+   *   房主 → 消费好友动作（按座位分道的 appliedSeqBySeat 消化）、合并就绪计票、好友超时代行（无注过牌/有注弃牌）、广播状态；
    *   好友 → 读取房主广播：等待室布局 / 牌局快照镜像。
    */
   async pollOnce() {
@@ -1076,7 +1076,8 @@ Page({
     }
   },
 
-  /** 远端好友行动超时（30s）：房主代弃牌，防止牌局卡死 */
+  /** 远端好友行动超时（30s）：房主代行防卡死。与本地超时 startTimer 同口径——
+   *  有注 → 弃牌，无注（可免费看牌）→ 过牌，不替好友主动掏筹码/跟注。 */
   watchFriendAction() {
     if (!game || game.result || game.actionSeat < 0) { this.friendActSince = 0; return; }
     const seat = game.actionSeat;
@@ -1093,13 +1094,17 @@ Page({
     if (now - this.friendActSince >= roomSync.SYNC.ACTION_TIMEOUT_SEC * 1000) {
       this.friendActSince = 0;
       const p = game.seatOf(seat);
-      const r = game.act(seat, 'fold');
+      // 与本地超时同口径：无注可免费看牌 → 过牌；有注 → 弃牌（不替好友主动跟注）。
+      // legalActions 返回 null（已不可行动）时 fallback 弃牌，act 会被引擎拒走兜底。
+      const legal = game.legalActions(seat);
+      const act = legal && legal.toCall === 0 ? 'check' : 'fold';
+      const r = game.act(seat, act);
       if (r.ok) {
-        this.pushChat(seat, p ? p.name : '', '超时未行动，自动弃牌');
+        this.pushChat(seat, p ? p.name : '', act === 'check' ? '超时未行动，自动过牌' : '超时未行动，自动弃牌');
         this.afterAct();
       } else {
-        // 代弃被拒（座位已不可行动）：罕见但必须兜底，否则 watchFriendAction 每 1.5s 空转
-        console.error('[table] 好友超时代弃被引擎拒绝', JSON.stringify({ seat, error: r.error }));
+        // 代行被拒（座位已不可行动）：罕见但必须兜底，否则 watchFriendAction 每 1.5s 空转
+        console.error('[table] 好友超时代行被引擎拒绝', JSON.stringify({ seat, act, error: r.error }));
         this.advance();
       }
     }
@@ -1958,7 +1963,7 @@ Page({
         this.startTimer();
         return;
       }
-      // 跨设备：真人好友的座位等动作上行（房主 1.5s 轮询消费，30s 超时代弃）
+      // 跨设备：真人好友的座位等动作上行（房主 1.5s 轮询消费，30s 超时代行——无注过牌/有注弃牌）
       if (this.isFriendSeat(seat)) {
         this.friendActSince = this.friendActSince || Date.now();
         this.render();
