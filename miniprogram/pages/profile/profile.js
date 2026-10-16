@@ -1,5 +1,7 @@
 const app = getApp();
 const { auth, DEFAULT_NICK, NICK_MAX } = require('../../utils/auth');
+const replayStore = require('../../utils/replay-store');           // 复盘缓存（本地存量）
+const styleAnalyzer = require('../../utils/style-analyzer');       // 个人风格分析（吃复盘缓存存量）
 
 const PAGE_SIZE = 20;   // 战绩每页条数（游标分页，触底加载下一页）
 
@@ -14,6 +16,8 @@ Page({
     nickMax: NICK_MAX,
     stats: { hands: 0, wins: 0, net: 0, netText: '0' },
     style: '稳健型',
+    styleAnalysis: null,  // 个人风格画像（第三期）：吃本地复盘缓存的行为统计，非云端胜率代理
+    vpipMin: styleAnalyzer.VPipMin,   // 样本下限常量，注入 wxml 供「样本不足」展示
     records: [],
     recordsLoading: false,   // 战绩加载中（区分首屏 loading 与翻页 loading）
     recordsEnd: false,       // 已加载到底（无更多战绩），隐藏触底加载条
@@ -57,6 +61,8 @@ Page({
     this._recordCursor = null;   // 翻页游标：上一页最后一条的 created_at
     this.setData({ records: [], recordsEnd: false, recordsError: false });
     await this.loadRecords(true);
+    // 风格画像：吃本地复盘缓存的行为统计（第三期），与云端战绩独立、无网络。
+    this.loadStyleAnalysis();
   },
 
   /**
@@ -96,6 +102,12 @@ Page({
       this.setData(patch);
       wx.showToast({ title: (err && err.message) || '读取战绩失败', icon: 'none' });
     }
+  }
+
+  /** 风格画像：吃本地复盘缓存的行为统计（第三期）。样本不足时 analyze 返回
+   *  insufficient 态，UI 显示「样本不足」不硬算——避免小样本误导（设计硬约束）。 */
+  loadStyleAnalysis() {
+    this.setData({ styleAnalysis: styleAnalyzer.analyze(replayStore.listAll()) });
   },
 
   /** 战绩加载失败后重试 */
