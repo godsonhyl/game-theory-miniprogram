@@ -8,6 +8,7 @@
  */
 const path = require('path');
 const Module = require('module');
+const fs = require('fs');
 
 let failures = [];
 let passes = 0;
@@ -908,6 +909,10 @@ while (guard++ < 400) {
     'profile.js 有 recordsError 状态 + onRetryRecords 重试方法（区分加载失败与空列表）');
   ok(/recordsError/.test(profWxml) && /重试/.test(profWxml),
     'profile.wxml 区分加载失败态（recordsError）并提供重试按钮');
+  // 失败分级守卫：catch 里只有首屏（first）才置 recordsError，翻页失败保留已加载列表
+  // （否则一次触底的瞬时网络抖动会丢掉已加载的全部记录）。源码须含「if (first) recordsError」。
+  ok(/if \(first\) patch\.recordsError = true/.test(profSrc),
+    'loadRecords catch 失败分级：仅首屏置 recordsError，翻页失败保留已有列表');
 
   /* ---------- 引擎：10 显示为「10」，但机读码仍是单字符 T ---------- */
   const coreSrc = require('fs').readFileSync(
@@ -1661,6 +1666,13 @@ while (guard++ < 400) {
     ok(/_renderTail\(\)/.test(tableSrc), 'render 尾部调度抽出 _renderTail（指纹跳过时仍执行）');
     ok(/tick,/.test(tableSrc) && /myActText,/.test(tableSrc),
       '渲染指纹含 tick 与 myActText（计时环与动作气泡变化可触发重绘）');
+    // 指纹置位必须在主 setData 成功之后（评审 2026-10-16）：若 body 中途抛错，
+    // _lastRenderFp 不应被更新——否则下一帧同势命中跳过、降级态卡到下次实质变化。
+    // 守卫：赋值语句出现在主 setData 的 resultModal 行之后，而非跳过 return 之后。
+    ok(/resultModal: result \? this\.data\.resultModal : null[\s\S]{0,120}this\._lastRenderFp = fp/.test(tableSrc),
+      '指纹置位在主 setData 之后（异常帧不缓存指纹，下帧自动重试）');
+    ok(!/if \(this\._lastRenderFp === fp\)[\s\S]{0,40}this\._lastRenderFp = fp/.test(tableSrc),
+      '指纹赋值不在「命中跳过」之后紧跟（避免 body 抛错前就置位）');
     // 行为：同势二次 render 不增 setData；变势后重新 setData
     const g = pageCtx.requireGame();
     if (g) {
@@ -1682,6 +1694,35 @@ while (guard++ < 400) {
         pageCtx._lastRenderFp = null;
       } finally {
         pageCtx.setData = realSetData;
+      }
+    }
+
+    // 行为：render body 抛错时不缓存指纹，下一帧同势自动重试（不卡降级态）
+    {
+      const g2 = pageCtx.requireGame();
+      if (g2) {
+        // 让 render body 在主 setData 之前抛错：markBest 在 2085 行被调用（早于主 setData）
+        const realMarkBest = pageCtx.markBest.bind(pageCtx);
+        let throwOn = false;
+        pageCtx.markBest = function () { if (throwOn) throw new Error('render body boom'); return realMarkBest.apply(this, arguments); };
+        try {
+          pageCtx._lastRenderFp = 'STALE';   // 上一帧指纹
+          throwOn = true;
+          pageCtx.render();                  // body 抛错 → 走降级 catch
+          ok(pageCtx._lastRenderFp === 'STALE',
+            'render body 抛错时不更新指纹（_lastRenderFp 仍为旧值，下帧重试而非卡降级态）');
+          // 恢复后下一帧同势 render：因指纹仍是 STALE（未被失败的帧缓存），应重新跑主 setData
+          let retried = false;
+          const realSd = pageCtx.setData.bind(pageCtx);
+          pageCtx.setData = (d) => { if (d && d.seats) retried = true; return realSd(d); };
+          throwOn = false;
+          pageCtx.render();
+          ok(retried, '失败的帧未缓存指纹 → 下一帧同势 render 重新执行主 setData（自动重试）');
+          pageCtx.setData = realSd;
+        } finally {
+          pageCtx.markBest = realMarkBest;
+          pageCtx._lastRenderFp = null;
+        }
       }
     }
   }
@@ -1874,6 +1915,108 @@ while (guard++ < 400) {
       dataStore.flyOut.every(c => typeof c.dx === 'number' && typeof c.dy === 'number'),
       '_spawnFlyOut 产出筹码带 dx/dy 位移量（CSS 变量 --dx/--dy）');
   }
+
+  /* ============================================================
+   * 复盘缓存：replay-store + 复盘页解析（设计 2026-10-16 §1）
+   * ========================================================== */
+  (function () {
+    const rs = require(path.join(__dirname, 'utils', 'replay-store.js'));
+
+    /* ---- 静态守卫：replay-store.js 导出 + 上限常量 ---- */
+    ok(typeof rs.addReplay === 'function' && typeof rs.listAll === 'function' &&
+      typeof rs.latest === 'function' && typeof rs.findByDate === 'function',
+      'replay-store 导出 addReplay/listAll/latest/findByDate 四个方法');
+    ok(rs.MAX_REPLAYS === 20, 'replay-store 上限 20 局（FIFO 挤出）');
+    const storeSrc = fs.readFileSync(path.join(__dirname, 'utils', 'replay-store.js'), 'utf8');
+    ok(/poker_replay_cache/.test(storeSrc), 'replay-store 用独立 storage 键 poker_replay_cache');
+    ok(/setStorageSync/.test(storeSrc), 'replay-store 走本地 wx.setStorageSync（不进云）');
+    // 存储失败静默：addReplay 的 try/catch 返回 false
+    ok(/return false/.test(storeSrc) && /catch \(e\)/.test(storeSrc),
+      'replay-store addReplay 失败静默降级（返回 false，不阻断）');
+
+    /* ---- 行为级：addReplay 收割单手事件段 + FIFO 上限 ---- */
+    // 用真机引擎跑一局，mock wx storage 注入
+    const origStorage = wx.setStorageSync;
+    const origGet = wx.getStorageSync;
+    let memList = [];
+    wx.setStorageSync = (k, v) => { if (k === 'poker_replay_cache') memList = v; };
+    wx.getStorageSync = k => k === 'poker_replay_cache' ? memList : [];
+
+    function playOne(seed, mySeat) {
+      const g = P.createGame({
+        players: [
+          { id: 'me', name: '我', seat: 0, stack: 1000, isHuman: true },
+          { id: 'b1', name: 'AI甲', seat: 1, stack: 1000 },
+          { id: 'b2', name: 'AI乙', seat: 2, stack: 1000 }
+        ], sb: 10, bb: 20, seed: seed
+      });
+      let step = 0;
+      g.startHand();
+      for (let i = 0; i < 500 && !g.result; i++) {
+        const seat = g.actionSeat;
+        if (seat < 0) break;
+        const p = g.seatOf(seat);
+        const legal = g.legalActions(seat);
+        if (!legal) { g.advance(); continue; }
+        const seats = g.inHandPlayers().map(x => x.seat);
+        const pf = (seats.indexOf(seat) - seats.indexOf(g.dealerSeat) + seats.length) % seats.length;
+        const d = P.aiDecide({
+          hole: p.hole, board: g.board, pot: g.potTotal(),
+          toCall: legal.toCall, stack: p.stack, currentBet: g.currentBet,
+          numActive: g.activePlayers().length,
+          positionFactor: pf <= 1 ? 0.9 : (pf <= 3 ? 0.4 : 0),
+          style: p.style, minRaiseTo: legal.minRaiseTo, maxRaiseTo: legal.maxRaiseTo,
+          canRaise: legal.canRaise, bb: g.bb,
+          rng: P.createRng('mp-' + g.handNo + '-' + seat + '-' + (step++))
+        });
+        g.act(seat, d.action, d.amount);
+      }
+      return g;
+    }
+
+    const g1 = playOne('rp-test-1', 0);
+    const added = rs.addReplay(g1, 0, 'ai');
+    ok(added === true, 'addReplay 成功收割一局（有 events + result）');
+    const rec1 = rs.latest();
+    ok(!!rec1 && rec1.handNo === g1.handNo, 'latest() 取最近一局，handNo 匹配');
+    // 上界 = 引擎全量 + 2 条盲注补录（addReplay 会在切分后插入虚拟 blind 事件）
+    ok(rec1.events.length > 0 && rec1.events.length <= g1.events.length + 2,
+      '收到的 events 非空且不超过「引擎全量 + 盲注补录2条」');
+    // 关键：只含一个 hand_start（单手切分）
+    ok(rec1.events.filter(e => e.type === 'hand_start').length === 1,
+      '复盘事件段只含一个 hand_start（切出最后一手，多手不混流）');
+    // 盲注虚拟事件已补录（两个 blind action）
+    ok(rec1.events.filter(e => e.type === 'action' && e.action === 'blind').length === 2,
+      '盲注补录成 2 个虚拟 action("blind") 事件（引擎盲注不发事件，复盘还原底池用）');
+
+    /* ---- 底池守恒：复盘事件累加 = 引擎 committed 合计 ---- */
+    let cur = 'preflop';
+    const putByStreet = { preflop: 0, flop: 0, turn: 0, river: 0, showdown: 0 };
+    rec1.events.forEach(e => {
+      if (e.type === 'street') cur = e.street;
+      else if (e.type === 'action') putByStreet[cur] += Number(e.amount) || 0;
+    });
+    const totalPut = Object.keys(putByStreet).reduce((s, k) => s + putByStreet[k], 0);
+    const committed = g1.players.reduce((s, p) => s + p.committed, 0);
+    eq(totalPut, committed, '复盘事件金额累加 = 引擎 committed 合计（底池守恒，含盲注补录）');
+
+    /* ---- FIFO 上限挤出 ---- */
+    memList = [];
+    for (let i = 0; i < rs.MAX_REPLAYS + 3; i++) {
+      const g = playOne('rp-fifo-' + i, 0);
+      rs.addReplay(g, 0, 'ai');
+    }
+    eq(rs.listAll().length, rs.MAX_REPLAYS, 'FIFO：超过上限挤出最旧，恒为 20');
+
+    /* ---- findByDate 定位 ---- */
+    const all = rs.listAll();
+    const pick = all[5];
+    ok(!!rs.findByDate(pick.date), 'findByDate 按日期戳精确定位单局');
+    ok(rs.findByDate(9999999999999) === null, 'findByDate 不存在返回 null');
+
+    wx.setStorageSync = origStorage;
+    wx.getStorageSync = origGet;
+  })();
 
   /* ---------- 输出 ---------- */
   console.log('\n' + '='.repeat(52));

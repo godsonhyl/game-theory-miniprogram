@@ -1,0 +1,67 @@
+<view class="replay-page">
+  <!-- 顶栏：手数 / 模式 / 我的盈亏 -->
+  <view class="rp-head">
+    <view class="rp-back" bindtap="onBack">‹</view>
+    <view class="rp-meta">
+      <text class="rp-hand">第 {{handNo}} 手 · {{mode === 'ai' ? 'AI 对战' : '好友房'}}</text>
+      <text class="rp-net {{myNet > 0 ? 'up' : (myNet < 0 ? 'down' : '')}}">
+        {{myNet > 0 ? '+' + myNet : (myNet < 0 ? myNet : '±0')}}
+      </text>
+    </view>
+  </view>
+
+  <!-- 街切换条 -->
+  <view class="street-tabs">
+    <view class="street-tab {{streetIdx === i ? 'cur' : ''}}"
+          wx:for="{{streets}}" wx:for-item="s" wx:for-index="i" wx:key="key"
+          data-i="{{i}}" bindtap="onStreetTap">
+      <text>{{s.cn}}</text>
+    </view>
+  </view>
+  <view class="street-nav">
+    <view class="nav-btn {{streetIdx === 0 ? 'disabled' : ''}}" bindtap="onStreetPrev">‹ 上一街</view>
+    <view class="nav-cur">{{streets[streetIdx].cn}}</view>
+    <view class="nav-btn {{streetIdx === 4 ? 'disabled' : ''}}" bindtap="onStreetNext">下一街 ›</view>
+  </view>
+
+  <!-- 公共牌区 -->
+  <view class="board-row">
+    <view class="bc {{c.cls}}" wx:for="{{curBoard}}" wx:for-item="c" wx:key="code">
+      <text class="bc-r">{{c.rank}}</text>
+      <text class="bc-s">{{c.suit}}</text>
+    </view>
+    <view class="bc empty" wx:if="{{curBoard.length === 0}}">—</view>
+  </view>
+
+  <!-- 底池 -->
+  <view class="pot-row">
+    <text class="pot-label">底池</text>
+    <text class="pot-val">{{curPot}}</text>
+  </view>
+
+  <!-- 动作时间轴（当前街） -->
+  <view class="action-list">
+    <view class="action-row {{a.isMe ? 'me' : ''}}" wx:for="{{curActions}}" wx:for-item="a" wx:key="index">
+      <text class="a-name">{{a.isMe ? '我' : a.name}}</text>
+      <text class="a-act {{a.action}}">{{a.cn}}{{a.amount > 0 ? ' ' + a.amount : ''}}</text>
+    </view>
+    <view class="action-empty" wx:if="{{curActions.length === 0}}">本街无动作</view>
+  </view>
+
+  <!-- 摊牌街：玩家成手 + 赢家（上帝视角展开底牌） -->
+  <view class="showdown" wx:if="{{showHandResult}}">
+    <view class="sd-title">摊牌结果
+      <view class="god-toggle {{godView ? 'on' : ''}}" bindtap="onGodToggle">上帝视角</view>
+    </view>
+    <view class="sd-row {{p.isMe ? 'me' : ''}}" wx:for="{{players}}" wx:for-item="p" wx:key="seat">
+      <text class="sd-name">{{p.isMe ? '我' : p.name}}</text>
+      <view class="sd-hole">
+        <view class="hc {{c.cls}}" wx:for="{{p.hole}}" wx:for-item="c" wx:key="code">
+          <text class="hc-r">{{c.rank}}</text>
+          <text class="hc-s">{{c.suit}}</text>
+        </view>
+      </view>
+      <text class="sd-hand">{{p.handName}}</text>
+    </view>
+  </view>
+</view>

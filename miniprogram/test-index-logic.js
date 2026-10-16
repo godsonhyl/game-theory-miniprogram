@@ -240,6 +240,21 @@ const pageCtx = Object.assign({}, cfg, {
   ok(global.__closed.indexOf('999999') !== -1, '僵尸房 999999 已自动关闭: ' + JSON.stringify(global.__closed));
   ok(!global.__storage['poker_room_snap_999999'], '僵尸房本地续局快照已清除');
 
+  // 僵尸房清理关房失败不再静默吞：closeRoom reject → console.error 记日志
+  {
+    global.__closed = [];
+    const origClose = authMod.auth.closeRoom;
+    const errs = []; const origErr = console.error;
+    console.error = (...a) => { errs.push(a.join(' ')); };
+    authMod.auth.closeRoom = () => Promise.reject(new Error('stale close boom'));
+    await pageCtx.loadMyRooms();
+    await new Promise(r => setTimeout(r, 30));
+    ok(errs.some(s => s.indexOf('loadMyRooms-stale') >= 0),
+      '僵尸房关房失败 → console.error 记录（不静默吞，含 stage=loadMyRooms-stale）');
+    console.error = origErr;
+    authMod.auth.closeRoom = origClose;
+  }
+
   // 手动删除：确认后关闭房间 + 清快照 + 刷新列表
   global.__storage['poker_room_snap_123456'] = { ts: Date.now(), handNo: 7, seats: [{ seat: 0, isMe: true }] };
   await pageCtx.loadMyRooms();
@@ -294,6 +309,24 @@ const pageCtx = Object.assign({}, cfg, {
   ok(global.__closed.length === 0, '恢复正常扣卡后建房成功（不触发回滚）');
   __appSingleton.consumeRoomCard = origConsume;   // 还原，不影响后续场景
 
+  // 回滚关房本身失败也不再静默吞：catch 应 console.error 记录（与 table.js 离房清理同口径）。
+  // 扣卡抛异常 + closeRoom 也 reject → 记日志，不抛穿 onCreateRoom 的外层 catch（外层只 toast）。
+  global.__cardError = true;
+  __appSingleton.consumeRoomCard = async () => { throw new Error('network down'); };
+  const origCloseRoom = authMod.auth.closeRoom;
+  const errs = [];
+  const origErr = console.error;
+  console.error = (...a) => { errs.push(a.join(' ')); };
+  authMod.auth.closeRoom = () => Promise.reject(new Error('closeRoom boom'));
+  await pageCtx.onCreateRoom(6, 30);
+  await new Promise(r => setTimeout(r, 60));
+  ok(errs.some(s => s.indexOf('createRoom-cardErr') >= 0),
+    '扣卡异常回滚关房失败 → console.error 记录（不静默吞，含 stage=createRoom-cardErr）');
+  console.error = origErr;
+  __appSingleton.consumeRoomCard = origConsume;
+  authMod.auth.closeRoom = origCloseRoom;
+  global.__cardError = false;
+
   /* ---------- 分享参数校验：onLoad 的 room 参数 ---------- */
   // 合法 6 位数字 → 自动尝试加入
   global.__nav = null;
@@ -319,6 +352,10 @@ const pageCtx = Object.assign({}, cfg, {
 
   /* ---------- 下拉刷新 ---------- */
   ok(typeof cfg.onPullDownRefresh === 'function', 'index.js 定义了 onPullDownRefresh');
+  // syncFromCloud 返回 loadMyRooms 的 promise（而非发射即忘），下拉刷新才能等列表就绪
+  ok(/return this\.loadMyRooms\(\)/.test(require('fs').readFileSync(
+    require('path').join(__dirname, 'pages/index/index.js'), 'utf8')),
+    'syncFromCloud 返回 loadMyRooms 的 promise（下拉刷新等列表真正就绪再收起转圈）');
   global.__stoppedPull = false;
   await pageCtx.onPullDownRefresh();
   ok(global.__stoppedPull === true, 'onPullDownRefresh 调用 wx.stopPullDownRefresh 收起刷新');

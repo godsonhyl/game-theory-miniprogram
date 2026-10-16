@@ -14,6 +14,7 @@ const { auth } = require('../../utils/auth');
 const { settings } = require('../../utils/settings');
 const roomSync = require('../../utils/room-sync');
 const sfx = require('../../utils/sfx');   // 合成音效（发牌/下注/加注/全下/获胜…）
+const replayStore = require('../../utils/replay-store');   // 对局复盘缓存（本地，结算时收割）
 
 /**
  * 单次行动倒计时（秒）：计时环按此值计算进度。
@@ -799,64 +800,64 @@ Page({
       return;
     }
     try {
-    this.roomRows = rows;
-    const st = roomSync.hostStateOf(rows);
-    this.hostState = st;
+      this.roomRows = rows;
+      const st = roomSync.hostStateOf(rows);
+      this.hostState = st;
 
-    if (this.isOwner) {
-      if (!st && this.data.phase === 'playing') this.publishPlay();
-      if (this.data.phase === 'waiting') { this.renderWait(); return; }
-      this.dropOfflineSeats(rows);
-      const { actions, nextBySeat } = roomSync.pendingActions(rows, this.appliedSeqBySeat);
-      Object.keys(nextBySeat).forEach(s => { this.appliedSeqBySeat[s] = nextBySeat[s]; });
-      actions.forEach(a => this.applyFriendAction(a));
-      if (this.data.readyPhase) this.mergeFriendReady(rows);
-      this.watchFriendAction();
-      this.healEngine();
-      this.publishPlay();
-      return;
-    }
-
-    // ---- 好友端 ----
-    const host = roomSync.hostRow(rows);
-    if (!host) {
-      if (this.sawHost) {
-        // 房主行消失（离开/解散）→ 退回首屏
-        this.sawHost = false;
-        wx.showToast({ title: '房主已离开，房间解散', icon: 'none' });
-        this.leaveRoom();
-      }
-      return;
-    }
-    // 房主心跳僵死检测：行还在但心跳超时——房主可能已崩溃/杀进程，
-    // 其行不会自己消失。给 HOST_STALE_EXIT_MS 宽限（覆盖一次长轮询/切后台恢复），
-    // 仍未恢复则判房间僵死退出，好友端绝不无限干等。
-    if (!roomSync.isOnline(host, Date.now())) {
-      this.hostStaleSince = this.hostStaleSince || Date.now();
-      if (Date.now() - this.hostStaleSince >= roomSync.SYNC.HOST_STALE_EXIT_MS) {
-        this.hostStaleSince = 0;
-        wx.showToast({ title: '房主长时间无响应，房间已解散', icon: 'none' });
-        this.leaveRoom();
+      if (this.isOwner) {
+        if (!st && this.data.phase === 'playing') this.publishPlay();
+        if (this.data.phase === 'waiting') { this.renderWait(); return; }
+        this.dropOfflineSeats(rows);
+        const { actions, nextBySeat } = roomSync.pendingActions(rows, this.appliedSeqBySeat);
+        Object.keys(nextBySeat).forEach(s => { this.appliedSeqBySeat[s] = nextBySeat[s]; });
+        actions.forEach(a => this.applyFriendAction(a));
+        if (this.data.readyPhase) this.mergeFriendReady(rows);
+        this.watchFriendAction();
+        this.healEngine();
+        this.publishPlay();
         return;
       }
-    } else {
-      this.hostStaleSince = 0;
-    }
-    this.sawHost = true;
-    if (!st) { if (this.data.phase === 'waiting') this.renderWait(); return; }
-    if (st.kind === 'waiting') {
-      this.remoteMode = false;
-      if (this.data.phase !== 'waiting') {
-        // 房主退回等待室（重开一局）→ 好友同步退回
-        this.clearResultTimer();
-        this.clearResultModalTimer();
-        this.setData({ phase: 'waiting', result: null, summary: null, timeUp: false, resultModal: null });
-        if (game) game.result = null;
+
+      // ---- 好友端 ----
+      const host = roomSync.hostRow(rows);
+      if (!host) {
+        if (this.sawHost) {
+          // 房主行消失（离开/解散）→ 退回首屏
+          this.sawHost = false;
+          wx.showToast({ title: '房主已离开，房间解散', icon: 'none' });
+          this.leaveRoom();
+        }
+        return;
       }
-      this.renderWait();
-      return;
-    }
-    this.enterRemote(st);
+      // 房主心跳僵死检测：行还在但心跳超时——房主可能已崩溃/杀进程，
+      // 其行不会自己消失。给 HOST_STALE_EXIT_MS 宽限（覆盖一次长轮询/切后台恢复），
+      // 仍未恢复则判房间僵死退出，好友端绝不无限干等。
+      if (!roomSync.isOnline(host, Date.now())) {
+        this.hostStaleSince = this.hostStaleSince || Date.now();
+        if (Date.now() - this.hostStaleSince >= roomSync.SYNC.HOST_STALE_EXIT_MS) {
+          this.hostStaleSince = 0;
+          wx.showToast({ title: '房主长时间无响应，房间已解散', icon: 'none' });
+          this.leaveRoom();
+          return;
+        }
+      } else {
+        this.hostStaleSince = 0;
+      }
+      this.sawHost = true;
+      if (!st) { if (this.data.phase === 'waiting') this.renderWait(); return; }
+      if (st.kind === 'waiting') {
+        this.remoteMode = false;
+        if (this.data.phase !== 'waiting') {
+          // 房主退回等待室（重开一局）→ 好友同步退回
+          this.clearResultTimer();
+          this.clearResultModalTimer();
+          this.setData({ phase: 'waiting', result: null, summary: null, timeUp: false, resultModal: null });
+          if (game) game.result = null;
+        }
+        this.renderWait();
+        return;
+      }
+      this.enterRemote(st);
     } finally {
       this._polling = false;
     }
@@ -2069,7 +2070,9 @@ Page({
         this._renderTail();
         return;
       }
-      this._lastRenderFp = fp;
+      // 指纹置位推迟到主 setData 成功之后：若 render body 中途抛错（降级 setData
+      // 在 catch 里跑），_lastRenderFp 仍是上一帧的旧值 → 下一帧同势 render 不命中
+      // 跳过、自然重试，降级态不会卡到下一次实质状态变化才恢复（评审 2026-10-16）。
       const showdown = g.street === P.STREET.SHOWDOWN;
       const result = g.result;
       // 就绪阶段：上一手的牌全部收走（公共牌/底牌/赢家特效），桌面清空等下一局，
@@ -2263,6 +2266,9 @@ Page({
         // 结算清空时同步收起弹窗（新一手/回等待室），有结算时保留现状
         resultModal: result ? this.data.resultModal : null
       });
+      // 主 setData 成功 → 现在置位指纹。异常帧（走下面 catch）不更新 _lastRenderFp，
+      // 下一帧同势 render 会重试，降级态不致卡死。
+      this._lastRenderFp = fp;
 
       this.renderAdvice(isMyTurn);
     } catch (e) {
@@ -3147,6 +3153,11 @@ Page({
     this.clearResultTimer();
     if (!this.data.result || this.data.timeUp) return;
     if (this.data.resultModal) return;
+    // 收割本局到复盘缓存：仅本机权威端跑引擎时才缓存（镜像端无 game.events
+    // 全量；观战/中途退出价值低不缓存）。失败静默（体验优化，不阻断结算）。
+    if (game && game.events && game.events.length && game.result && !this.remoteMode) {
+      replayStore.addReplay(game, this.mySeat, this.data.mode);
+    }
     this.setData({ resultModal: this.data.result });
     this.clearResultModalTimer();
     this.resultModalTimer = setTimeout(() => {
@@ -3174,6 +3185,16 @@ Page({
   /** 结算弹窗按钮：亮牌展示期内 = 下一手（进就绪计票）；就绪期/镜像端 = 知道了（仅关闭） */
   onResultNext() {
     this.closeResultModal(!this.remoteMode);
+  },
+
+  /** 结算弹窗「复盘」按钮：跳转复盘页看本局逐街回放（仅本机权威端有缓存） */
+  onReplayTap() {
+    const rec = replayStore.latest();
+    if (!rec) {
+      wx.showToast({ title: '本局复盘未缓存', icon: 'none' });
+      return;
+    }
+    wx.navigateTo({ url: '/pages/replay/replay?date=' + rec.date });
   },
 
   // ---------- 就绪阶段：所有人准备就绪后才发下一手 ----------

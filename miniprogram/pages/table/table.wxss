@@ -848,6 +848,13 @@
   border-radius: calc(2.2 * var(--uh)); border: none;
 }
 .sbtn::after { border: none; }
+/* 次要按钮（如结算弹窗「复盘」）：透明底 + 描边，与 btn-primary 并排时不喧宾夺主 */
+.btn-ghost.sbtn {
+  flex: 0 0 auto; padding: 0 calc(4 * var(--uh));
+  background: transparent; color: #e8a33d;
+  border: calc(0.2 * var(--uh)) solid rgba(232,163,61,.6);
+}
+.btn-ghost.sbtn::after { border: none; }
 
 /* ---------- 合并后：等待室即牌桌（座位环常显） ----------
  * 等待室与游戏中复用同一张 .felt：空座位显示虚线头像 + 「坐下」按钮，

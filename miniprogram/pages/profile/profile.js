@@ -89,8 +89,12 @@ Page({
         recordsEnd: rows.length < PAGE_SIZE
       });
     } catch (err) {
-      this.setData({ loading: false, recordsLoading: false, recordsError: true });
-      wx.showToast({ title: err.message || '读取战绩失败', icon: 'none' });
+      // 失败分级：首屏失败 → 整块替换成「加载失败 + 重试」空态；翻页失败 → 保留
+      // 已加载的列表（仅 toast 提示），否则一次触底的瞬时网络抖动会丢掉已加载的全部记录。
+      const patch = { loading: false, recordsLoading: false };
+      if (first) patch.recordsError = true;
+      this.setData(patch);
+      wx.showToast({ title: (err && err.message) || '读取战绩失败', icon: 'none' });
     }
   },
 
