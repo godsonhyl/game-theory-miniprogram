@@ -1297,6 +1297,40 @@ while (guard++ < 400) {
     ok(dataStore.bankShow === false, '面板可关闭');
   }
 
+  /* ---------- 回归：座位手牌不得遮挡底池/公共牌 ---------- */
+  {
+    const feltSrc = tableSrc;
+    // 座位带最低点 + 块高必须 < 底池位置(22%)；否则顶/中座位的手牌直接压在底池上
+    const cy = Number((feltSrc.match(/cy = (\d+)/) || [0, 0])[1]);
+    const ry = Number((feltSrc.match(/ry = (\d+)/) || [0, 0])[1]);
+    ok(cy > 0 && ry > 0, 'ringPositions 椭圆参数可解析 cy=' + cy + ' ry=' + ry);
+    ok(cy - ry >= 10, '座位带最低点 ' + (cy - ry) + '% （≥10%，留出块延伸空间）');
+    // 座位锚点 y 上界必须小于公共牌位置
+    const yMax = Number((feltSrc.match(/y = Math\.max\(\d+, Math\.min\((\d+)/) || [0, 999])[1]);
+    ok(yMax < 80, '对手座位锚点 y 上界 ' + yMax + '%（<80%，不下探到公共牌区）');
+    // 中央盘面必须提层 + 有不透明底盘（双保险：即使重叠也是中央压住牌背）
+    ok(/\.pot-row \{[\s\S]{0,200}?z-index: 5/.test(wxssSrc),
+      '.pot-row z-index 5 高于 .seat(3)：底池不被牌背盖住');
+    ok(/\.board-row \{[\s\S]{0,200}?z-index: 5/.test(wxssSrc),
+      '.board-row z-index 5 高于 .seat(3)：公共牌不被牌背盖住');
+    ok(/\.pot-row::before/.test(wxssSrc) && /\.board-row::before/.test(wxssSrc),
+      '底池/公共牌有 ::before 不透明底盘（重叠时不透出牌背花纹）');
+    // 座位手牌紧凑叠放，块高减半
+    ok(/\.seat-cards \.card-xs \+ \.card-xs \{ margin-left: calc\(-[\d.]+ \* var\(--uw\)\)/.test(wxssSrc),
+      '座位两张手牌叠放（负 margin），座位块高度显著下降');
+
+    // 开始游戏按钮：主/副两行，主标题不折行
+    ok(/class="sb-main">开始游戏</.test(wxmlSrc) &&
+       /class="sb-sub" wx:if="\{\{!canStart\}\}">至少 2 人</.test(wxmlSrc),
+      '开始游戏按钮拆为主标题 + 副标题（不再把门槛塞进同一行括号）');
+    ok(!/开始游戏\{\{canStart \? '' : '（至少 2 人）'\}\}/.test(wxmlSrc),
+      '旧的同行括号写法已移除（那是折行的病根）');
+    ok(/\.wait-actions \.sb-main \{[\s\S]{0,120}?white-space: nowrap/.test(wxssSrc),
+      '开始游戏主标题 white-space:nowrap（永不折行）');
+    ok(/\.wait-actions \.start-btn \{[\s\S]{0,120}?flex-direction: column/.test(wxssSrc),
+      'start-btn 纵向排列，主副标题各占一行');
+  }
+
   /* ---------- 静态守卫：金额入口全部收口到 setRaiseTo ---------- */
   {
     // 时长到点不得中途掀桌：startClock 只能调 onClockExpired，不得直连 endGame

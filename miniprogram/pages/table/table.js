@@ -42,7 +42,12 @@ function ringPositions(seatSet, mySeat) {
   const total = arr.length;
   if (total === 0) return {};
   const idxMe = Math.max(0, arr.indexOf(mySeat));
-  const cx = 50, cy = 46, rx = 43, ry = 31;
+  // 椭圆参数收紧：cy/ry 决定对手座位带的最低点。
+  // 座位块是「锚点向下延伸」的（头像 + 名牌 + SB/BB + 两张牌 ≈ 24uh ≈ 86px），
+  // 锚点若压到 y=15%，牌就正好落在 top:22% 的底池上。
+  // 现取 cy=42 / ry=27 → 座位带最低 15%，块底约 27.6%，仍需靠 z-index 与底盘兜底，
+  // 但顶/中座位不再直接骑在公共牌（top:46%）上。
+  const cx = 50, cy = 42, rx = 43, ry = 27;
   const pos = {};
   if (total === 1) {
     pos[arr[0]] = { x: 50, y: 82 };
@@ -61,7 +66,8 @@ function ringPositions(seatSet, mySeat) {
     let x = cx + rx * Math.cos(rad);
     let y = cy + ry * Math.sin(rad);        // 上方半圆：sin<0 → y<cy
     x = Math.max(10, Math.min(90, +x.toFixed(1)));
-    y = Math.max(12, Math.min(80, +y.toFixed(1)));
+    // 上界 74：座位块向下延伸，锚点再低就会骑到公共牌（top:46%）上。
+    y = Math.max(10, Math.min(74, +y.toFixed(1)));
     pos[s] = { x, y };
   });
   _ringCache[cacheKey] = pos;

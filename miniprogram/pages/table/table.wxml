@@ -198,7 +198,14 @@
       <view class="wait-actions">
         <button class="wbtn ghost" wx:if="{{mode === 'friend'}}" open-type="share"><view class="ic ic-share inv-ico"></view><text>邀请</text></button>
         <button class="wbtn ghost" wx:if="{{isOwner}}" bindtap="addBot">添加电脑玩家</button>
-        <button class="wbtn primary" wx:if="{{isOwner}}" bindtap="startGame" disabled="{{!canStart}}">开始游戏{{canStart ? '' : '（至少 2 人）'}}</button>
+        <!-- 开始游戏：主/副两行式。
+             病根是原版把门槛提示塞在同一行括号里（「开始游戏（至少 2人）」），
+             按钮宽度被 flex 压缩后文字折行成两截、且把整条操作栏撑高。
+             改为：主标题恒为「开始游戏」不折行，不满足门槛时下方挂一行小字副标题。 -->
+        <button class="wbtn primary start-btn" wx:if="{{isOwner}}" bindtap="startGame" disabled="{{!canStart}}">
+          <text class="sb-main">开始游戏</text>
+          <text class="sb-sub" wx:if="{{!canStart}}">至少 2 人</text>
+        </button>
       </view>
     </view>
   </block>

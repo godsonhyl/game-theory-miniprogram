@@ -125,10 +125,20 @@
 @keyframes glowBreath { 0%, 100% { opacity: .45; } 50% { opacity: .9; } }
 
 /* 底池 */
+/* ---------- 中央盘面（底池 / 公共牌） ----------
+ * z-index 5 高于 .seat(3)：中央是决策核心，牌背压上来时让中央压住牌背，
+ * 而不是反过来把底池和公共牌糊掉（用户反馈：牌挡住底池与公共牌）。
+ * ::before 是不透明底盘 —— 椭圆牌桌中央偏深，底盘同样用深色，
+ * 保证即使重叠也是「中央清晰、牌背被盖」，且不会透出底下的牌背花纹。 */
 .pot-row {
-  position: absolute; top: 24%; left: 50%; transform: translate(-50%, -50%);
-  display: flex; flex-direction: column; align-items: center; z-index: 2;
+  position: absolute; top: 22%; left: 50%; transform: translate(-50%, -50%);
+  display: flex; flex-direction: column; align-items: center; z-index: 5;
 }
+.pot-row::before, .board-row::before {
+  content: ''; position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  border-radius: calc(2.4 * var(--uh)); z-index: -1;
+}
+.pot-row::before { width: 150%; height: calc(7 * var(--uh)); background: rgba(8,26,21,.82); }
 .pot-pill {
   display: flex; align-items: baseline;
   background: rgba(5,16,13,.86); border: 1rpx solid rgba(232,163,61,.42);
@@ -147,8 +157,12 @@
 
 /* 公共牌 */
 .board-row {
-  position: absolute; top: 48%; left: 50%; transform: translate(-50%, -50%);
-  display: flex; align-items: center; z-index: 2;
+  position: absolute; top: 46%; left: 50%; transform: translate(-50%, -50%);
+  display: flex; align-items: center; z-index: 5;
+}
+.board-row::before {
+  width: 116%; height: calc(15 * var(--uh));
+  background: rgba(8,26,21,.78);
 }
 .board { display: flex; align-items: center; }
 .board .card { margin-right: calc(1.1 * var(--uw)); }
@@ -179,10 +193,10 @@
 .four-color .card.s-spade .r, .four-color .card.s-spade .s { color: #1a1a1a; }
 .four-color .card.s-heart .r, .four-color .card.s-heart .s { color: #d0342c; }
 
-/* 摊牌时对手亮出的小牌 */
-.card-xs { width: calc(8.4 * var(--uh)); height: calc(11.8 * var(--uh)); border-radius: calc(1.6 * var(--uh)); }
-.card-xs .r { font-size: calc(3.6 * var(--uh)); }
-.card-xs .s { font-size: calc(3 * var(--uh)); }
+/* 摊牌时对手亮出的小牌：比常规牌小一档，让座位块更矮，中央盘面更不容易被压 */
+.card-xs { width: calc(7 * var(--uh)); height: calc(9.8 * var(--uh)); border-radius: calc(1.4 * var(--uh)); }
+.card-xs .r { font-size: calc(3.2 * var(--uh)); }
+.card-xs .s { font-size: calc(2.6 * var(--uh)); }
 /* 座位卡上的暗牌（仍在手，未摊牌）：统一用牌背 */
 .card-xs.back {
   background:
@@ -308,8 +322,14 @@
   line-height: calc(3.4 * var(--uh)); flex: none;
 }
 .pos-tag.d { background: linear-gradient(160deg, #f4d78a, #d9a441); color: #1a1a1a; border-color: #fff; }
-.seat-cards { display: flex; margin-top: calc(0.6 * var(--uh)); }
+/* 座位手牌：紧凑叠放（第二张压在第一张上，只露右侧一条）。
+   病根是原版把两张牌并排且排在名牌下方 —— 座位块向下延伸约 130px，
+   顶/中座位的手牌正好压住 `top:24%` 的底池和 `top:48%` 的公共牌。
+   改为叠放后块高从 ~24uh 降到 ~14uh，且 z-index 低于中央盘面，
+   即使仍轻微重叠也一定是「牌背被底池盘面盖住」而不是反过来。 */
+.seat-cards { display: flex; margin-top: calc(0.4 * var(--uh)); position: relative; z-index: 1; }
 .seat-cards .card-xs { margin-right: calc(0.8 * var(--uw)); }
+.seat-cards .card-xs + .card-xs { margin-left: calc(-4.6 * var(--uw)); margin-right: 0; }
 
 .act-bubble {
   position: absolute; bottom: calc(-1 * var(--uh)); left: 50%; transform: translateX(-50%);
@@ -643,7 +663,7 @@
 }
 .wtag.owner { background: linear-gradient(160deg, #f4d78a, #d9a441); color: #1a1a1a; font-weight: 700; }
 .wtag.kick { background: rgba(224,92,75,.2); color: #e08a7d; border: 1rpx solid rgba(224,92,75,.4); }
-.wait-actions { display: flex; gap: calc(2.6 * var(--uw)); margin-top: calc(2.6 * var(--uh)); flex-shrink: 0; }
+.wait-actions { display: flex; align-items: stretch; gap: calc(2.6 * var(--uw)); margin-top: calc(2.6 * var(--uh)); flex-shrink: 0; }
 .wbtn {
   font-size: calc(3.6 * var(--uh)); line-height: calc(11 * var(--uh)); border-radius: calc(2.6 * var(--uh)); color: #fff;
   border: none; padding: 0 calc(4.4 * var(--uw));
@@ -877,10 +897,25 @@
   border: 1rpx solid rgba(255,255,255,.09); border-radius: calc(2.8 * var(--uh));
   padding: calc(1 * var(--uh)) calc(2.4 * var(--uw));
 }
-.wait-actions { display: flex; align-items: center; gap: calc(2 * var(--uw)); }
+.wait-actions { display: flex; align-items: stretch; gap: calc(2 * var(--uw)); }
 .wait-actions .wbtn {
   font-size: calc(3.6 * var(--uh)); line-height: calc(9.5 * var(--uh)); border-radius: calc(2.6 * var(--uh)); color: #fff;
   border: none; padding: 0 calc(4.4 * var(--uw)); display: flex; align-items: center; justify-content: center;
+}
+/* 开始游戏：主副两行，纵向排列。
+   主标题 white-space:nowrap 保证「开始游戏」四个字永不折行；
+   副标题承载门槛提示（至少 2 人），不与主标题抢同一行的宽度。 */
+.wait-actions .start-btn {
+  flex-direction: column; align-items: center; justify-content: center;
+  min-width: calc(26 * var(--uw)); padding: 0 calc(4 * var(--uw));
+}
+.wait-actions .sb-main {
+  font-size: calc(3.8 * var(--uh)); font-weight: 700; line-height: calc(5 * var(--uh));
+  white-space: nowrap; color: #1a1a1a;
+}
+.wait-actions .sb-sub {
+  font-size: calc(2.3 * var(--uh)); line-height: calc(3.2 * var(--uh));
+  white-space: nowrap; color: rgba(26,26,26,.62); font-weight: 400;
 }
 .wait-actions .wbtn::after { border: none; }
 .wait-actions .wbtn.ghost { background: rgba(255,255,255,.08); border: 1rpx solid rgba(255,255,255,.18); }
