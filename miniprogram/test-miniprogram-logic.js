@@ -2094,6 +2094,142 @@ while (guard++ < 400) {
     wx.getStorageSync = origGet;
   })();
 
+  /* ============================================================
+   * AI 教学提示：advisor.js 起手牌分类 + 牌理解释（设计 2026-10-16 §2）
+   * 纯函数单测 + table.js/wxml 接入静态守卫 + 行为级（renderAdvice 接入）
+   * ========================================================== */
+  (function advisorSuite() {
+    const advisor = require(path.join(__dirname, 'utils', 'advisor.js'));
+    const P = require(path.join(__dirname, 'core', 'poker-core.js'));
+    const cid = (rank, suit) => (rank << 2) | suit;   // cardId，rank 0..12(A=12)
+    const TAGS = ['premium', 'strong', 'playable', 'marginal', 'trash'];
+
+    // ---- classifyHole：关键样本断言 ----
+    const aa = advisor.classifyHole([cid(12, 0), cid(12, 1)]);
+    ok(aa && aa.tag === 'premium' && aa.tier === 1, 'AA → premium/顶口袋对子');
+    const kk = advisor.classifyHole([cid(11, 0), cid(11, 2)]);
+    ok(kk && kk.tag === 'premium', 'KK → premium/顶口袋对子');
+    const aks = advisor.classifyHole([cid(12, 0), cid(11, 0)]);
+    ok(aks && aks.tag === 'premium', 'AKs → premium（同花大两高张）');
+    const ako = advisor.classifyHole([cid(12, 0), cid(11, 2)]);
+    ok(ako && ako.tag === 'premium', 'AKo → premium（非同花大两高张）');
+    const qq = advisor.classifyHole([cid(10, 0), cid(10, 3)]);
+    ok(qq && qq.tag === 'strong', 'QQ → strong/强口袋对');
+    const jj = advisor.classifyHole([cid(9, 1), cid(9, 3)]);
+    ok(jj && jj.tag === 'strong', 'JJ → strong/强口袋对');
+    const tt = advisor.classifyHole([cid(8, 0), cid(8, 1)]);
+    ok(tt && tt.tag === 'strong', 'TT → strong/中口袋对');
+    const aqs = advisor.classifyHole([cid(12, 0), cid(10, 0)]);
+    ok(aqs && aqs.tag === 'strong', 'AQs → strong');
+    const kqs = advisor.classifyHole([cid(11, 1), cid(10, 1)]);
+    ok(kqs && kqs.tag === 'strong', 'KQs → strong');
+    const ajs = advisor.classifyHole([cid(12, 2), cid(9, 2)]);
+    ok(ajs && ajs.tag === 'playable', 'AJ → playable');
+    const p66 = advisor.classifyHole([cid(4, 0), cid(4, 3)]);
+    ok(p66 && p66.tag === 'playable', '66 → playable/中口袋对');
+    const p22 = advisor.classifyHole([cid(0, 0), cid(0, 2)]);
+    ok(p22 && p22.tag === 'marginal', '22 → marginal/小口袋对（最低对子）');
+    const a2s = advisor.classifyHole([cid(12, 0), cid(0, 0)]);
+    ok(a2s && aqs && a2s.tag === 'marginal', 'A2s → marginal/小同花 A');
+    const sevTwo = advisor.classifyHole([cid(5, 0), cid(0, 1)]);   // 72o
+    ok(sevTwo && sevTwo.tag === 'trash', '72o → trash（非同花、间隔大、低牌）');
+    const ts = advisor.classifyHole([cid(8, 0), cid(7, 0)]);      // T9s
+    ok(ts && ts.tag === 'marginal', 'T9s → marginal/同花连张（lo<8，归同花连张而非大同花连张）');
+
+    // ---- 全组合覆盖：52*51/2 每对都有合法归属 ----
+    let bad = 0, nonNull = 0;
+    for (let i = 0; i < 52; i++) {
+      for (let j = i + 1; j < 52; j++) {
+        const c = advisor.classifyHole([i, j]);
+        if (!c) { bad++; continue; }
+        nonNull++;
+        if (TAGS.indexOf(c.tag) < 0) bad++;
+        if (c.tier < 1 || c.tier > 5) bad++;
+        if (typeof c.label !== 'string' || !c.label) bad++;
+      }
+    }
+    ok(bad === 0 && nonNull === 52 * 51 / 2,
+      '全 1326 种起手牌组合均有合法归属（tag∈5 类、tier 1..5、label 非空），坏 ' + bad);
+
+    // ---- explainAdvice：4 种 tone 分支 ----
+    const weak = advisor.explainAdvice(
+      { tone: 'weak', equityPct: '38.0%', potOdds: '45.0%', drawOuts: 0 },
+      { street: 'flop', toCallZero: false });
+    ok(weak.tip && weak.cls === 'weak', 'weak 分支返回 tip + cls=weak');
+    ok(/弃牌|亏/.test(weak.tip), 'weak 文案含「弃牌」或「亏」（教弃牌理由）');
+
+    const strong = advisor.explainAdvice(
+      { tone: 'strong', equityPct: '72.0%', potOdds: '25.0%', drawOuts: 0 },
+      { street: 'preflop', toCallZero: false });
+    ok(strong.tip && strong.cls === 'strong', 'strong+翻前 分支返回 tip + cls=strong');
+    ok(/起手牌|加注/.test(strong.tip), 'strong+翻前 文案含「起手牌」或「加注」');
+
+    const draw = advisor.explainAdvice(
+      { tone: 'draw', equityPct: '40.0%', potOdds: '20.0%', drawOuts: 9, drawDesc: '同花听牌' },
+      { street: 'flop', toCallZero: false });
+    ok(draw.tip && draw.cls === 'draw', 'draw 分支返回 tip + cls=draw');
+    ok(/补牌/.test(draw.tip) && draw.tip.indexOf('9') >= 0, 'draw 文案含补牌数「9」与「补牌」');
+
+    const neutral = advisor.explainAdvice(
+      { tone: 'neutral', equityPct: '50.0%', potOdds: '48.0%', drawOuts: 0 },
+      { street: 'turn', toCallZero: false });
+    ok(neutral.tip && neutral.cls === 'neutral', 'neutral 分支返回 tip + cls=neutral');
+
+    // 过牌局面优先（toCallZero）：无论 tone，都走「免费看牌/控制底池」
+    const freeCheck = advisor.explainAdvice(
+      { tone: 'neutral', equityPct: '50.0%', potOdds: '0.0%', drawOuts: 0 },
+      { street: 'flop', toCallZero: true });
+    ok(/免费|过牌|控制底池/.test(freeCheck.tip), '过牌局面（toCallZero）文案含「免费看牌/过牌/控制底池」');
+
+    // 容错：空 advice 返回空 tip
+    ok(advisor.explainAdvice(null, {}).tip === '', 'explainAdvice 空入参容错返回空 tip');
+
+    // parsePct 反解
+    eq(advisor.parsePct('62.3%'), 0.623, 'parsePct 解析「62.3%」→ 0.623');
+    ok(advisor.parsePct('xx') === null, 'parsePct 非法输入返回 null');
+
+    // ---- table.js 接入静态守卫 ----
+    const tableSrc = fs.readFileSync(path.join(__dirname, 'pages', 'table', 'table.js'), 'utf8');
+    ok(/require\(['"].+advisor['"]\)/.test(tableSrc), 'table.js 引入 advisor 模块');
+    ok(tableSrc.indexOf('advisor.classifyHole') >= 0,
+      'renderAdvice 调用 advisor.classifyHole（起手牌分类）');
+    ok(tableSrc.indexOf('advisor.explainAdvice') >= 0,
+      'renderAdvice 调用 advisor.explainAdvice（牌理解释）');
+    // 新增字段不破坏现有 5 字段
+    ok(/advBase\.holeLabel/.test(tableSrc) && /advBase\.explain/.test(tableSrc),
+      'advice setData 新增 holeLabel/explain 字段（不破坏 equityPct/potOdds/text/tone/drawDesc/drawOuts）');
+    // 合规：advisor 只在 renderAdvice 内调用（不新增调用点/绕门槛）
+    const advCalls = (tableSrc.match(/advisor\.(classifyHole|explainAdvice)/g) || []).length;
+    ok(advCalls === 2, 'advisor 调用只在 renderAdvice 内（classifyHole + explainAdvice 各 1，不绕 mode!==ai 门槛），共 ' + advCalls);
+
+    // ---- wxml 接入静态守卫 ----
+    const wxmlSrc = fs.readFileSync(path.join(__dirname, 'pages', 'table', 'table.wxml'), 'utf8');
+    ok(/class="adv-explain"/.test(wxmlSrc), '建议栏 wxml 含 adv-explain 节点');
+    ok(/advice\.explain/.test(wxmlSrc), '建议栏 wxml 插值 advice.explain');
+
+    // ---- 行为级：轮到我时 advice 含 explain；翻前含 holeLabel、翻后不含 ----
+    // 复用主流程已驱动到「轮到我」的 pageCtx/game（见上方「等到轮到我」块）。
+    // 此处不重驱动，只断言若当前 advice 有 text 则必有 explain（renderAdvice 接入生效）。
+    if (dataStore.advice && dataStore.advice.text) {
+      ok(typeof dataStore.advice.explain === 'string' && dataStore.advice.explain.length > 0,
+        '行为级：轮到我时 advice.explain 非空（教学提示已接入），实际 = ' + JSON.stringify(dataStore.advice.explain));
+      // 翻前应有起手牌前缀，翻后 holeLabel 为空（不重复显示）
+      const g = pageCtx.requireGame && pageCtx.requireGame();
+      if (g) {
+        if (g.street === 'preflop') {
+          ok(typeof dataStore.advice.holeLabel === 'string' && dataStore.advice.holeLabel.length > 0,
+            '行为级：翻前 advice.holeLabel 非空（起手牌分类显示），实际 = ' + JSON.stringify(dataStore.advice.holeLabel));
+        } else {
+          ok(dataStore.advice.holeLabel === '',
+            '行为级：翻后 advice.holeLabel 为空（不重复显示起手牌分类），实际 = ' + JSON.stringify(dataStore.advice.holeLabel));
+        }
+      }
+    } else {
+      // 没轮到我时跳过行为级（与既有建议类断言同策略），仍记一条静态覆盖
+      ok(true, '行为级：当前未轮到我，advice 行为级跳过（静态守卫已覆盖接入）');
+    }
+  })();
+
   /* ---------- 输出 ---------- */
   console.log('\n' + '='.repeat(52));
   if (failures.length === 0) {

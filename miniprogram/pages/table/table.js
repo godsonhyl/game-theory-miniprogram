@@ -15,6 +15,7 @@ const { settings } = require('../../utils/settings');
 const roomSync = require('../../utils/room-sync');
 const sfx = require('../../utils/sfx');   // 合成音效（发牌/下注/加注/全下/获胜…）
 const replayStore = require('../../utils/replay-store');   // 对局复盘缓存（本地，结算时收割）
+const advisor = require('../../utils/advisor');   // AI 教学提示文案（起手牌分类 + 牌理解释，仅练习模式）
 
 /**
  * 单次行动倒计时（秒）：计时环按此值计算进度。
@@ -2890,7 +2891,11 @@ Page({
     }
     this._adviceKey = key;
     const a = P.advise(game, this.mySeat, { practiceMode: true });
-    this._adviceResult = a ? {
+    // advisor 教学提示（第二期）：起手牌分类（仅翻前）+ 各街牌理解释。
+    // 纯客户端文案、不接 LLM、不重算胜率——输入完全由上面的缓存键覆盖（hole +
+    // street + tone + equityPct 均在键内或键派生），故无需为 advisor 单独缓存：
+    // 命中 _adviceKey 时 advice 已含 tip，未命中时随 P.advise 顺带算（开销可忽略）。
+    const advBase = a ? {
       equityPct: a.equityPct,
       potOdds: a.potOdds,
       text: a.text,
@@ -2898,6 +2903,21 @@ Page({
       drawDesc: a.draws.outs > 0 ? a.draws.desc : '',
       drawOuts: a.draws.outs
     } : null;
+    if (advBase) {
+      const hole = me ? me.hole : [];
+      const legal = game.legalActions(this.mySeat);
+      const cls = advisor.classifyHole(hole);
+      const expl = advisor.explainAdvice(advBase, {
+        street: game.street,
+        toCallZero: !!(legal && legal.toCall === 0)
+      });
+      // 翻前时 explain 前缀拼起手牌分类，让新手把胜率数字与「该不该玩」对应起来
+      const prefix = (game.street === 'preflop' && cls) ? ('起手牌：' + cls.label + ' · ') : '';
+      advBase.holeLabel = (game.street === 'preflop' && cls) ? cls.label : '';
+      advBase.holeTag = (game.street === 'preflop' && cls) ? cls.tag : '';
+      advBase.explain = prefix + expl.tip;
+    }
+    this._adviceResult = advBase;
     if (!a) { this.setData({ advice: {} }); return; }
     this.setData({ advice: this._adviceResult });
   },

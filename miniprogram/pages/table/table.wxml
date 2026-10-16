@@ -264,7 +264,10 @@
           <view class="mytip" wx:elif="{{result}}">本手已结束 · 每人盈亏见结算弹窗或「查看结算」</view>
           <view class="mytip" wx:elif="{{myActText}}">{{myActText}}</view>
           <view class="mytip coach" wx:elif="{{coachShow}}">💡 {{coachTip}}</view>
-          <view class="mytip" wx:elif="{{advice.text}}">胜率 {{advice.equityPct}} · 赔率 {{advice.potOdds}} · {{advice.text}}</view>
+          <view class="mytip" wx:elif="{{advice.text}}">
+            <view class="adv-main">胜率 {{advice.equityPct}} · 赔率 {{advice.potOdds}} · {{advice.text}}</view>
+            <view class="adv-explain" wx:if="{{advice.explain}}">{{advice.explain}}</view>
+          </view>
           <view class="mytip" wx:else>等待 {{currentPlayerName}} 行动…</view>
           <!-- 弃牌后/本手结束后（未结算面板时）：显眼的「站起退出本局」入口 -->
           <view class="stand-link" wx:if="{{canStand && !result && !readyPhase}}" bindtap="onMenuStand">站起退出本局</view>
