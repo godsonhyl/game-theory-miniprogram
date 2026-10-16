@@ -1997,6 +1997,11 @@ while (guard++ < 400) {
     const idxWxml = fs.readFileSync(path.join(__dirname, 'pages', 'index', 'index.wxml'), 'utf8');
     const appJson = fs.readFileSync(path.join(__dirname, 'app.json'), 'utf8');
     guardPuzzleIntegration(puzzleSrc, pzPageSrc, pzWxml, pzWxss, idxSrc, idxWxml, replaySrc, appJson);
+
+    // ---- AI 人格化组（批②）行为级 + 静态守卫 ----
+    const botSrc = fs.readFileSync(path.join(__dirname, 'utils', 'bot-profiles.js'), 'utf8');
+    guardBotProfilesIntegration(botSrc, tableSrc, idxSrc);
+    guardAiDecideStyleExtension();   // 引擎扩展字段兜底（行为级）
   })();
 
   /* ---------- 静态守卫函数定义区 ----------
@@ -2953,6 +2958,100 @@ while (guard++ < 400) {
     // 注：当前 puzzle 自带揭示页，from=puzzle 为预留方向；此处仅断言不破坏既有 from 分支
     ok(/from\s*===\s*['"]highlight['"]/.test(replaySrc),
       'replay.js 仍保留 from=highlight 分支（puzzle 未破坏既有高光回看）');
+  }
+
+  /* AI 人格化组（批②）静态守卫：bot-profiles 模块 + table.js 角色绑定/台词/马脚/难度 + index 难度入口。
+     纯客户端体验层：style 6 字段进引擎 aiDecide（决策入口），台词/马脚/难度纯 table.js 包装消费。 */
+  function guardBotProfilesIntegration(botSrc, tableSrc, idxSrc) {
+    // ---- bot-profiles.js 模块约束 ----
+    ok(/PROFILES/.test(botSrc), 'bot-profiles.js 导出 PROFILES 角色档案');
+    ok(/styleFor/.test(botSrc), 'bot-profiles.js 导出 styleFor（按序号+难度取 style）');
+    ok(/profileFor/.test(botSrc), 'bot-profiles.js 导出 profileFor（按序号取档案）');
+    ok(/sceneOf/.test(botSrc) && /pickTalk/.test(botSrc), 'bot-profiles.js 导出 sceneOf/pickTalk（场景台词）');
+    // 5 角色（对齐 BOT_NAMES：林小满/陈默/苏晴/赵岩/周叙）
+    ok(/林小满/.test(botSrc) && /陈默/.test(botSrc) && /苏晴/.test(botSrc) && /赵岩/.test(botSrc) && /周叙/.test(botSrc),
+      'bot-profiles.js 5 角色名对齐 BOT_NAMES');
+    // style 6 字段
+    ok(/bluffFreq/.test(botSrc) && /bluffSize/.test(botSrc) && /heroCall/.test(botSrc) && /slowplay/.test(botSrc),
+      'bot-profiles.js style 含 bluffFreq/bluffSize/heroCall/slowplay 扩展字段');
+    // 难度档位映射
+    ok(/rookie/.test(botSrc) && /advanced/.test(botSrc) && /expert/.test(botSrc),
+      'bot-profiles.js 含 3 档难度映射（rookie/advanced/expert）');
+    ok(/talkRate/.test(botSrc), 'bot-profiles.js 角色含 talkRate（话痨/寡言倾向）');
+    ok(/tellPattern/.test(botSrc), 'bot-profiles.js 角色含 tellPattern（马脚线索）');
+    ok(!/wx\.request|require\(['"]https?/.test(botSrc), 'bot-profiles.js 不含网络调用（纯本地数据）');
+
+    // ---- table.js 角色绑定约束 ----
+    ok(/botProfiles/.test(tableSrc), 'table.js 引入 bot-profiles');
+    ok(/botProfiles\.styleFor/.test(tableSrc), 'table.js 用 botProfiles.styleFor 绑定角色 style');
+    ok(/botProfiles\.profileFor/.test(tableSrc), 'table.js 用 botProfiles.profileFor 取档案（马脚/台词）');
+    ok(/botProfiles\.sceneOf|botProfiles\.pickTalk/.test(tableSrc), 'table.js 用 botProfiles.sceneOf/pickTalk 取场景台词');
+    ok(/talkRate/.test(tableSrc), 'table.js 按角色 talkRate 控制聊天冒泡触发率');
+    ok(/this\.level/.test(tableSrc), 'table.js 读取难度档位 this.level');
+    ok(/bluffFast|bluffSilent|bluffTalkBoost/.test(tableSrc),
+      'table.js 消费 tellPattern 马脚（反应时间/沉默/话多）');
+    ok(/delay\s*=\s*300|delay\s*=\s*800/.test(tableSrc),
+      'table.js 反应时间抖动按诈唬/强牌偏移（马脚）');
+
+    // ---- index.js 难度入口约束 ----
+    ok(/level=/.test(idxSrc), 'index.js onAIMode 跳转带 level 参数');
+    ok(/rookie/.test(idxSrc) && /advanced/.test(idxSrc) && /expert/.test(idxSrc),
+      'index.js 含 3 档难度文案（rookie/advanced/expert）');
+    ok(/showActionSheet/.test(idxSrc), 'index.js 用 showActionSheet 弹难度选择');
+  }
+
+  /* 引擎 aiDecide style 扩展字段兜底验证（行为级）：
+     不传扩展字段（旧 style:{aggro,tight}）时行为不变；传扩展字段时引擎能正常决策。
+     这是「碰引擎」改动的安全底线——默认兜底必须让旧调用零回归。 */
+  function guardAiDecideStyleExtension() {
+    const mkCtx = (style, hole, board) => ({
+      hole: hole || [P.cardId(12, 0), P.cardId(12, 1)],   // AA
+      board: board || [],
+      pot: 200, toCall: 80, stack: 800, currentBet: 80, numActive: 2,
+      positionFactor: 0.5, style,
+      minRaiseTo: 160, maxRaiseTo: 880, canRaise: true, bb: 20,
+      rng: P.createRng('style-ext')
+    });
+    // 1) 旧 style（仅 aggro/tight）不崩，且返回合法动作
+    const dOld = P.aiDecide(mkCtx({ aggro: 0.5, tight: 0.5 }));
+    ok(['fold', 'check', 'call', 'raise', 'allin'].indexOf(dOld.action) >= 0,
+      'aiDecide 旧 style（仅 aggro/tight）返回合法动作 ' + dOld.action);
+    // 2) 扩展字段全 0：行为应与旧 style 接近（不诈唬/不英雄跟注/不慢打），返回合法
+    const dZero = P.aiDecide(mkCtx({ aggro: 0.5, tight: 0.5, bluffFreq: 0, bluffSize: 0, heroCall: 0, slowplay: 0 }));
+    ok(['fold', 'check', 'call', 'raise', 'allin'].indexOf(dZero.action) >= 0,
+      'aiDecide 扩展字段全 0 返回合法动作 ' + dZero.action);
+    // 3) 高 bluffFreq + 高 aggro：翻后半诈唬路径生效（听牌+高诈唬频率→产生加注）
+    let bluffRaiseSeen = false;
+    const bluffHole = [P.cardId(3, 3), P.cardId(4, 3)];           // 5♥6♥
+    const bluffBoard = [P.cardId(0, 3), P.cardId(5, 3), P.cardId(11, 0)]; // 2♥7♥K♠（同花+顺听）
+    for (let i = 0; i < 40; i++) {
+      const d = P.aiDecide({
+        hole: bluffHole, board: bluffBoard, pot: 200, toCall: 80, stack: 800,
+        currentBet: 80, numActive: 2, positionFactor: 0.5,
+        style: { aggro: 0.9, tight: 0.1, bluffFreq: 0.95, bluffSize: 0.8, heroCall: 0.5, slowplay: 0.3 },
+        minRaiseTo: 160, maxRaiseTo: 880, canRaise: true, bb: 20, rng: P.createRng('bluff-' + i)
+      });
+      ok(['fold', 'check', 'call', 'raise', 'allin'].indexOf(d.action) >= 0,
+        'aiDecide 高激进扩展字段返回合法动作 ' + d.action + '（试 ' + i + '）');
+      if (d.action === 'raise') bluffRaiseSeen = true;
+    }
+    ok(bluffRaiseSeen, 'aiDecide 高 bluffFreq 在听牌局能产生加注（半诈唬路径生效）');
+    // 4) slowplay：强牌 + toCall=0 + slowplay=1 → 必过牌（慢打诱敌）
+    const dSlow = P.aiDecide({
+      hole: [P.cardId(12, 0), P.cardId(12, 1)], board: [P.cardId(12, 2), P.cardId(11, 0), P.cardId(2, 1)],
+      pot: 200, toCall: 0, stack: 800, currentBet: 0, numActive: 2, positionFactor: 0.5,
+      style: { aggro: 0.5, tight: 0.5, slowplay: 1 },
+      minRaiseTo: 0, maxRaiseTo: 800, canRaise: true, bb: 20, rng: P.createRng('slow-1')
+    });
+    ok(dSlow.action === 'check', 'aiDecide slowplay=1 + 强牌 + 可过牌 → 慢打过牌，实际 ' + dSlow.action);
+    // 5) heroCall：赔率不划算 + heroCall=1 → 必跟注（英雄跟注路径）
+    const dHero = P.aiDecide({
+      hole: [P.cardId(2, 0), P.cardId(3, 1)], board: [P.cardId(12, 0), P.cardId(11, 1), P.cardId(10, 2)],
+      pot: 100, toCall: 90, stack: 800, currentBet: 90, numActive: 2, positionFactor: 0.5,
+      style: { aggro: 0.1, tight: 0.9, heroCall: 1 },
+      minRaiseTo: 180, maxRaiseTo: 890, canRaise: true, bb: 20, rng: P.createRng('hero-1')
+    });
+    ok(dHero.action === 'call', 'aiDecide heroCall=1 + 赔率不划算 → 英雄跟注，实际 ' + dHero.action);
   }
 
   /* ---------- 输出 ---------- */

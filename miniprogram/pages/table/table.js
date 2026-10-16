@@ -17,6 +17,7 @@ const sfx = require('../../utils/sfx');   // 合成音效（发牌/下注/加注
 const replayStore = require('../../utils/replay-store');   // 对局复盘缓存（本地，结算时收割）
 const highlightStore = require('../../utils/highlight-store'); // 高光时刻存档（本地，结算时判定收割）
 const advisor = require('../../utils/advisor');   // AI 教学提示文案（起手牌分类 + 牌理解释，仅练习模式）
+const botProfiles = require('../../utils/bot-profiles'); // AI 角色档案：5 角色 style + 台词 + 马脚（批②）
 
 /**
  * 单次行动倒计时（秒）：计时环按此值计算进度。
@@ -339,6 +340,9 @@ Page({
   onLoad(options) {
     const opts = options || {};
     this.mode = opts.room ? 'friend' : 'ai';
+    // AI 难度档位（批②）：rookie/advanced/expert，默认 advanced。仅 AI 桌生效，
+    // 好友房的机器人沿用默认梯度（好友房 Bot 不该比真人强太多）
+    this.level = (this.mode === 'ai' && opts.level) ? opts.level : 'advanced';
     this.roomNo = opts.room || '';
     // own=1 表示从「我的房间」或创建流程进入（房主）；分享/输入房间号进入视为访客
     this.isOwner = this.mode === 'friend' ? opts.own === '1' : true;
@@ -1643,16 +1647,29 @@ Page({
       if (this.syncLive) {
         try { await this.pollOnce(); } catch (e) { this.onSyncLost(); }
       }
-      const toPlayer = s => ({
-        id: s.isMe ? 'me' : (s.isBot ? 'bot' + s.seat : 'p' + s.seat),
-        // 我的名字用微信昵称（好友端能看到）；他人沿用云端广播/等待室里的名字
-        name: s.isMe ? (s.name || this.meLabel(false)) : (s.name || '玩家'),
-        seat: s.seat,
-        // 按各自买入额发筹码（未指定者回落到默认买入）
-        stack: Number(s.stack) || DEFAULT_BUY_IN,
-        isHuman: !s.isBot,     // 真人（含好友）的底牌进快照，供镜像端渲染
-        style: { aggro: 0.3 + Math.random() * 0.5, tight: 0.25 + Math.random() * 0.45 }
-      });
+      const toPlayer = (s) => {
+        // AI 机器人绑定固定角色 style（按序号 → botProfiles.styleFor），
+        // 取代旧 0.3+rand*0.5 随机——角色人格稳定，难度档位影响激进度梯度。
+        // 真人 style 维持轻随机（仅 AI 桌「我」的教练提示不读 style，无影响）。
+        let style;
+        if (s.isBot) {
+          // 按已入座 Bot 的序号绑定角色（同 botLabel 的计数口径：小于等于本座位的 Bot 数 - 1）
+          const botSeq = Math.max(0, (this.data.waitSeats || []).filter(x => x.isBot && x.seat <= s.seat).length - 1);
+          style = botProfiles.styleFor(botSeq, this.mode === 'ai' ? this.level : 'advanced');
+        } else {
+          style = { aggro: 0.3 + Math.random() * 0.5, tight: 0.25 + Math.random() * 0.45 };
+        }
+        return {
+          id: s.isMe ? 'me' : (s.isBot ? 'bot' + s.seat : 'p' + s.seat),
+          // 我的名字用微信昵称（好友端能看到）；他人沿用云端广播/等待室里的名字
+          name: s.isMe ? (s.name || this.meLabel(false)) : (s.name || '玩家'),
+          seat: s.seat,
+          // 按各自买入额发筹码（未指定者回落到默认买入）
+          stack: Number(s.stack) || DEFAULT_BUY_IN,
+          isHuman: !s.isBot,     // 真人（含好友）的底牌进快照，供镜像端渲染
+          style
+        };
+      };
       // 有跨设备同步时按云端布局组局（真人行 + 机器人）；否则用本地等待室布局
       let players = (this.syncLive
         ? roomSync.buildWaitLayout(this.roomRows, this.hostState, this.maxSeats, this.roomSeat)
@@ -1890,6 +1907,9 @@ Page({
   },
 
   initGame(players, snap) {
+    // AI 桌默认局：机器人按序号绑定角色 style（取代旧随机），仅 AI 桌应用难度档位。
+    // 好友房走 toPlayer 已绑过；这里只兜底「未传 players 的 AI 桌默认局」。
+    const applyLevel = this.mode === 'ai' ? this.level : 'advanced';
     const ps = players || NAMES.map((name, i) => ({
       id: 'u' + i,
       // AI 桌：我的座位用微信昵称，其余沿用预设对手名（NAMES[0] 是「我」的占位）
@@ -1897,7 +1917,9 @@ Page({
       seat: i,
       stack: 1000,
       isHuman: i === this.mySeat,
-      style: { aggro: 0.3 + Math.random() * 0.5, tight: 0.25 + Math.random() * 0.45 }
+      style: i === this.mySeat
+        ? { aggro: 0.5, tight: 0.5 }
+        : botProfiles.styleFor(Math.max(0, i - 1), applyLevel)
     }));
     game = P.createGame({
       players: ps,
@@ -3588,6 +3610,25 @@ Page({
     const seat = game.actionSeat;
     const p = game.seatOf(seat);
     if (!p) return;
+    // 角色档案（马脚用）：按序号查 botProfiles。botSeats 标记的是机器人座位，
+    // 在等待室入座时按序号绑定，此处复用同一序号口径取档案。
+    const isAiBot = this.mode === 'ai' && this.botSeats[seat];
+    const botIdx = isAiBot
+      ? Math.max(0, game.players.filter(x => this.botSeats[x.seat] && x.seat <= seat).length - 1)
+      : -1;
+    const profile = botIdx >= 0 ? botProfiles.profileFor(botIdx) : null;
+    const tell = profile && profile.tellPattern || {};
+    const baseTalkRate = profile ? profile.talkRate : 0.35;
+    const isBluff = /诈唬/.test((p && p.lastReason) || '');  // 见下：本帧决策后回填
+
+    // 反应时间抖动（马脚）：诈唬急促（心虚）、强牌拖延（装犹豫）。
+    // 分布偏移非确定信号——玩家可借它读对手，但不保证准确。默认 620~1140ms。
+    let delay = 620 + Math.random() * 520;
+    // 本帧是否诈唬要等 aiDecide 出结果才知，故先按 reason 兜底用 p.lastReason
+    // （上一手同座位残值），决策后再以本帧 d.reason 精确化下一帧。此处抖动按
+    // tell.bluffFast / 强牌延后做软偏移：
+    if (tell.bluffFast && isBluff) delay = 300 + Math.random() * 240;       // 急促
+    else if (/价值|强/.test((p && p.lastReason) || '')) delay = 800 + Math.random() * 600; // 强牌装犹豫
 
     aiTimer = setTimeout(() => {
       aiTimer = null;   // 先释放槽位：本帧若失败，看门狗可重新调度
@@ -3616,6 +3657,8 @@ Page({
           bb: game.bb,
           rng: P.createRng('mp-' + game.handNo + '-' + seat + '-' + (aiStep++))
         });
+        // 回填本帧 reason 供下一帧反应时间抖动判诈唬/强牌
+        p.lastReason = d.reason || '';
 
         const res = game.act(seat, d.action, d.amount);
         if (!res.ok) {
@@ -3636,16 +3679,23 @@ Page({
           ['seats[' + idx + '].actCls']: this.actClsOf(d.action)
         }, () => this.afterAct());
 
-        // AI 偶尔在聊天区冒泡（不再用 toast 打断牌局）
-        if (d.reason && Math.random() < 0.35) {
-          this.pushChat(seat, p.name, this.pickTalk(d));
+        // AI 聊天冒泡：角色触发率（话痨高 / 寡言低），诈唬时按马脚调整。
+        // 诈唬话多掩饰（bluffTalkBoost）或诈唬必沉默（bluffSilent）。
+        const thisBluff = /诈唬/.test(d.reason || '');
+        let talkRate = baseTalkRate;
+        if (thisBluff) {
+          if (tell.bluffSilent) talkRate = 0;           // 诈唬必沉默
+          else if (tell.bluffTalkBoost) talkRate = Math.min(0.9, talkRate * tell.bluffTalkBoost);
+        }
+        if (d.reason && Math.random() < talkRate) {
+          this.pushChat(seat, p.name, this.pickTalk(d, profile));
         }
       } catch (e) {
         console.error('[table] AI 行动异常，等待看门狗重试', JSON.stringify({
           stage: 'ai-schedule', seat, message: e && e.message, stack: e && e.stack
         }));
       }
-    }, 620 + Math.random() * 520);
+    }, delay);
   },
 
   actLabel(d) {
@@ -3663,7 +3713,13 @@ Page({
     return '';
   },
 
-  pickTalk(d) {
+  pickTalk(d, profile) {
+    // 批②：按角色档案取台词。profile 缺省（好友房机器人/旧路径）时退回原 QUICK_TALK 兜底。
+    if (profile) {
+      const scene = botProfiles.sceneOf(d);
+      const line = botProfiles.pickTalk(profile, scene);
+      if (line) return line;
+    }
     if (d.action === 'fold') return QUICK_TALK[Math.floor(Math.random() * 2)];
     if (d.action === 'allin') return '好牌！';
     if (d.action === 'raise') return '打得不错';

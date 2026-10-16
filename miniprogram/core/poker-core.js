@@ -586,7 +586,8 @@
 
   /**
    * AI 决策：返回 { action, amount, reason }
-   * style = { aggro: 0~1, tight: 0~1 }
+   * style = { aggro 0~1, tight 0~1, bluffFreq 0~1|null, bluffSize 0~1, heroCall 0~1, slowplay 0~1 }
+   * 扩展字段全部有默认兜底，仅传 {aggro,tight} 时行为与旧实现完全一致。
    */
   function aiDecide(ctx) {
     const hole = ctx.hole;
@@ -601,6 +602,20 @@
     const aggressive = style.aggro !== undefined ? style.aggro : 0.5;
     const tight = style.tight !== undefined ? style.tight : 0.5;
     const rnd = ctx.rng || Math.random;
+    const rndFloat = function () {
+      // 优先用注入 rng 的 .float（xorshift128+ 全周期均匀）；退化（Math.random）走原生
+      const r = ctx.rng;
+      return r && typeof r.float === 'function' ? r.float() : Math.random();
+    };
+    // 人格化扩展字段（均有默认兜底，旧 style:{aggro,tight} 调用行为完全不变）：
+    // bluffFreq  诈唬频率门槛，null 时退回 aggressive*0.35/0.28 的原固定系数
+    // bluffSize  诈唬加注尺度 0~1（小=试探，大=重锤），默认 0.5 时加注量与旧实现一致
+    // heroCall   英雄跟注概率——赔率不划算时仍跟一手的反诈唬倾向，默认 0 永不触发
+    // slowplay   慢打概率——强牌翻后过牌诱敌，默认 0 永不触发
+    const bluffFreq = style.bluffFreq !== undefined ? style.bluffFreq : null;
+    const bluffSize = style.bluffSize !== undefined ? style.bluffSize : 0.5;
+    const heroCall = style.heroCall !== undefined ? style.heroCall : 0;
+    const slowplay = style.slowplay !== undefined ? style.slowplay : 0;
 
     // 引擎给出的合法加注区间。调用方（table.js scheduleAI / 压力测试）都会传入。
     // ⚠️ 退化路径（未传 minRaiseTo）下引擎的真实最小加注额无从得知——它源自
@@ -659,8 +674,10 @@
       }
       if (holeStrength >= bar) {
         if (toCall === 0) return { action: ACTION.CHECK, amount: 0, reason: '免费看牌' };
-        if (rnd() < aggressive * 0.35) {
-          return raiseDecision(Math.max(currentBet * 2.2, toCall * 4 + currentBet), '抢池 / 诈唬');
+        // 诈唬抢池：bluffFreq 覆盖默认 aggressive*0.35 系数，bluffSize 调加注尺度
+        if (rnd() < (bluffFreq !== null ? bluffFreq : aggressive * 0.35)) {
+          const scale = 2.2 + bluffSize * 1.6;   // 0.5→2.2，1.0→3.8
+          return raiseDecision(Math.max(currentBet * scale, toCall * 4 + currentBet), '抢池 / 诈唬');
         }
         return { action: ACTION.CALL, amount: toCall, reason: '价格可接受，跟注' };
       }
@@ -678,6 +695,9 @@
 
     if (toCall === 0) {
       if (equity > 0.72 || (draw.outs >= 8 && equity > 0.42)) {
+        // 慢打诱敌：强牌按概率过牌喂对手一手，诱其下注后再反加。仅可过牌时触发
+        // （toCall===0，否则在跟注/加注分支）。默认 slowplay=0 永不触发，行为不变。
+        if (rndFloat() < slowplay) return { action: ACTION.CHECK, amount: 0, reason: '慢打诱敌' };
         return raiseDecision(
           Math.max(currentBet * 2, Math.round(pot * (0.5 + aggressive * 0.35))),
           '价值下注'
@@ -690,13 +710,18 @@
       return raiseDecision(currentBet * (1.7 + aggressive * 0.6), '价值加注');
     }
     if (equity > potOdds + 0.06) {
-      if (rnd() < aggressive * 0.28 && equity > 0.45) {
+      // 半诈唬：bluffFreq 覆盖默认 aggressive*0.28 系数
+      if (rndFloat() < (bluffFreq !== null ? bluffFreq : aggressive * 0.28) && equity > 0.45) {
         return raiseDecision(currentBet * 2.1, '半诈唬加注');
       }
       return { action: ACTION.CALL, amount: toCall, reason: '赔率合理，跟注' };
     }
     if (draw.outs >= 8 && toCall <= pot * 0.25 && equity > 0.22) {
       return { action: ACTION.CALL, amount: toCall, reason: '听牌隐含赔率好' };
+    }
+    // 英雄跟注：赔率不划算但按概率仍跟一手（反诈唬倾向）。默认 heroCall=0 永不触发。
+    if (rndFloat() < heroCall && toCall <= stack) {
+      return { action: ACTION.CALL, amount: toCall, reason: '英雄跟注' };
     }
     return { action: ACTION.FOLD, amount: 0, reason: '成牌率不划算' };
   }

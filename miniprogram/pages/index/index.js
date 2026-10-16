@@ -509,9 +509,20 @@ Page({
     }
   },
 
-  /** AI 对战（无需房卡） */
+  /** AI 对战：弹难度选择（新手 / 进阶 / 高手），默认进阶 */
   onAIMode() {
-    wx.navigateTo({ url: '/pages/table/table?mode=ai' });
+    wx.showActionSheet({
+      itemList: ['新手 · 对手较温和', '进阶 · 均衡对手', '高手 · 对手更狡猾'],
+      success: res => {
+        const levels = ['rookie', 'advanced', 'expert'];
+        const level = levels[res.tapIndex] || 'advanced';
+        wx.navigateTo({ url: '/pages/table/table?mode=ai&level=' + level });
+      },
+      fail: () => {
+        // 用户取消 ActionSheet（tapIndex 不存在）→ 默认进阶直进，不阻断入口
+        wx.navigateTo({ url: '/pages/table/table?mode=ai&level=advanced' });
+      }
+    });
   },
 
   /** 每日一题 / 局面挑战（纯教学，无房卡消耗） */
