@@ -1,0 +1,78 @@
+<view class="puzzle-page">
+  <!-- 顶栏 -->
+  <view class="pz-head">
+    <view class="pz-back" bindtap="onBack">‹</view>
+    <text class="pz-title">每日一题</text>
+    <view class="pz-next" bindtap="onNextPuzzle">换一题</view>
+  </view>
+
+  <!-- 题目卡片 -->
+  <view class="pz-card" wx:if="{{puzzle}}">
+    <view class="pz-qtitle">{{puzzle.title}}</view>
+    <view class="pz-desc">{{puzzle.desc}}</view>
+
+    <!-- 我的底牌 -->
+    <view class="pz-section">
+      <text class="pz-label">我的底牌</text>
+      <view class="pz-cards">
+        <view class="pc {{c.cls}}" wx:for="{{myHoleCards}}" wx:for-item="c" wx:key="code">
+          <text class="pc-r">{{c.rank}}</text>
+          <text class="pc-s">{{c.suit}}</text>
+        </view>
+      </view>
+    </view>
+
+    <!-- 公共牌 -->
+    <view class="pz-section">
+      <text class="pz-label">公共牌</text>
+      <view class="pz-cards">
+        <view class="pc {{c.cls}}" wx:for="{{boardCards}}" wx:for-item="c" wx:key="code">
+          <text class="pc-r">{{c.rank}}</text>
+          <text class="pc-s">{{c.suit}}</text>
+        </view>
+        <view class="pc empty" wx:if="{{boardCards.length === 0}}">—</view>
+      </view>
+    </view>
+
+    <!-- 局面参数 -->
+    <view class="pz-info">
+      <view class="pz-info-row"><text class="pz-info-k">底池</text><text class="pz-info-v">{{puzzle.setup.pot}}</text></view>
+      <view class="pz-info-row"><text class="pz-info-k">跟注需</text><text class="pz-info-v">{{puzzle.setup.toCall}}</text></view>
+      <view class="pz-info-row"><text class="pz-info-k">你的筹码</text><text class="pz-info-v">{{puzzle.setup.stack}}</text></view>
+    </view>
+
+    <!-- 选择区：未揭示显示动作按钮 -->
+    <block wx:if="{{!revealed}}">
+      <view class="pz-choices">
+        <view class="pz-btn fold" bindtap="onChooseFold">弃牌</view>
+        <view class="pz-btn check" bindtap="onChooseCheck" wx:if="{{puzzle.setup.toCall === 0}}">过牌</view>
+        <view class="pz-btn call" bindtap="onChooseCall" wx:if="{{puzzle.setup.toCall > 0}}">跟注</view>
+        <view class="pz-btn raise" bindtap="onChooseRaise">加注</view>
+      </view>
+    </block>
+
+    <!-- 揭示区：玩家选择 + 推荐 + 胜率赔率 + 解析 -->
+    <block wx:else>
+      <view class="pz-result">
+        <view class="pz-result-row">
+          <text class="pz-result-k">你的选择</text>
+          <text class="pz-result-v {{answerCorrect ? 'ok' : 'no'}}">{{choiceCn}}</text>
+        </view>
+        <view class="pz-result-row">
+          <text class="pz-result-k">推荐</text>
+          <text class="pz-result-v">{{answerActionCn}}</text>
+        </view>
+        <view class="pz-result-row">
+          <text class="pz-result-k">你的胜率</text>
+          <text class="pz-result-v">{{equityPct}}</text>
+        </view>
+        <view class="pz-result-row" wx:if="{{puzzle.setup.toCall > 0}}">
+          <text class="pz-result-k">赔率</text>
+          <text class="pz-result-v">{{potOddsPct}}</text>
+        </view>
+        <view class="pz-explain">{{answerReason}}</view>
+        <view class="pz-again" bindtap="onNextPuzzle">换一题</view>
+      </view>
+    </block>
+  </view>
+</view>

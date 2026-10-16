@@ -61,6 +61,16 @@
       <text class="mode-arrow">›</text>
     </view>
 
+    <!-- 每日一题 -->
+    <view class="mode mode-puzzle" bindtap="onPuzzleTap">
+      <view class="mode-icon ic ic-cards"></view>
+      <view class="mode-body">
+        <text class="mode-title">每日一题</text>
+        <text class="mode-desc">局面挑战，练读牌与赔率判断</text>
+      </view>
+      <text class="mode-arrow">›</text>
+    </view>
+
     <!-- 快速匹配 -->
     <view class="mode mode-rank" bindtap="onRankMode">
       <view class="mode-icon ic ic-rank"></view>

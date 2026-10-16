@@ -1987,6 +1987,16 @@ while (guard++ < 400) {
     const tableSrc = fs.readFileSync(path.join(__dirname, 'pages', 'table', 'table.js'), 'utf8');
     const replaySrc = fs.readFileSync(path.join(__dirname, 'pages', 'replay', 'replay.js'), 'utf8');
     guardHighlightIntegration(profSrc, profWxml, profWxss, hlSrc, tableSrc, replaySrc, saSrc);
+
+    // ---- 每日一题 / 局面挑战（批③）静态守卫 ----
+    const puzzleSrc = fs.readFileSync(path.join(__dirname, 'utils', 'puzzles.js'), 'utf8');
+    const pzPageSrc = fs.readFileSync(path.join(__dirname, 'pages', 'puzzle', 'puzzle.js'), 'utf8');
+    const pzWxml = fs.readFileSync(path.join(__dirname, 'pages', 'puzzle', 'puzzle.wxml'), 'utf8');
+    const pzWxss = fs.readFileSync(path.join(__dirname, 'pages', 'puzzle', 'puzzle.wxss'), 'utf8');
+    const idxSrc = fs.readFileSync(path.join(__dirname, 'pages', 'index', 'index.js'), 'utf8');
+    const idxWxml = fs.readFileSync(path.join(__dirname, 'pages', 'index', 'index.wxml'), 'utf8');
+    const appJson = fs.readFileSync(path.join(__dirname, 'app.json'), 'utf8');
+    guardPuzzleIntegration(puzzleSrc, pzPageSrc, pzWxml, pzWxss, idxSrc, idxWxml, replaySrc, appJson);
   })();
 
   /* ---------- 静态守卫函数定义区 ----------
@@ -2893,6 +2903,56 @@ while (guard++ < 400) {
       'style-analyzer 不再读 e.street（修复 VPIP 恒 0 BUG）');
     ok(/positionVpip/.test(saSrc), 'style-analyzer 返回 positionVpip（位置入池率）');
     ok(/POS_BY_OFFSET|posOf/.test(saSrc), 'style-analyzer 按偏移映射位置标签（posOf）');
+  }
+
+  /* 每日一题 / 局面挑战（批③）集成守卫：纯教学、不碰引擎、无网络、无 canvas。
+     puzzles.js 题库 + puzzle 页四件套 + app.json 注册 + index 入口 + replay.js from=puzzle 兜底。 */
+  function guardPuzzleIntegration(puzzleSrc, pzPageSrc, pzWxml, pzWxss, idxSrc, idxWxml, replaySrc, appJson) {
+    // ---- puzzles.js 题库模块约束 ----
+    ok(/PUZZLES/.test(puzzleSrc), 'puzzles.js 导出 PUZZLES 题库');
+    ok(/puzzleForDate/.test(puzzleSrc), 'puzzles.js 导出 puzzleForDate（按日期取当天题）');
+    ok(/findById/.test(puzzleSrc), 'puzzles.js 导出 findById（按 id 取题）');
+    ok(/myHole/.test(puzzleSrc) && /board/.test(puzzleSrc) && /answer/.test(puzzleSrc),
+      'puzzles.js 题结构含 myHole/board/answer');
+    ok(!/wx\.request|require\(['"]https?/.test(puzzleSrc), 'puzzles.js 不含网络调用（纯本地题库）');
+
+    // ---- puzzle.js 页面约束 ----
+    ok(/quickEquity/.test(pzPageSrc), 'puzzle.js 用 quickEquity 算胜率（不走 advise）');
+    ok(/puzzleForDate|findById/.test(pzPageSrc), 'puzzle.js 按 date/id 取题');
+    ok(/reveal/.test(pzPageSrc), 'puzzle.js 定义 reveal 揭示答案方法');
+    ok(/answerAction/.test(pzPageSrc) && /answerCorrect/.test(pzPageSrc),
+      'puzzle.js 维护 answerAction/answerCorrect 比对玩家选择与推荐');
+    ok(/potOdds/.test(pzPageSrc), 'puzzle.js 算赔率 potOdds（toCall/(pot+toCall)）');
+    ok(!/wx\.request|require\(['"]https?/.test(pzPageSrc), 'puzzle.js 不含网络调用（纯客户端教学）');
+    // 合规：不走 advise（advise 含合规门槛，puzzle 纯教学不该碰）
+    ok(!/require\(['"].+advisor['"]\)/.test(pzPageSrc), 'puzzle.js 不引入 advisor（教学非对局辅助，不碰合规门槛）');
+
+    // ---- puzzle.wxml 节点约束 ----
+    ok(/puzzle-page/.test(pzWxml), 'puzzle.wxml 含 puzzle-page 容器');
+    ok(/每日一题/.test(pzWxml), 'puzzle.wxml 含「每日一题」标题');
+    ok(/pz-choices|onChooseFold|onChooseCall/.test(pzWxml), 'puzzle.wxml 含选择按钮区');
+    ok(/pz-result|pz-explain/.test(pzWxml), 'puzzle.wxml 含揭示结果与解析区');
+    ok(!/canvas/.test(pzWxml), 'puzzle.wxml 无 canvas（纯文字+牌面渲染）');
+
+    // ---- puzzle.wxss 重排红线 ----
+    ok(/puzzle-page/.test(pzWxss), 'puzzle.wxss 定义 puzzle-page 样式');
+    ok(!/transition[^;]*\b(width|top|left)\b/.test(pzWxss),
+      'puzzle wxss 无 width/top/left transition（重排红线）');
+    ok(!/@keyframes[^{]*\{[^}]*\b(width|top|left)\b/.test(pzWxss),
+      'puzzle wxss 无 keyframe width/top/left（重排红线）');
+
+    // ---- app.json 注册 puzzle 页 ----
+    ok(/pages\/puzzle\/puzzle/.test(appJson), 'app.json 注册 pages/puzzle/puzzle 页面');
+
+    // ---- index 入口 ----
+    ok(/onPuzzleTap/.test(idxSrc), 'index.js 定义 onPuzzleTap 跳转方法');
+    ok(/onPuzzleTap/.test(idxWxml), 'index.wxml 含每日一题入口（onPuzzleTap 绑定）');
+    ok(/每日一题/.test(idxWxml), 'index.wxml 含「每日一题」入口标题');
+
+    // ---- replay.js from=puzzle 兜底（设计方向：puzzle 可复用复盘页回看局面） ----
+    // 注：当前 puzzle 自带揭示页，from=puzzle 为预留方向；此处仅断言不破坏既有 from 分支
+    ok(/from\s*===\s*['"]highlight['"]/.test(replaySrc),
+      'replay.js 仍保留 from=highlight 分支（puzzle 未破坏既有高光回看）');
   }
 
   /* ---------- 输出 ---------- */

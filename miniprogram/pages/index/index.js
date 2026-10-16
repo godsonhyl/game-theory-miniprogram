@@ -514,6 +514,11 @@ Page({
     wx.navigateTo({ url: '/pages/table/table?mode=ai' });
   },
 
+  /** 每日一题 / 局面挑战（纯教学，无房卡消耗） */
+  onPuzzleTap() {
+    wx.navigateTo({ url: '/pages/puzzle/puzzle' });
+  },
+
   /** 快速匹配（合规待定，默认关闭） */
   onRankMode() {
     wx.showModal({
