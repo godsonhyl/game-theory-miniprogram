@@ -62,7 +62,7 @@ function nowIso() { return new Date().toISOString(); }
  *   （典型场景：房主从邀请链接重进被判成访客 → 换座到新座位 → 旧行仍在），
  *   update 会同时命中两条，两条都被搬到同一座位 → 云端出现重复行；
  *   buildWaitLayout 按 seat 取 live[0]，就只显示一个，但渲染层的
- *   renderAmbiace / 座位环按 rows 逐条遍历时会渲染出两个「自己」。
+ *   renderAmbience / 座位环按 rows 逐条遍历时会渲染出两个「自己」。
  * 收敛后同一用户在同房间恒有且仅有一行。
  */
 async function upsertMe(roomNo, patch) {

@@ -84,6 +84,9 @@ function makeQuery(table) {
   q.insert = row => { q._op = 'insert'; q._payload = row; return q; };
   q.update = patch => { q._op = 'update'; q._payload = patch; return q; };
   q.delete = () => { q._op = 'delete'; return q; };
+  // .neq 与 .eq 共用 _filters，语义取反（PostgREST 链式过滤是 AND 关系）。
+  // upsertMe 的同座位去重 delete 用它清「本房间内其他座位」的残留行。
+  q.neq = (a, b) => { q._filters.push([a, b, 'ne']); return q; };
   q.eq = (a, b) => { q._filters.push([a, b]); return q; };
   q.order = col => { q._order = col; return q; };
   q.limit = () => q;
@@ -93,8 +96,13 @@ function makeQuery(table) {
     let out;
     try {
       const rows = store[table] || [];
-      const mine = r => r.owner_id === uidAtBuild;
-      const match = r => q._filters.every(f => String(r[f[0]]) === String(f[1]));
+      const uidAtBuild2 = uidAtBuild;
+      const mine = r => r.owner_id === uidAtBuild2;
+      // 过滤器求值：eq 精确匹配字符串值；neq 取反（同座位去重 delete 依赖）。
+      const match = r => q._filters.every(f =>
+        f.length === 3
+          ? String(r[f[0]]) !== String(f[1])
+          : String(r[f[0]]) === String(f[1]));
       if (q._op === 'insert') {
         const row = Object.assign(
           { id: rowSeq++, owner_id: currentUid, created_at: new Date().toISOString() },
@@ -215,6 +223,23 @@ eq(roomSync.readySeats([mkRow(1, 99999, { ready_hand: 4 })], 4, now), {}, '离�
   ok(!layout2[2].occupied, '离线好友不占座');
   eq(roomSync.hostStateOf(rows).kind, 'waiting', 'hostStateOf 取到房主广播');
   ok(roomSync.hostRow(rows).seat === 0, 'hostRow 定位房主行');
+
+  /* ---- 同座位去重：同一座位多条在线行只认一条（用户反馈「重入能看个两个自己」） ---- */
+  // 病根：房主从邀请链接重进被判成访客 → 换座到新座位 → 旧行仍在，同座位出现两条行。
+  // buildWaitLayout 必须按「优先自己 > 房主 > seat 最小」收敛成一条，否则座位环渲染出两个人。
+  {
+    const dupHost = mkRow(0, 0, { is_host: true, name: '房主' });
+    const dupGuest = mkRow(0, 0, { is_host: false, name: '房主重进' });   // 同 seat=0 的另一条在线行
+    const dl = roomSync.buildWaitLayout([dupHost, dupGuest], null, 4, 0, now);
+    ok(dl[0].occupied && dl[0].name === '房主',
+      '同座位去重：房主行优先于同名访客行（保留 is_host=true 那条）');
+    // 我=0 号位时，我自己的行优先级最高（rank 2 > 房主 1）
+    const mineDup = mkRow(2, 0, { is_host: false, name: '我' });
+    const otherDup = mkRow(2, 0, { is_host: true, name: '房主占2' });
+    const dl2 = roomSync.buildWaitLayout([mineDup, otherDup], null, 4, 2, now);
+    ok(dl2[2].occupied && dl2[2].isMe && dl2[2].name === '我',
+      '同座位去重：我自己的行优先于房主行（mySeat 命中时 rank 最高）');
+  }
 }
 
 /* ============================================================
@@ -265,9 +290,45 @@ eq(roomSync.readySeats([mkRow(1, 99999, { ready_hand: 4 })], 4, now), {}, '离�
   eq(store.poker_room_seats.filter(r => r.owner_id === 'uid_friend').length, 0, '离座删除自己的行');
   eq(store.poker_room_seats.length, 1, 'RLS：离座删不掉别人的行');
 
+  /* ---------- 同座位残留行清理：upsertMe 带 seat 时先删本房间其他座位的旧行 ---------- */
+  // 病根（用户 2026-10-16 反馈「有时候重入能看个两个自己」）：同一用户在同一房间留下
+  // 两条行（房主从邀请链接重进被判访客 → 换座到新座位 → 旧行仍在），旧 upsertMe 只
+  // update「我的行」会同时命中两条并都搬到同一座位，云端出现重复行。收敛后带 seat 的
+  // upsertMe 先 delete().eq('room_no').neq('seat') 清掉自己在本房间的其他座位行。
+  {
+    currentUid = 'uid_friend';
+    // 手动注入两条行：3 号位「当前」行 + 5 号位残留行（模拟历史换座遗留）
+    store.poker_room_seats.push({
+      id: 998, owner_id: 'uid_friend', room_no: '800001', seat: 3,
+      name: '好友甲', is_host: false, heartbeat_at: iso(Date.now()), action: null, ready_hand: 0
+    });
+    store.poker_room_seats.push({
+      id: 999, owner_id: 'uid_friend', room_no: '800001', seat: 5,
+      name: '好友甲', is_host: false, heartbeat_at: iso(Date.now()), action: null, ready_hand: 0
+    });
+    eq(store.poker_room_seats.filter(r => r.owner_id === 'uid_friend').length, 2,
+      '前置：好友在房间内有两条行（当前 3 号位 + 残留 5 号位）');
+    // moveSeat 到 2 号位：upsertMe 先 delete().eq('room_no').neq('seat') 清掉
+    // 自己在 3/5 号位的行，再插入/更新到 2 号位 → 恒有且仅有一行
+    await roomSync.moveSeat('800001', 2);
+    const myRows = store.poker_room_seats.filter(r => r.owner_id === 'uid_friend');
+    eq(myRows.length, 1, 'upsertMe 带 seat 收敛：同用户在本房间只剩一条行（3/5 号位旧行全被清理）');
+    eq(myRows[0].seat, 2, '收敛后行落在目标座位 2');
+    // neq delete 命中校验：3、5 号位的旧行都被清，2 号位新行保留
+    eq(store.poker_room_seats.filter(r => r.owner_id === 'uid_friend' && Number(r.seat) === 3).length, 0,
+      '3 号位旧行被 neq delete 清掉');
+    eq(store.poker_room_seats.filter(r => r.owner_id === 'uid_friend' && Number(r.seat) === 5).length, 0,
+      '5 号位残留行被 neq delete 清掉');
+  }
+  // 还原：清掉好友行，不影响后续端到端场景
+  store.poker_room_seats = store.poker_room_seats.filter(r => r.owner_id !== 'uid_friend');
+
   /* ---------- 降级：库报错时不影响页面（模拟 update 抛错） ---------- */
   const brokenDb = {
-    from: () => ({ update: () => ({ eq: () => ({ select: () => Promise.resolve({ data: null, error: { message: 'boom' } }) }) }) })
+    from: () => ({
+      delete: () => ({ eq: () => ({ neq: () => Promise.resolve({ data: null, error: null }) }) }),
+      update: () => ({ eq: () => ({ select: () => Promise.resolve({ data: null, error: { message: 'boom' } }) }) })
+    })
   };
   roomSync.configure({ db: brokenDb });
   let threw = false;
