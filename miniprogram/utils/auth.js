@@ -176,142 +176,79 @@ const auth = {
 
   /**
    * 消耗房卡（创建房间时调用）
-   * 注意：真正的商业化版本必须由服务端事务完成并保证幂等，
-   *      这里直接改余额仅适用于当前无支付、无真实房卡交易的功能演示阶段。
+   *
+   * 服务端权威化第一期：改为 rpc 调用 `poker_consume_room_card`，余额校验 +
+   * 扣减 + 流水在同一事务内完成，凭 p_token 做幂等（同 token 重发不二次扣）。
+   * 列权限收口后客户端不再直接 update room_cards。
+   *
+   * @param {number} count 扣减数量
+   * @param {string} [token] 幂等凭据（如建房 room_no）；不传则自动生成
+   * @returns {Promise<{ok:boolean, roomCards?:number, reason?:string}>}
    */
-  async consumeRoomCard(count = 1) {
-    const profile = await this.ensureProfile();
-    if (profile.room_cards < count) {
-      return { ok: false, reason: '房卡不足', roomCards: profile.room_cards };
-    }
-    const next = profile.room_cards - count;
-    const { data, error } = await cloud.database
-      .from(T.profile)
-      .update({ room_cards: next })
-      .eq('id', profile.id)
-      .eq('room_cards', profile.room_cards)   // 乐观锁：房卡数未变才更新，防并发超扣
-      .select();
-
+  async consumeRoomCard(count = 1, token) {
+    const pToken = token || ('rc_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8));
+    const { data, error } = await cloud.database.rpc('poker_consume_room_card', {
+      p_count: count,
+      p_token: pToken
+    });
     if (error) throw new Error(error.message || '扣除房卡失败');
-    if (!Array.isArray(data) || data.length === 0) {
-      return { ok: false, reason: '房卡已变动，请重试', roomCards: profile.room_cards };
-    }
-    return { ok: true, roomCards: data[0].room_cards };
-  },
-
-  /** 本地日期 YYYY-MM-DD（体验阶段用客户端日期；正式版应改用服务端时间防改表） */
-  today() {
-    const d = new Date();
-    const p = n => (n < 10 ? '0' : '') + n;
-    return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate());
-  },
-
-  /**
-   * 发放房卡（每日领取 / 对局奖励共用）
-   * 与扣卡对称地用乐观锁：只在本人的房卡数未变时才写回，避免并发互相覆盖。
-   * 注意：正式版应由服务端事务 + 幂等凭据发放，客户端直接写余额仅供体验阶段演示。
-   */
-  async grantRoomCards(count) {
-    const n = Number(count) || 0;
-    if (n <= 0) return { ok: false, reason: '发放数量无效' };
-    const profile = await this.ensureProfile();
-    const cur = profile.room_cards || 0;
-    const { data, error } = await cloud.database
-      .from(T.profile)
-      .update({ room_cards: cur + n })
-      .eq('id', profile.id)
-      .eq('room_cards', cur)
-      .select();
-
-    if (error) throw new Error(error.message || '发放房卡失败');
-    if (!Array.isArray(data) || data.length === 0) {
-      return { ok: false, reason: '房卡已变动，请重试', roomCards: cur };
-    }
-    return { ok: true, gained: n, roomCards: data[0].room_cards };
+    return data || { ok: false, reason: '扣除房卡失败' };
   },
 
   /**
    * 每日领取：每天 2 张（last_checkin 记录领取日期，同一天只发一次）
    *
-   * 防重复领取靠「资格标记 + 乐观锁」两道闸（评审 2026-10-15 MEDIUM「三段非原子
-   * 可双领」的客户端收口——完整服务端化见 docs/服务端化蓝图.md）：
-   *  1. 先置 last_checkin（身份闸）：带「last_checkin 仍是读到的旧值」条件，
-   *     领过的/已置标记的行都不命中 —— 同日重复点击从源头发不出卡；
-   *  2. 再发卡（grantRoomCards 内含 room_cards 乐观锁）。
-   * 两步之间有非原子窗口：极端并发下置标记成功、发卡失败，用户当天会被误判
-   * 已领（少发 2 张）。演示态选择「少发」而非「多发」—— 多发要改服务端才能
-   * 追回，少发只是体验瑕疵；商业化版本须由服务端事务消掉这个窗口。
+   * 服务端权威化第一期：改为 rpc 调用 `poker_claim_daily`，签到日期由服务端
+   * current_date 决定（客户端不传敏感日期），流水 + 发卡 + 置 last_checkin
+   * 在同一事务内完成，唯一约束 (owner_id, day) 做幂等——同日重发不双领。
+   * 列权限收口后客户端不再直接 update room_cards/last_checkin。
+   *
+   * @returns {Promise<{ok:boolean, gained?:number, roomCards?:number, reason?:string}>}
    */
   async claimDailyCards() {
-    const profile = await this.ensureProfile();
-    const today = this.today();
-    if ((profile.last_checkin || '') === today) {
-      return { ok: false, reason: '今日已领取，明天再来', roomCards: profile.room_cards };
-    }
-    // 身份闸：只有当前 last_checkin 仍是读到的旧值（未领）才允许置今天的日期。
-    // 返回空数组 = 已有并发请求抢先置过标记，不发卡。注意 PostgREST 的 eq 对
-    // NULL 列永不命中，所以旧值可能为 NULL（历史行没有 DEFAULT 填充）时必须
-    // 用 is(column, null) 过滤，否则这条永远领不了签到。
-    const prev = profile.last_checkin;
-    const gate = cloud.database.from(T.profile)
-      .update({ last_checkin: today })
-      .eq('id', profile.id);
-    if (prev === null || prev === undefined) gate.is('last_checkin', null);
-    else gate.eq('last_checkin', String(prev));
-    const { data, error } = await gate.select();
+    const { data, error } = await cloud.database.rpc('poker_claim_daily', {});
     if (error) throw new Error(error.message || '领取失败，请重试');
-    if (!Array.isArray(data) || data.length === 0) {
-      return { ok: false, reason: '今日已领取，明天再来', roomCards: profile.room_cards };
-    }
-    const got = await this.grantRoomCards(CARD_RULES.daily);
-    if (!got.ok) return got;
-    return { roomCards: got.roomCards, gained: got.gained, ok: true };
+    return data || { ok: false, reason: '领取失败' };
   },
 
   /**
    * 对局奖励：累计打满 N 手领 1 张（bonus_base 是已奖励过的手数基准）
    * 单次最多补 5 张，避免长时间不领时一次性刷出过量房卡。
    *
-   * 同每日领取：置 bonus_base 时带 = 乐观锁（基准未变才推进），并发双击只有
-   * 一方能推进基准，另一方方面空数组直接失败——发卡数量与基准推进保持一致。
-   * 置基准成功而发卡失败的窗口与每日领取同性质（少发不发多），服务端化后消除。
+   * 服务端权威化第一期：改为 rpc 调用 `poker_claim_hands`，FOR UPDATE 抢占 +
+   * 基准推进 + 发卡 + 流水在同一事务内完成，并发只有一方 gained>0。
+   * 列权限收口后客户端不再直接 update bonus_base/room_cards。
+   *
+   * @returns {Promise<{ok:boolean, gained?:number, roomCards?:number, reason?:string}>}
    */
   async claimHandBonus() {
-    // 循环重试：发卡失败可能已经对自己可见地改变了行（乐观锁冲突），重读再算
-    for (let attempt = 0; attempt < 3; attempt++) {
-      const profile = await this.ensureProfile();
-      const hands = profile.total_hands || 0;
-      const base = profile.bonus_base || 0;
-      const gained = Math.min(CARD_RULES.bonusCap, Math.floor((hands - base) / CARD_RULES.handsPerCard));
-      if (gained <= 0) {
-        const left = CARD_RULES.handsPerCard - ((hands - base) % CARD_RULES.handsPerCard);
-        return { ok: false, reason: '再打 ' + left + ' 手可领 1 张', roomCards: profile.room_cards };
-      }
-      // 基准闸：只在 bonus_base 仍是读到的值时推进为「本批已奖励」的手数
-      const { data, error } = await cloud.database.from(T.profile)
-        .update({ bonus_base: base + gained * CARD_RULES.handsPerCard })
-        .eq('id', profile.id)
-        .eq('bonus_base', base)
-        .select();
-      if (error) throw new Error(error.message || '领取失败，请重试');
-      if (!Array.isArray(data) || data.length === 0) {
-        // 并发抢先：重读最新行，资格可能已被别人（或另一台设备）消费掉
-        continue;
-      }
-      const got = await this.grantRoomCards(gained);
-      if (!got.ok) return got;
-      return { roomCards: got.roomCards, gained: got.gained, ok: true };
-    }
-    return { ok: false, reason: '房卡已变动，请重试', roomCards: (await this.ensureProfile()).room_cards };
+    const { data, error } = await cloud.database.rpc('poker_claim_hands', {});
+    if (error) throw new Error(error.message || '领取失败，请重试');
+    return data || { ok: false, reason: '领取失败' };
   },
 
-  /** 可领状态（只读，不写库）：供首页展示「今日可领 / 可领 N 张 / 还差 M 手」 */
+  /**
+   * 可领状态（只读，不写库）：供首页展示「今日可领 / 可领 N 张 / 还差 M 手」
+   *
+   * 服务端权威化第一期：dailyReady 不再用已删除的 today() 判定（改设备时间
+   * 可绕——是缺陷），改为读 profile.last_checkin（由服务端 rpc 写入）是否与
+   * 当前客户端日期不同。由于客户端无服务端日期，dailyReady 退化为「乐观展示」
+   * ——真正资格由 claimDailyCards 的 rpc 幂等决定，点击已领则服务端返回
+   * reason='今日已领取'，UI 据此刷新。这消除了「改设备时间无限领」的缺陷：
+   * 即使客户端日期被改，rpc 内部用 current_date 做幂等键，同一天不会双发。
+   */
   claimStatus(profile) {
     const hands = (profile && profile.total_hands) || 0;
     const base = (profile && profile.bonus_base) || 0;
     const diff = Math.max(0, hands - base);
+    // dailyReady 用客户端日期做「乐观展示」——真正资格由 rpc 幂等决定
+    const todayStr = (() => {
+      const d = new Date();
+      const p = n => (n < 10 ? '0' : '') + n;
+      return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate());
+    })();
     return {
-      dailyReady: ((profile && profile.last_checkin) || '') !== this.today(),
+      dailyReady: ((profile && profile.last_checkin) || '') !== todayStr,
       dailyCount: CARD_RULES.daily,
       handCards: Math.min(CARD_RULES.bonusCap, Math.floor(diff / CARD_RULES.handsPerCard)),
       handsPerCard: CARD_RULES.handsPerCard,
@@ -322,15 +259,14 @@ const auth = {
   /**
    * 写入一条对局战绩，并同步累计统计
    *
-   * 战绩流水（insert）没有并发问题——每手一条、互不覆盖；但累计统计
-   * （total_hands/total_wins/total_net 三个 UPDATE）在极速连打两手时可能
-   * 并发跑：两次都读到旧值 → 后写覆盖先写，少计一手。所以累计更新带
-   * `.eq('total_hands', 读值)` 乐观锁，0 行命中就重读重试——把「覆盖丢手」
-   * 收敛成「最终一致」。total_hands 仍是客户端自报（可刷），商业化前必须
-   * 换服务端校验发放，见 docs/服务端化蓝图.md。
+   * 服务端权威化第一期：改为 rpc 调用 `poker_record_hand`，战绩流水 insert +
+   * 档案累计统计（total_hands/total_wins/total_net）在同一函数内完成。
+   * p_row 不含 owner_id（由服务端 auth.uid() 填），列权限收口后客户端不再
+   * 能直接 update poker_profiles 的累计列——刷手数从根上死掉。
+   * @returns {Promise<object>} 插入的战绩行
    */
   async saveRecord(rec) {
-    const row = {
+    const p_row = {
       table_id: rec.tableId || 'ai',
       hand_no: rec.handNo || 1,
       seat: rec.seat || 0,
@@ -341,28 +277,8 @@ const auth = {
       won: !!rec.won
     };
 
-    const { data, error } = await cloud.database.from(T.record).insert(row).select().single();
+    const { data, error } = await cloud.database.rpc('poker_record_hand', { p_row });
     if (error) throw new Error(error.message || '保存战绩失败');
-
-    let statOk = false;
-    for (let attempt = 0; attempt < 3 && !statOk; attempt++) {
-      const profile = await this.ensureProfile();
-      const { data: updated, error: uerr } = await cloud.database
-        .from(T.profile)
-        .update({
-          total_hands: profile.total_hands + 1,
-          total_wins: profile.total_wins + (row.won ? 1 : 0),
-          total_net: profile.total_net + row.net
-        })
-        .eq('id', profile.id)
-        .eq('total_hands', profile.total_hands)   // 乐观锁：并发写入不再互相覆盖
-        .select();
-      if (uerr) throw new Error(uerr.message || '更新战绩统计失败');
-      statOk = Array.isArray(updated) && updated.length > 0;
-      // 0 行命中 = 有并发写入抢先推进了统计 → 重读最新值再试
-    }
-    if (!statOk) throw new Error('战绩统计写入繁忙，请稍后查看');
-
     return data;
   },
 

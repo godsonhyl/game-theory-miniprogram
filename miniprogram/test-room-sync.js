@@ -140,7 +140,38 @@ function makeQuery(table) {
 }
 
 const fakeCloud = {
-  database: { from: table => { if (!store[table]) store[table] = []; return makeQuery(table); } },
+  database: {
+    from: table => { if (!store[table]) store[table] = []; return makeQuery(table); },
+    // 服务端权威化第一期：auth.js 的 saveRecord 走 rpc，table.js 调 auth.saveRecord
+    // → auth 调 cloud.database.rpc('poker_record_hand')。mock 为最小可用实现：
+    // 插入 records + 累计 profiles，返回插入行（与 test-cards.js 的 rpc mock 一致）。
+    rpc: (fn, args) => {
+      if (fn === 'poker_record_hand') {
+        const p_row = args.p_row || {};
+        const p = store.poker_profiles[0] || (store.poker_profiles[0] = { id: 1, owner_id: 'uid_host', total_hands: 0, total_wins: 0, total_net: 0, room_cards: 12, last_checkin: '', bonus_base: 0 });
+        const row = {
+          id: (store.poker_records.length + 1),
+          owner_id: p.owner_id || 'uid_host',
+          table_id: p_row.table_id || 'ai',
+          hand_no: p_row.hand_no || 1,
+          seat: p_row.seat || 0,
+          hole_cards: p_row.hole_cards || '',
+          board: p_row.board || '',
+          hand_type: p_row.hand_type || '',
+          net: p_row.net || 0,
+          won: !!p_row.won,
+          created_at: new Date().toISOString()
+        };
+        store.poker_records.push(row);
+        p.total_hands = (p.total_hands || 0) + 1;
+        p.total_wins = (p.total_wins || 0) + (row.won ? 1 : 0);
+        p.total_net = (p.total_net || 0) + row.net;
+        return Promise.resolve({ data: row, error: null });
+      }
+      // 其余 rpc 调用在 test-room-sync 不触发，返回空成功
+      return Promise.resolve({ data: null, error: null });
+    }
+  },
   auth: { getSession: () => ({ data: null }), signOut: () => {} }
 };
 

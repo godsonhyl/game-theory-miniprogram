@@ -99,11 +99,37 @@ console.log('登录模块        : 检查完毕');
 const insertBodies = authJs.match(/\.insert\(\s*\{[^}]*\}\s*\)/g) || [];
 let ownerLeak = false;
 insertBodies.forEach(b => { if (b.indexOf('owner_id') >= 0) ownerLeak = true; });
-ok(insertBodies.length > 0, '存在 insert 调用');
+// 服务端权威化第一期：saveRecord 走 rpc，auth.js 的 .insert 减少（只剩 ensureProfile 建档
+// 与 createRoom 房间表）。insert 调用数 >= 1 即可（建档必须保留）。
+ok(insertBodies.length >= 1, '存在 insert 调用（建档/建房间，其余走 rpc）');
 ok(!ownerLeak, 'insert 未携带 owner_id（由数据库 DEFAULT 填充）');
 ok(has('utils/auth.js', "auth.uid()") || has('utils/auth.js', 'owner_id = auth.uid()') || true,
   'owner 由服务端决定');
 console.log('insert 语句数   :', insertBodies.length, '| owner_id 泄漏:', ownerLeak ? '有 ✗' : '无 ✓');
+
+/* ---- 服务端权威化第一期守卫 ---- */
+// 1. auth.js 的 4 个写入口全部走 rpc（不再直接 insert/update profiles 的关键列）
+ok(has('utils/auth.js', 'poker_claim_daily'), 'auth.js 走 rpc: poker_claim_daily');
+ok(has('utils/auth.js', 'poker_claim_hands'), 'auth.js 走 rpc: poker_claim_hands');
+ok(has('utils/auth.js', 'poker_consume_room_card'), 'auth.js 走 rpc: poker_consume_room_card');
+ok(has('utils/auth.js', 'poker_record_hand'), 'auth.js 走 rpc: poker_record_hand');
+// 2. auth.js 不再直接 update room_cards/total_hands/bonus_base/last_checkin（列权限收口）
+//    仅 nickname/avatar 允许客户端 update（updateProfile/saveNickname 路径）
+const restrictedCols = ['room_cards', 'total_hands', 'total_wins', 'total_net', 'bonus_base', 'last_checkin'];
+// 剥离注释后检查 .update({...}) 的 patch 字段不含受限列
+const authSrcStripped = stripComments(authJs);
+let restrictedLeak = false;
+restrictedCols.forEach(col => {
+  // 匹配 .update({ ... col ... }) 里的列名（作为 key 出现）
+  const re = new RegExp('\\.update\\(\\s*\\{[^}]*\\b' + col + '\\b[^}]*\\}', 'm');
+  if (re.test(authSrcStripped)) restrictedLeak = true;
+});
+ok(!restrictedLeak,
+  'auth.js 不再直接 update 受限列（room_cards/total_hands/total_wins/total_net/bonus_base/last_checkin）——列权限收口');
+// 3. auth.js 不再暴露 today() 方法 / grantRoomCards 方法（已被 rpc 收编）
+ok(!/today\s*\(\s*\)\s*\{/.test(authSrcStripped), 'auth.js 不再定义 today() 方法（客户端日期已删）');
+ok(!/grantRoomCards\s*\(/.test(authSrcStripped), 'auth.js 不再定义 grantRoomCards（已被 rpc 收编）');
+console.log('rpc 写入口        : 4 函数已切 rpc | 列权限收口:', restrictedLeak ? '有泄漏 ✗' : '无 ✓');
 
 /* ---- wx.* 隐私接口 ---- */
 console.log('-'.repeat(52));
