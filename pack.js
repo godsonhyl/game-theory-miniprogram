@@ -194,15 +194,45 @@ function main() {
   // 生成 zip
   if (!fs.existsSync(DIST)) fs.mkdirSync(DIST);
   const zipPath = path.join(DIST, ZIP_NAME);
-  const entries = files.map(f => ({ name: f.rel, data: fs.readFileSync(f.full) }));
+  // ⚠️ 文本文件统一规范化为 LF 后再入包。
+  // 仓库有 .gitattributes（* text=auto eol=lf）保证**入库**是 LF，但 Windows 上的
+  // 编辑器/工具仍可能把**工作区**写成 CRLF，而打包读的正是工作区文件。
+  // 后果：包内行尾与仓库不一致，任何后续 diff 都会整片红，且难以判断是真改动还是行尾。
+  // 也在此顺带去掉 BOM —— wcc 对 BOM 比对 CRLF 更敏感。
+  const TEXT_EXT = new Set(['.js', '.json', '.wxml', '.wxss', '.wxs', '.ts']);
+  let normalized = 0, strippedBom = 0;
+  const entries = files.map(f => {
+    let data = fs.readFileSync(f.full);
+    if (TEXT_EXT.has(path.extname(f.rel).toLowerCase())) {
+      if (data.length >= 3 && data[0] === 0xEF && data[1] === 0xBB && data[2] === 0xBF) {
+        data = data.slice(3);            // 去 UTF-8 BOM
+        strippedBom++;
+      }
+      if (data.includes(0x0D)) {        // 含 CR → 统一转 LF
+        data = Buffer.from(
+          data.toString('utf8').replace(/\r\n/g, '\n').replace(/\r/g, '\n'), 'utf8');
+        normalized++;
+      }
+    }
+    return { name: f.rel, data: data };
+  });
+  if (normalized || strippedBom) {
+    console.log('✓ 行尾规范化：' + normalized + ' 个文件 CRLF → LF' +
+      (strippedBom ? '，' + strippedBom + ' 个文件去 BOM' : ''));
+  } else {
+    console.log('✓ 行尾检查通过（全部 LF，无 BOM）');
+  }
   const zipBuf = makeZip(entries);
   fs.writeFileSync(zipPath, zipBuf);
+  // ⚠️ 体积按**规范化后**的实际入包数据统计，与上面 limit 判定用的 files[].size
+  // （工作区原始字节）口径不同。CRLF → LF 会少几百字节，报数要用真实值。
+  const rawTotal = entries.reduce((s, e) => s + e.data.length, 0);
 
-  const ratio = total > 0 ? (1 - zipBuf.length / total) * 100 : 0;
+  const ratio = rawTotal > 0 ? (1 - zipBuf.length / rawTotal) * 100 : 0;
   console.log('\n' + '-'.repeat(54));
   console.log('✓ 打包完成');
   console.log('  产物    : dist/' + ZIP_NAME);
-  console.log('  原始体积: ' + (total / 1024).toFixed(1) + ' KB');
+  console.log('  原始体积: ' + (rawTotal / 1024).toFixed(1) + ' KB');
   console.log('  压缩后  : ' + (zipBuf.length / 1024).toFixed(1) + ' KB  (压缩率 ' + ratio.toFixed(0) + '%)');
   console.log('  文件数  : ' + entries.length);
   console.log('');
