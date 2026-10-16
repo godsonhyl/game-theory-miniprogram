@@ -122,7 +122,7 @@ Page({
       this.setData(patch);
       wx.showToast({ title: (err && err.message) || '读取战绩失败', icon: 'none' });
     }
-  }
+  },
 
   /** 风格画像：吃本地复盘缓存的行为统计（第三期）。样本不足时 analyze 返回
    *  insufficient 态，UI 显示「样本不足」不硬算——避免小样本误导（设计硬约束）。
