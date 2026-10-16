@@ -7,7 +7,7 @@
     "pack": "node pack.js",
     "upload": "node upload.js",
     "preview": "node upload.js --preview",
-    "test": "node test-core.js && node miniprogram/test-miniprogram-logic.js && node miniprogram/test-cards.js && node miniprogram/test-cloud-integration.js && node miniprogram/test-index-logic.js && node miniprogram/test-room-sync.js && node test-sdk-load.js && node scripts/check-wxml.js && node scripts/check-pack-rules.js",
+    "test": "node test-core.js && node miniprogram/test-miniprogram-logic.js && node miniprogram/test-cards.js && node miniprogram/test-cloud-integration.js && node miniprogram/test-index-logic.js && node miniprogram/test-room-sync.js && node test-sdk-load.js && node scripts/check-js-syntax.js && node scripts/check-wxml.js && node scripts/check-pack-rules.js",
     "test:engine": "node test-core.js",
     "test:cards": "node miniprogram/test-cards.js",
     "test:wxml": "node scripts/check-wxml.js",
