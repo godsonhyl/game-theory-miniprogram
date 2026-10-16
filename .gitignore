@@ -26,3 +26,4 @@ npm-debug.log*
 
 # 本机特定配置（AppID / 本地路径），不进版本库
 project.private.config.json
+.claude/worktrees/

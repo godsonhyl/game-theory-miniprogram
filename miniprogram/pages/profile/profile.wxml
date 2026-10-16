@@ -77,8 +77,41 @@
           <text class="style-v">{{styleAnalysis.aggText}}</text></view>
         <view class="style-row"><text class="style-k">摊牌胜率</text>
           <text class="style-v">{{styleAnalysis.sdWinPct}}</text></view>
+        <!-- 位置入池率：各位置自愿进池%折叠单行显示（省垂直空间，与 style-row 同构）。
+             posVpipList 是预计算数组，循环内只访问 item 别名（不点访问 styleAnalysis，
+             否则触发 check-wxml 「循环内未声明变量」规则）。 -->
+        <view class="style-row" wx:if="{{posVpipList}}">
+          <text class="style-k">位置入池</text>
+          <text class="style-v pos-line">
+            <text wx:for="{{posVpipList}}" wx:for-item="item" wx:key="label"
+                  class="pos-tag">{{item.label}} {{item.pct}}</text>
+          </text>
+        </view>
         <view class="style-obs" wx:for="{{styleAnalysis.observations}}" wx:key="*this">· {{item}}</view>
       </block>
+    </view>
+  </view>
+
+  <!-- 成就徽章墙：高光时刻存档派生（皇家同花顺/四条/诈唬成功/连胜5） -->
+  <view class="section">
+    <view class="sec-head"><view class="sec-ico ic ic-trophy"></view><text class="sec-title">成就徽章</text></view>
+    <view class="badge-wall">
+      <view class="badge {{item.unlocked ? 'on' : 'off'}}" wx:for="{{highlightBadges}}" wx:key="key">
+        <view class="badge-icon">{{item.icon}}</view>
+        <text class="badge-name">{{item.name}}</text>
+        <text class="badge-count" wx:if="{{item.unlocked}}">×{{item.count}}</text>
+      </view>
+    </view>
+    <!-- 最值得炫耀的一手：点按跳复盘页重看（from=highlight） -->
+    <view class="badge-best" wx:if="{{highlightBest}}" bindtap="onReplayBest">
+      <text class="badge-best-icon">★</text>
+      <view class="badge-best-body">
+        <text class="badge-best-title">{{highlightBest.summary}}</text>
+        <text class="badge-best-sub">点按重看这一手 ›</text>
+      </view>
+    </view>
+    <view class="badge-empty" wx:elif="{{highlightBadges.length}}">
+      <text class="badge-empty-text">打出高光时刻（皇家同花顺/四条/诈唬成功/连胜 5 局）会在此点亮</text>
     </view>
   </view>
 

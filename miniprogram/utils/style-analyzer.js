@@ -17,9 +17,15 @@
  * 事件流前提（依赖 replay-store 的收割口径，改那边前先看这边）：
  * - 每条记录 events 含补录的虚拟 action('blind')（引擎 postBlind 不发事件），
  *   VPIP 口径据此把 blind 与 preflop 的 check（大盲免费看过）排除在「自愿」外。
- * - street 字段由 addReplay 从原事件拷贝；盲目补录事件的 street = 'preflop'。
+ * - ⚠️ 引擎 action 事件 emit 时不带 street 字段（poker-core.js 的 fold/check/
+ *   call/raise emit 均无 street）——replay-store 拷贝 e.street 得 undefined。
+ *   故本模块**不能直接读 e.street**：须自己跟踪 type:'street' 事件推断当前街
+ *   （curStreet，初始 'preflop'，遇 street 事件推进）。replay.js 的 buildStreets
+ *   已用同法跟踪，此处复用同一口径。早期版本误读 e.street 导致 VPIP 恒 0（已修）。
  * - result.awards 数组每项 { seat, amount }，winners 在平分池时可能多人——
  *   判胜一律用 awards（实际分钱），不用 winners。
+ * - hand_start 事件含 btn/sb/bb 座位（replay-store 已拷贝为 e.btn/e.sb/e.bb），
+ *   位置入池率据此推导 mySeat 相对 btn 的偏移 → 位置标签。
  *
  * 纯函数、零状态、零 RNG、零 wx 依赖——可直接单测。
  */
@@ -30,9 +36,20 @@ const AGG_PASSIVE = 1.0;
 const AGG_AGGRESSIVE = 1.0;
 /** VPIP 紧/松分界：28% 是 6 人桌常见分界，固定阈值避免「假精确」。 */
 const VPIP_LOOSE = 0.28;
+/** 位置标签（6 人桌，按相对 btn 顺时针偏移取）。2 人桌仅 BTN/BB。 */
+const POS_BY_OFFSET = ['BTN', 'SB', 'BB', 'UTG', 'MP', 'CO'];
+
+/** 把 mySeat 相对 btn 的偏移映射成位置标签。numSeats=2 时只 BTN/BB。 */
+function posOf(mySeat, btn, numSeats) {
+  if (numSeats < 2 || btn == null || mySeat == null) return null;
+  const off = (mySeat - btn + numSeats) % numSeats;
+  if (numSeats === 2) return off === 0 ? 'BTN' : 'BB';
+  return POS_BY_OFFSET[off] || ('P' + off);
+}
 
 /** 算风格画像。list = replayStore.listAll() 的复盘记录数组。
- *  样本不足返回 { sample, insufficient: true }；否则返回完整画像对象。 */
+ *  样本不足返回 { sample, insufficient: true }；否则返回完整画像对象。
+ *  返回值含 positionVpip：各位置（BTN/SB/BB/UTG/MP/CO）的入池率%，样本不足记 null。 */
 function analyze(list) {
   const sample = Array.isArray(list) ? list.length : 0;
   if (sample < VPipMin) return { sample, insufficient: true };
@@ -43,15 +60,24 @@ function analyze(list) {
   let postCall = 0;    // 翻后 call 计数
   let sdCount = 0;      // 摊牌局数
   let sdWinCount = 0;  // 摊牌且获胜局数
+  // 位置入池率：各位置 [自愿局数, 该位置总局数]
+  const posStat = { BTN: [0, 0], SB: [0, 0], BB: [0, 0], UTG: [0, 0], MP: [0, 0], CO: [0, 0] };
 
   list.forEach(rec => {
     if (!rec || !Array.isArray(rec.events)) return;
     const mySeat = rec.mySeat;
+    // 位置：从 hand_start 事件取 btn（events[0] 即 hand_start，含 btn）。
+    const hs = rec.events[0] || {};
+    const numSeats = (rec.players && rec.players.length) || 0;
+    const pos = posOf(mySeat, hs.btn, numSeats);
     let myVpip = false;
     let iWon = false;
+    let curStreet = 'preflop';   // 跟踪当前街（action 事件无 street，见文件头注释）
     rec.events.forEach(e => {
-      if (!e || e.type !== 'action' || e.seat !== mySeat) return;
-      const st = e.street;
+      if (!e) return;
+      if (e.type === 'street') { curStreet = e.street; return; }
+      if (e.type !== 'action' || e.seat !== mySeat) return;
+      const st = curStreet;       // 用跟踪值，不读 e.street
       const action = e.action;
       if (st === 'preflop') {
         // VPIP：翻前主动参与（call/raise/allin）。blind（被动投）与
@@ -65,6 +91,11 @@ function analyze(list) {
       }
     });
     if (myVpip) vpipCount++;
+    // 位置统计：按位置累计自愿进池局数 / 该位置总局数
+    if (pos && posStat[pos]) {
+      posStat[pos][1]++;
+      if (myVpip) posStat[pos][0]++;
+    }
 
     // 摊牌判定与判胜（用 awards 不用 winners）
     const r = rec.result || {};
@@ -114,10 +145,19 @@ function analyze(list) {
   else if (sdWin > 0.6) obs.push('摊牌选牌质量不错');
   const observations = obs.slice(0, 3);
 
+  // ----- 位置入池率：各位置自愿进池局数 / 该位置总局数，样本不足记 null。
+  //  单行文本折叠显示（profile.wxml 内一行「BTN 50% · CO 30% · …」），不做柱图省垂直空间。
+  const positionVpip = {};
+  Object.keys(posStat).forEach(k => {
+    const played = posStat[k][1];
+    positionVpip[k] = played > 0 ? Math.round(posStat[k][0] / played * 100) + '%' : null;
+  });
+
   return {
     sample, vpip, vpipPct, agg, aggText,
     sdRate, sdRatePct, sdWin, sdWinPct,
-    quadrant, quadrantTag, observations
+    quadrant, quadrantTag, observations,
+    positionVpip
   };
 }
 

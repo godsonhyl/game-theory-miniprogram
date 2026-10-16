@@ -1840,12 +1840,24 @@ while (guard++ < 400) {
   (function styleSuite() {
     const sa = require(path.join(__dirname, 'utils', 'style-analyzer.js'));
 
-    // 构造 mock 复盘记录工厂：actions = [['preflop','raise'],...]，opts 覆盖 result 等
+    // 构造 mock 复盘记录工厂：actions = [['preflop','raise'],...]，opts 覆盖 result 等。
+    // ⚠️ 真实引擎 action 事件**不带 street 字段**（street 由独立的 type:'street' 事件
+    // 推进），故 mock 须按真实事件流发射 street 事件（analyzer 用 curStreet 跟踪，
+    // 不读 action 事件的 street——见 style-analyzer 头注释）。
     function mkRec(actions, opts) {
       const o = opts || {};
+      const events = [];
+      let prevStreet = null;
+      actions.forEach(a => {
+        if (a[0] !== prevStreet) {
+          events.push({ type: 'street', street: a[0] });
+          prevStreet = a[0];
+        }
+        events.push({ type: 'action', seat: 0, action: a[1] });
+      });
       return Object.assign({
         mySeat: 0,
-        events: actions.map(a => ({ type: 'action', seat: 0, street: a[0], action: a[1] })),
+        events: events,
         result: { type: 'fold', winners: [1], awards: [{ seat: 1, amount: 100 }], evals: {} }
       }, o);
     }
@@ -1931,6 +1943,34 @@ while (guard++ < 400) {
     const arRes = sa.analyze(allRaise);
     ok(isFinite(arRes.agg) && arRes.agg > 0, 'AGG 全 raise 无跟注不除零（分母 max(call,1)=1）');
 
+    // ---- VPIP BUG 修复验证：action 事件无 street，靠 type:'street' 跟踪 ----
+    // 修复前 analyzer 读 e.street（undefined）→ 翻前分支恒不命中 → VPIP 恒 0。
+    // 现跟踪 curStreet：10 局翻前 call 应得 VPIP=100%（修复前为 0）。
+    const vpipFix = sa.analyze(Array.from({ length: 10 }, preflopCall));
+    ok(vpipFix.vpip === 1 && vpipFix.vpipPct === '100%',
+      'VPIP 修复：翻前 call 经 curStreet 跟踪计自愿进池 → 100%（修复前恒 0），实际 ' + vpipFix.vpipPct);
+
+    // ---- 位置入池率 positionVpip：6 人桌按 btn 偏移取位置 ----
+    // 构造含 hand_start(btn) + street + action 的事件流，断言各位置入池率。
+    function mkPosRec(btn, mySeat, numSeats, preflopAct) {
+      const evts = [{ type: 'hand_start', btn: btn, sb: (btn + 1) % numSeats, bb: (btn + 2) % numSeats }];
+      evts.push({ type: 'street', street: 'preflop' });
+      evts.push({ type: 'action', seat: mySeat, action: preflopAct });
+      return { mySeat: mySeat, players: Array.from({ length: numSeats }, (_, i) => ({})),
+        events: evts, result: { type: 'fold', winners: [0], awards: [], evals: {} } };
+    }
+    // 6 人桌 btn=2，mySeat=2 → offset 0 = BTN；10 局全翻前 call → BTN 入池 100%
+    const posList = Array.from({ length: 10 }, () => mkPosRec(2, 2, 6, 'call'));
+    const posRes = sa.analyze(posList);
+    ok(posRes.positionVpip && posRes.positionVpip.BTN === '100%',
+      '位置入池：6 人桌 btn=2 mySeat=2 → BTN，10 局翻前 call → BTN=100%，实际 ' + (posRes.positionVpip && posRes.positionVpip.BTN));
+    // mySeat=3 → offset 1 = SB，翻前 fold → SB 入池 0%（但总局数应累计）
+    const posFold = Array.from({ length: 10 }, () => mkPosRec(2, 3, 6, 'fold'))
+      .concat(Array.from({ length: 0 }));
+    const pfRes = sa.analyze(posFold);
+    ok(pfRes.positionVpip && pfRes.positionVpip.SB === '0%',
+      '位置入池：6 人桌 mySeat=3 → SB，10 局翻前 fold → SB=0%，实际 ' + (pfRes.positionVpip && pfRes.positionVpip.SB));
+
     // ---- profile.js 接入静态守卫 ----
     const profSrc = fs.readFileSync(path.join(__dirname, 'pages', 'profile', 'profile.js'), 'utf8');
     const profWxml = fs.readFileSync(path.join(__dirname, 'pages', 'profile', 'profile.wxml'), 'utf8');
@@ -1941,6 +1981,12 @@ while (guard++ < 400) {
     // ---- 战绩深化图表（方向 A）接入静态守卫 ----
     const csSrc = fs.readFileSync(path.join(__dirname, 'utils', 'chart-stats.js'), 'utf8');
     guardChartsIntegration(profSrc, profWxml, profWxss, csSrc);
+
+    // ---- 高光时刻存档 + 成就徽章墙（批①）接入静态守卫 ----
+    const hlSrc = fs.readFileSync(path.join(__dirname, 'utils', 'highlight-store.js'), 'utf8');
+    const tableSrc = fs.readFileSync(path.join(__dirname, 'pages', 'table', 'table.js'), 'utf8');
+    const replaySrc = fs.readFileSync(path.join(__dirname, 'pages', 'replay', 'replay.js'), 'utf8');
+    guardHighlightIntegration(profSrc, profWxml, profWxss, hlSrc, tableSrc, replaySrc, saSrc);
   })();
 
   /* ---------- 静态守卫函数定义区 ----------
@@ -2775,6 +2821,78 @@ while (guard++ < 400) {
       'chart 区 wxss 无 width/top/left 的 transition（重排红线）');
     ok(!/@keyframes[^{]*\{[^}]*\b(width|top|left)\b/.test(chartWxss),
       'chart 区 wxss 无 keyframe 动画 width/top/left（重排红线）');
+  }
+
+  /* 高光时刻存档 + 成就徽章墙 + 位置统计（批①）集成守卫：
+     highlight-store.js 纯本地存档、table.js 收割判定、profile.js 徽章墙接入、
+     replay.js from=highlight 回退、style-analyzer curStreet 跟踪 + positionVpip。 */
+  function guardHighlightIntegration(profSrc, profWxml, profWxss, hlSrc, tableSrc, replaySrc, saSrc) {
+    // ---- highlight-store.js 模块约束 ----
+    ok(/poker_highlight_cache/.test(hlSrc),
+      'highlight-store 用独立 storage 键 poker_highlight_cache（与 replay-store 分离）');
+    ok(/MAX_HIGHLIGHTS\s*=\s*50/.test(hlSrc), 'highlight-store 上限 50 条（FIFO，>replay 的 20）');
+    ok(/addHighlight/.test(hlSrc) && /listAll/.test(hlSrc) && /findByDate/.test(hlSrc),
+      'highlight-store 导出 addHighlight/listAll/findByDate');
+    ok(/module\.exports/.test(hlSrc) && /addHighlight[\s\S]*listAll[\s\S]*findByDate/.test(hlSrc),
+      'highlight-store 导出表完整');
+    ok(!/wx\.request|require\(['"]https?/.test(hlSrc), 'highlight-store 不含网络调用（纯本地）');
+    // 高光自存完整 events（不依赖 replay FIFO）
+    ok(/rec\.events\s*=/.test(hlSrc), 'highlight-store 自存完整 events（重看不依赖 replay 缓存）');
+    ok(/皇家同花顺|四条|诈唬成功|连胜/.test(hlSrc),
+      'highlight-store 摘要涵盖四类高光（皇家/四条/诈唬/连胜）');
+
+    // ---- table.js 收割接入 ----
+    ok(/require\(['"].+highlight-store['"]\)/.test(tableSrc), 'table.js 引入 highlight-store');
+    ok(/highlightStore\.addHighlight/.test(tableSrc), 'table.js 结算时调用 highlightStore.addHighlight');
+    ok(/_detectHighlight/.test(tableSrc), 'table.js 定义 _detectHighlight 判定方法（store 只存不判）');
+    ok(/HIGHLIGHT_STREAK\s*=\s*5/.test(tableSrc), 'table.js 定义 HIGHLIGHT_STREAK=5（独立于 WIN_STREAK_MIN=2）');
+    // 判定在权威端路径内（!this.remoteMode 守卫内）
+    ok(/addHighlight/.test(tableSrc) && /!this\.remoteMode/.test(tableSrc),
+      'table.js 高光收割仅在权威端（!remoteMode，镜像端无 game.result.evals 全量）');
+    // 诈唬判定用 curStreet 跟踪（action 事件无 street）
+    ok(/curStreet\s*=\s*['"]preflop['"]/.test(tableSrc),
+      'table.js 诈唬判定用 curStreet 跟踪 type:street（不读 action 事件 street）');
+
+    // ---- profile.js 徽章墙接入 ----
+    ok(/require\(['"].+highlight-store['"]\)/.test(profSrc), 'profile.js 引入 highlight-store');
+    ok(/loadHighlights/.test(profSrc), 'profile.js 定义 loadHighlights 方法');
+    ok(/highlightBadges/.test(profSrc), 'profile.js 维护 highlightBadges 状态字段');
+    ok(/highlightBest/.test(profSrc), 'profile.js 维护 highlightBest 状态字段');
+    ok(/onReplayBest/.test(profSrc), 'profile.js 定义 onReplayBest 跳转方法');
+    ok(/from=highlight/.test(profSrc), 'profile.js onReplayBest 带 from=highlight 参数');
+
+    // ---- profile.wxml 徽章墙节点 ----
+    ok(/badge-wall/.test(profWxml), '我的页 wxml 含 badge-wall 容器');
+    ok(/highlightBadges/.test(profWxml), '我的页 wxml 循环渲染 highlightBadges');
+    ok(/highlightBest/.test(profWxml), '我的页 wxml 含「最值得炫耀的一手」（highlightBest）');
+    ok(/成就徽章/.test(profWxml), '我的页 wxml 含「成就徽章」section 标题');
+    ok(!/canvas/.test(profWxml), '我的页 wxml 仍无 canvas（徽章墙纯 CSS）');
+
+    // ---- profile.wxss 徽章墙样式 + 重排红线 ----
+    ok(/badge-wall/.test(profWxss) && /\.badge\b/.test(profWxss),
+      '我的页 wxss 定义徽章墙样式（badge-wall/badge）');
+    const badgeWxss = profWxss.slice(profWxss.indexOf('badge-wall'));
+    ok(!/transition[^;]*\b(width|top|left)\b/.test(badgeWxss),
+      'badge 区 wxss 无 width/top/left transition（重排红线）');
+    ok(!/@keyframes[^{]*\{[^}]*\b(width|top|left)\b/.test(badgeWxss),
+      'badge 区 wxss 无 keyframe width/top/left（重排红线）');
+
+    // ---- replay.js from=highlight 回退 ----
+    ok(/require\(['"].+highlight-store['"]\)/.test(replaySrc), 'replay.js 引入 highlight-store');
+    ok(/from\s*===\s*['"]highlight['"]/.test(replaySrc),
+      'replay.js 识别 from=highlight 分支定位高光存档');
+    ok(/highlightStore\.findByDate/.test(replaySrc),
+      'replay.js 调用 highlightStore.findByDate（高光重看不依赖 replay FIFO）');
+
+    // ---- style-analyzer curStreet 跟踪 + positionVpip ----
+    ok(/curStreet\s*=\s*['"]preflop['"]/.test(saSrc),
+      'style-analyzer 用 curStreet 跟踪（初始 preflop，遇 type:street 推进）');
+    ok(/e\.type\s*===\s*['"]street['"]/.test(saSrc),
+      'style-analyzer 跟踪 type:street 事件推进 curStreet');
+    ok(!/const st = e\.street/.test(saSrc),
+      'style-analyzer 不再读 e.street（修复 VPIP 恒 0 BUG）');
+    ok(/positionVpip/.test(saSrc), 'style-analyzer 返回 positionVpip（位置入池率）');
+    ok(/POS_BY_OFFSET|posOf/.test(saSrc), 'style-analyzer 按偏移映射位置标签（posOf）');
   }
 
   /* ---------- 输出 ---------- */

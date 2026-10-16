@@ -15,6 +15,7 @@ const { settings } = require('../../utils/settings');
 const roomSync = require('../../utils/room-sync');
 const sfx = require('../../utils/sfx');   // 合成音效（发牌/下注/加注/全下/获胜…）
 const replayStore = require('../../utils/replay-store');   // 对局复盘缓存（本地，结算时收割）
+const highlightStore = require('../../utils/highlight-store'); // 高光时刻存档（本地，结算时判定收割）
 const advisor = require('../../utils/advisor');   // AI 教学提示文案（起手牌分类 + 牌理解释，仅练习模式）
 
 /**
@@ -158,6 +159,8 @@ const EMOTE_PLAY_WINDOW_MS = 1500;
 const BIG_HAND_MIN = 4;   // HAND.STRAIGHT——引擎牌型枚举：0高牌…4顺子 5同花 6葫芦 7四条 8同花顺
 /** 连胜徽章门槛：连续赢 ≥2 手开始显示 🔥xN。 */
 const WIN_STREAK_MIN = 2;
+/** 高光存档「连胜」门槛：连续赢 ≥5 手入档（独立于 WIN_STREAK_MIN 的 2 手显示门槛）。 */
+const HIGHLIGHT_STREAK = 5;
 
 /** 牌型名 → 引擎枚举（BIG_HAND_MIN 门槛用；evals 里存的是中文名）。 */
 const HAND_NAME_TO_CAT = {
@@ -2555,6 +2558,59 @@ Page({
     this.setData({ streaks });
   },
 
+  /**
+   * 高光时刻判定（结算时调，返回 {type, streak} 或 null）。
+   * 判定依赖：game.result.evals/winners（结算态）、winStreaks（已被 _bumpStreaks 更新）、
+   * 本手 events（诈唬判定需推断翻后是否有 raise/allin，action 事件无 street 须自己跟踪）。
+   * 优先级：皇家同花顺 > 四条 > 连胜5 > 诈唬成功（一手只存最高级别一档，避免重复入档）。
+   */
+  _detectHighlight() {
+    if (!game || !game.result) return null;
+    const mySeat = this.mySeat;
+    const r = game.result;
+    const winners = r.winners || [];
+    const iWon = winners.indexOf(mySeat) >= 0;
+    const evals = r.evals || {};
+    const me = evals[mySeat];
+    const handName = me && me.name;
+
+    // 皇家同花顺：摊牌且我赢、成手为皇家同花顺
+    if (r.type === 'showdown' && iWon && handName === '皇家同花顺') {
+      return { type: 'royal_flush', streak: 0 };
+    }
+    // 四条：摊牌且我赢、成手为四条
+    if (r.type === 'showdown' && iWon && handName === '四条') {
+      return { type: 'quads', streak: 0 };
+    }
+    // 连胜 5 局：winStreaks 模块级，_bumpStreaks 刚更新过
+    const streak = winStreaks[mySeat] || 0;
+    if (iWon && streak >= HIGHLIGHT_STREAK) {
+      return { type: 'streak5', streak };
+    }
+    // 诈唬成功：非摊牌（对手全弃我独赢）且本手我有翻后（非 preflop）raise/allin。
+    // action 事件无 street 须按 type:'street' 推断当前街（与 style-analyzer/replay 同法）。
+    if (r.type !== 'showdown' && iWon) {
+      let curStreet = 'preflop';
+      let bluffed = false;
+      // 切本手 events（从最后一个 hand_start 起）
+      let lastStart = -1;
+      for (let i = (game.events.length - 1); i >= 0; i--) {
+        if (game.events[i].type === 'hand_start') { lastStart = i; break; }
+      }
+      for (let i = Math.max(0, lastStart); i < game.events.length; i++) {
+        const e = game.events[i];
+        if (!e) continue;
+        if (e.type === 'street') { curStreet = e.street; continue; }
+        if (e.type !== 'action' || e.seat !== mySeat) continue;
+        if (curStreet !== 'preflop' && curStreet !== 'showdown') {
+          if (e.action === 'raise' || e.action === 'allin') bluffed = true;
+        }
+      }
+      if (bluffed) return { type: 'bluff_success', streak: 0 };
+    }
+    return null;
+  },
+
   /* ---------- 表情互动：轮盘 + 气泡 ---------- */
 
   /** 点座位头像（游戏中任意座位、等待室不弹——那里头像承担选座职责）。
@@ -3299,6 +3355,12 @@ Page({
     // 全量；观战/中途退出价值低不缓存）。失败静默（体验优化，不阻断结算）。
     if (game && game.events && game.events.length && game.result && !this.remoteMode) {
       replayStore.addReplay(game, this.mySeat, this.data.mode);
+      // 高光时刻判定与存档：同样仅权威端（镜像端无 game.result.evals 全量）。
+      // 判定规则在此处（store 层只存不判）——此时 game.result.evals/winners 已算完、
+      // winStreaks 已被 renderAmbience 的 _bumpStreaks 更新（先于 showResultModal）、
+      // events 完整。失败静默（体验优化，与 replay 同口径）。
+      const hl = this._detectHighlight();
+      if (hl) highlightStore.addHighlight(game, this.mySeat, this.data.mode, hl.type, hl.streak);
     }
     this.setData({ resultModal: this.data.result });
     this.clearResultModalTimer();

@@ -94,6 +94,9 @@
 .style-v.loose-aggressive { color: #d9a441; }   /* 松凶：金 */
 .style-v.tight-passive { color: #8fa8a0; }     /* 紧弱：灰 */
 .style-v.loose-passive { color: #e05c4b; }     /* 松弱：红 */
+/* 位置入池率折叠行：6 个位置标签平铺，单行显示省垂直空间 */
+.pos-line { display: flex; flex-wrap: wrap; gap: 4rpx 12rpx; justify-content: flex-end; }
+.pos-tag { font-size: 22rpx; color: #9fc3b4; }
 .style-obs { font-size: 22rpx; color: #9fc3b4; line-height: 1.5; padding: 8rpx 0 0; }
 .style-insufficient { font-size: 22rpx; color: #6b7f78; padding: 12rpx 0; }
 
@@ -129,6 +132,43 @@
 .rec-more { text-align: center; padding: 20rpx 0 8rpx; }
 .rec-loading { font-size: 22rpx; color: #8fa8a0; }
 .rec-end { font-size: 22rpx; color: #6b7f78; }
+
+/* 成就徽章墙（高光时刻存档派生）：flex 平铺，无 canvas。
+   重排红线：纯文字色 + flex，无 width/top/left keyframe 动画。
+   未解锁徽章降透明度，解锁徽章金边。 */
+.badge-wall {
+  display: flex; flex-wrap: wrap; gap: 16rpx; margin-bottom: 18rpx;
+}
+.badge {
+  flex: 1; min-width: 150rpx; display: flex; flex-direction: column;
+  align-items: center; padding: 22rpx 12rpx;
+  background: rgba(255,255,255,.045); border: 1rpx solid rgba(255,255,255,.09);
+  border-radius: 20rpx;
+}
+.badge.on {
+  border-color: rgba(217,164,65,.55);
+  background: rgba(217,164,65,.1);
+}
+.badge.off { opacity: .4; }
+.badge-icon { font-size: 44rpx; line-height: 1; margin-bottom: 8rpx; color: #d9a441; }
+.badge.off .badge-icon { color: #6b7f78; }
+.badge-name { font-size: 22rpx; color: #cfe0d9; }
+.badge-count { font-size: 20rpx; color: #d9a441; margin-top: 4rpx; }
+
+/* 最值得炫耀的一手：点按跳复盘页重看 */
+.badge-best {
+  display: flex; align-items: center; gap: 16rpx; padding: 20rpx 24rpx;
+  background: rgba(217,164,65,.08); border: 1rpx solid rgba(217,164,65,.4);
+  border-radius: 20rpx;
+}
+.badge-best-icon { font-size: 36rpx; color: #d9a441; }
+.badge-best-body { display: flex; flex-direction: column; flex: 1; }
+.badge-best-title { font-size: 26rpx; font-weight: 700; color: #eaf2ee; }
+.badge-best-sub { font-size: 22rpx; color: #9fc3b4; margin-top: 4rpx; }
+
+/* 徽章墙空态 */
+.badge-empty { padding: 24rpx 0; text-align: center; }
+.badge-empty-text { font-size: 22rpx; color: #6b7f78; line-height: 1.6; }
 
 /* 战绩深化图表（方向 A）：纯 CSS，无 canvas 无图表库。
    重排红线：动态视觉只靠 transform: scaleY + opacity，不动画 width/top/left。

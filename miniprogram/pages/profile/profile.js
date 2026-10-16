@@ -3,6 +3,7 @@ const { auth, DEFAULT_NICK, NICK_MAX } = require('../../utils/auth');
 const replayStore = require('../../utils/replay-store');           // 复盘缓存（本地存量）
 const styleAnalyzer = require('../../utils/style-analyzer');       // 个人风格分析（吃复盘缓存存量）
 const chartStats = require('../../utils/chart-stats');             // 战绩深化图表数据（方向 A，纯客户端）
+const highlightStore = require('../../utils/highlight-store');     // 高光时刻存档（本地存量）
 
 const PAGE_SIZE = 20;   // 战绩每页条数（游标分页，触底加载下一页）
 const CHART_LIMIT = 100; // 战绩深化图表取样上限（单次拉取、不分页）
@@ -20,6 +21,7 @@ Page({
     style: '稳健型',
     styleAnalysis: null,  // 个人风格画像（第三期）：吃本地复盘缓存的行为统计，非云端胜率代理
     vpipMin: styleAnalyzer.VPipMin,   // 样本下限常量，注入 wxml 供「样本不足」展示
+    posVpipList: null,    // 位置入池率数组 [{label,pct}]（wxml 循环用，避免循环内点访问页面 data）
     records: [],
     recordsLoading: false,   // 战绩加载中（区分首屏 loading 与翻页 loading）
     recordsEnd: false,       // 已加载到底（无更多战绩），隐藏触底加载条
@@ -32,7 +34,10 @@ Page({
     chartHandTypes: [],        // 牌型分布
     chartNet: null,           // 盈亏走势柱数组
     chartNetSum: 0,           // 净盈亏总和
-    chartNetSumText: '0'     // 净盈亏带符号文案
+    chartNetSumText: '0',     // 净盈亏带符号文案
+    // 高光时刻徽章墙：4 类成就计数 + 最值得炫耀的一手（高光存档派生，纯本地）
+    highlightBadges: [],
+    highlightBest: null
   },
 
   onShow() {
@@ -76,6 +81,8 @@ Page({
     this.loadStyleAnalysis();
     // 战绩深化图表：吃云端战绩流水，纯客户端聚合（方向 A），不阻塞主链路
     this.loadCharts();
+    // 高光时刻徽章墙：吃本地高光存档（纯客户端，无网络）
+    this.loadHighlights();
   },
 
   /**
@@ -118,9 +125,18 @@ Page({
   }
 
   /** 风格画像：吃本地复盘缓存的行为统计（第三期）。样本不足时 analyze 返回
-   *  insufficient 态，UI 显示「样本不足」不硬算——避免小样本误导（设计硬约束）。 */
+   *  insufficient 态，UI 显示「样本不足」不硬算——避免小样本误导（设计硬约束）。
+   *  位置入池率 positionVpip 是 {BTN:'50%',…} 对象，转成 wxml 友好的数组
+   *  [{label,pct}]（wxml 循环内只访问 item 别名，不点访问页面 data——check-wxml 规则）。 */
   loadStyleAnalysis() {
-    this.setData({ styleAnalysis: styleAnalyzer.analyze(replayStore.listAll()) });
+    const res = styleAnalyzer.analyze(replayStore.listAll());
+    let posList = null;
+    if (res && res.positionVpip) {
+      posList = ['BTN', 'SB', 'BB', 'UTG', 'MP', 'CO'].map(k => ({
+        label: k, pct: res.positionVpip[k] || '—'
+      }));
+    }
+    this.setData({ styleAnalysis: res, posVpipList: posList });
   },
 
   /** 战绩深化图表（方向 A）：拉取最近 CHART_LIMIT 手战绩流水，纯客户端聚合
@@ -153,6 +169,41 @@ Page({
   onRetryRecords() {
     this.setData({ recordsError: false });
     this.loadRecords(true);
+  },
+
+  /** 高光时刻徽章墙：从本地高光存档派生 4 类成就计数 + 最值得炫耀的一手。
+   *  徽章数 = listAll().filter(type===X).length（单条记录派生计数，天然一致，不另维护计数器）。
+   *  最值得炫耀的一手 = 取最高级别（皇家同花顺 > 四条 > 诈唬成功 > 连胜5）的最近一条。 */
+  loadHighlights() {
+    const list = highlightStore.listAll();
+    const DEFS = [
+      { key: 'royal_flush', name: '皇家同花顺', icon: '👑', type: 'royal_flush' },
+      { key: 'quads', name: '四条', icon: '4', type: 'quads' },
+      { key: 'bluff_success', name: '诈唬成功', icon: '🎭', type: 'bluff_success' },
+      { key: 'streak5', name: '连胜 5 局', icon: '🔥', type: 'streak5' }
+    ];
+    // 优先级序：取「最值得炫耀的一手」时用——皇家 > 四条 > 诈唬 > 连胜
+    const RANK = { royal_flush: 0, quads: 1, bluff_success: 2, streak5: 3 };
+    const badges = DEFS.map(d => {
+      const count = list.filter(r => r.type === d.type).length;
+      return { key: d.key, name: d.name, icon: d.icon, count, unlocked: count > 0 };
+    });
+    let best = null;
+    let bestRank = 99;
+    for (let i = list.length - 1; i >= 0; i--) {
+      const r = list[i];
+      const rk = RANK[r.type];
+      if (rk === undefined) continue;
+      if (rk < bestRank) { bestRank = rk; best = r; if (rk === 0) break; }
+    }
+    this.setData({ highlightBadges: badges, highlightBest: best });
+  },
+
+  /** 点「最值得炫耀的一手」跳复盘页重看（经 from=highlight 分支定位高光存档） */
+  onReplayBest() {
+    const best = this.data.highlightBest;
+    if (!best) return;
+    wx.navigateTo({ url: '/pages/replay/replay?date=' + best.date + '&from=highlight' });
   },
 
   /** 列表触底：加载下一页战绩 */

@@ -9,6 +9,7 @@
  */
 const P = require('../../core/poker-core.js');
 const replayStore = require('../../utils/replay-store');
+const highlightStore = require('../../utils/highlight-store');
 
 /** 街定义：索引 0..4 对应翻前→摊牌 */
 const STREETS = [
@@ -116,7 +117,15 @@ Page({
 
   onLoad(query) {
     const date = Number(query.date);
-    const rec = replayStore.findByDate(date);
+    const from = query.from;   // 来源：默认 replay-store 缓存；'highlight' = 高光存档
+    let rec;
+    if (from === 'highlight') {
+      rec = highlightStore.findByDate(date);
+    } else {
+      rec = replayStore.findByDate(date);
+      // 高光重看兜底：replay 缓存 FIFO 20 局可能已挤出该局，回退查高光存档
+      if (!rec) rec = highlightStore.findByDate(date);
+    }
     if (!rec) {
       wx.showToast({ title: '复盘记录不存在', icon: 'none' });
       setTimeout(() => wx.navigateBack(), 800);
