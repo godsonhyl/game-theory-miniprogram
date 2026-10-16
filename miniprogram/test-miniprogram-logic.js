@@ -1202,6 +1202,82 @@ while (guard++ < 400) {
       '滑杆/输入全程保持面板展开（金额改动不应误收起面板）');
     pageCtx.onCustomClose();
     ok(dataStore.raiseCustom === false, '「收起」→ 回到档位条');
+
+    /* ---------- 回归：档位高亮跨手残留（真机反馈「一直高亮上一局的」） ---------- */
+    // 先故意选一个非最小档 + 展开自定义面板，制造「脏状态」
+    pageCtx.onPresetTap({ currentTarget: { dataset: { v: 'p100' } } });
+    const dirtyPreset = dataStore.raisePreset;
+    pageCtx.onCustomTap();
+    const dirtyCustom = dataStore.raiseCustom;
+    ok(dirtyPreset === 'p100' && dirtyCustom === true,
+      '前置：制造脏状态（选中100% 档=' + dirtyPreset + '，自定义面板展开=' + dirtyCustom + '）');
+
+    // 直接调 startHand 模拟「开新一局」——这是唯一会重置档位的地方。
+    // ⚠️ 只断言「档位高亮 + 自定义面板」这两个纯 UI 态，不在此处断言金额：
+    // startHand 内部会 advance()，AI 行动会合法地改写 raiseTo/raiseSubmit，
+    // 金额的正确断言在下方「新一局轮到我」那块（那里语义才成立）。
+    pageCtx.startHand();
+
+    ok(dataStore.raisePreset === 'min',
+      '开新一局 → 档位高亮重置为「最小」（实际 ' + dataStore.raisePreset +
+      '，脏值是 ' + dirtyPreset + '；真机反馈是「一直高亮上一局的」）');
+    ok(dataStore.raiseCustom === false,
+      '开新一局 → 自定义面板强制收起（脏状态是 ' + dirtyCustom + '）');
+
+    // 关键：setData 异步 —— startHand 里 reset 后紧接着的 render 同帧
+    // 读 this.data.raiseTo 拿到的还是旧值。必须靠 _raiseResetPending 实例字段
+    // 在同步路径上覆盖，否则「高亮已是『最小』、金额却还是上一手」又成矛盾态。
+    // ⚠️ 不断言 pageCtx._raiseResetPending === false：startHand 内部会 advance()，
+    // AI 用真实 setTimeout 异步行动，若本帧还没轮到 render，该标志可能尚未消费。
+    // 「标志会被消费」是render 内部的行为，由下方「新一局轮到我」的金额断言覆盖。
+
+    // 结构守卫：锁死 resetRaiseState 必须在 startHand 里被调用
+    const tableSrc2 = require('fs').readFileSync(
+      require('path').join(__dirname, 'pages/table/table.js'), 'utf8');
+    const shIdx = tableSrc2.indexOf('startHand()');
+    ok(shIdx >= 0 && tableSrc2.indexOf('this.resetRaiseState()', shIdx) >= 0 &&
+      tableSrc2.indexOf('this.resetRaiseState()', shIdx) < tableSrc2.indexOf('this.render()', shIdx),
+      'startHand 里在 render() 之前调用了 resetRaiseState()（顺序锁死，否则时序兜底失效）');
+
+    // 语义守卫：锁死 render 里「每手首帧取最小额」的那行真的存在。
+    // 只断言字符串，锁结构不锁数值 —— 允许后续把 legal.minRaiseTo 换成别的口径。
+    ok(/const wasReset = !!this\._raiseResetPending/.test(tableSrc2) &&
+      /raiseTo = wasReset \? legal\.minRaiseTo/.test(tableSrc2),
+      'render 里用 wasReset 同步路径覆盖金额（否则只 setData 会读到上一手旧值）');
+    // 语义守卫：raiseSubmit 必须读局部 raiseTo，不能读 this.data.raiseTo
+    ok(/raiseSubmit = Math\.max\(legal\.minRaiseTo, Math\.round\(raiseTo \|\| 0\)\)/.test(tableSrc2),
+      '加注按钮文案读局部 raiseTo 而非 this.data.raiseTo（与档位高亮同帧自洽）');
+
+    // ---- 行为闭环：新一局轮到我时，金额必须真的是最小加注（不只是清零）----
+    // 这是本次修复的核心语义。清零只保证「不残留」，还得证明「高亮『最小』时
+    // 加注按钮显示的确实是最小额」——否则会出现高亮与金额不一致的新矛盾态。
+    {
+      const t0 = Date.now();
+      while (Date.now() - t0 < 40000 &&
+             !(dataStore.isMyTurn && dataStore.legal && dataStore.legal.canRaise)) {
+        await new Promise(r => setTimeout(r, 50));
+        if (dataStore.result && !(dataStore.isMyTurn && dataStore.legal && dataStore.legal.canRaise)) {
+          pageCtx.startHand();   // AI 提前弃牌导致本手结束 → 重开一手继续等
+        }
+      }
+    }
+    if (dataStore.isMyTurn && dataStore.legal && dataStore.legal.canRaise) {
+      const freshMin = dataStore.legal.minRaiseTo;
+      ok(dataStore.raisePreset === 'min',
+        '新一局轮到我 → 档位仍高亮「最小」（跨 AI 行动未被覆盖），实际 ' + dataStore.raisePreset);
+      ok(dataStore.raiseSubmit === freshMin && dataStore.raiseTo === freshMin,
+        '新一局轮到我 → 加注按钮金额 = 最小加注 ' + freshMin +
+        '（submit=' + dataStore.raiseSubmit + ' raiseTo=' + dataStore.raiseTo +
+        '），与高亮档位严格自洽');
+      ok(dataStore.raiseAllIn === false,
+        '新一局轮到我 → 不是全下态（raiseAllIn=' + dataStore.raiseAllIn + '）');
+      ok(dataStore.raiseCustom === false,
+        '新一局轮到我 → 自定义面板收起，显示档位条（曾跨手残留展开）');
+    } else {
+      ok(false, '新一局后未能推进到「轮到我且可加注」，无法验证金额与高亮自洽' +
+        '（isMyTurn=' + !!dataStore.isMyTurn + ' canRaise=' +
+        !!(dataStore.legal && dataStore.legal.canRaise) + '）');
+    }
   }
 
   /* ---------- 回归：预设档改为百分比 + 盲注倍数吸附 ---------- */

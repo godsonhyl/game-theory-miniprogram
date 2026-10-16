@@ -1897,6 +1897,12 @@ Page({
       resultModal: null
     });
 
+    // 每手重置加注档位：上一局选中的档位高亮会一直留到下一局（真机反馈）。
+    // 默认落在「最小」——比全取消更好，因为 render 里raiseTo 会被钳到
+    // legal.minRaiseTo，档位高亮与加注按钮金额始终一致，不会出现
+    //「无高亮但按钮显示某个金额」或「高亮全下却只能加最小」的错觉。
+    this.resetRaiseState();
+
     // 演示：筹码不足自动补充；同步修正起始筹码，避免补充额被算成盈亏
     game.players.forEach(p => {
       if (p.stack < 20) {
@@ -2196,12 +2202,21 @@ Page({
       const isMyTurn = game.actionSeat === this.mySeat && !result && !standing;
       let legal = null;
       let raiseTo = 0;
+      // 每手重置：startHand 刚置的标志（见 resetRaiseState）。setData 异步，
+      // this.data.raiseTo 同帧还是上一手的值，必须用实例字段在同一同步路径上覆盖，
+      // 否则会出现「档位已高亮回『最小』，金额却还是上一手 100%」的新矛盾态。
+      const wasReset = !!this._raiseResetPending;
+      this._raiseResetPending = false;
       if (isMyTurn) {
         // 镜像端优先用房主下发的合法性（快照带不了 canRaise 细节），取不到再本地算
         legal = (game.remoteLegal && game.remoteLegal.seat === this.mySeat)
           ? game.remoteLegal
           : game.legalActions(this.mySeat);
-        if (legal) raiseTo = this.data.raiseTo >= legal.minRaiseTo ? this.data.raiseTo : legal.minRaiseTo;
+        // 每手首帧锁定为最小额（与 raisePreset:'min' 高亮严格对应）
+        if (legal) {
+          raiseTo = wasReset ? legal.minRaiseTo
+            : (this.data.raiseTo >= legal.minRaiseTo ? this.data.raiseTo : legal.minRaiseTo);
+        }
       }
       // 自定义下注面板的上下限：MAX = 全下金额（raiseTo 可达上限），最小值由合法下注决定
       const raiseMin = (isMyTurn && legal) ? legal.minRaiseTo : 0;
@@ -2212,9 +2227,11 @@ Page({
       const raiseCustom = isMyTurn && legal && legal.canRaise ? this.data.raiseCustom : false;
       // 实际会提交的加注额（与 onRaise 钳制同口径，仅用于按钮文案）：
       // 数字输入框能填出低于下限的值，而失焦补正未必先触发；到达上限则等价全下。
+      // ⚠️ 读 raiseTo（上面算好的局部量）而非 this.data.raiseTo：每手重置帧
+      // data 里还是上一手旧值，直接读会让按钮文案与档位高亮对不上。
       let raiseSubmit = 0, raiseAllIn = false;
       if (isMyTurn && legal && legal.canRaise) {
-        raiseSubmit = Math.max(legal.minRaiseTo, Math.round(this.data.raiseTo || 0));
+        raiseSubmit = Math.max(legal.minRaiseTo, Math.round(raiseTo || 0));
         raiseAllIn = raiseSubmit >= legal.maxRaiseTo;
       }
 
@@ -2961,6 +2978,34 @@ Page({
     if (preset !== undefined) patch.raisePreset = preset;
     this.setData(patch);
     return patch;
+  },
+
+  /**
+   * 每手重置加注档位状态（startHand 调用）。
+   *
+   * 背景：真机反馈「下注选择按钮一直高亮上一局的」。根因是 raisePreset 是
+   * 页面级 data，跨手累积；而 raiseTo 会被 render 钳到 legal.minRaiseTo，
+   * 于是出现「高亮 100% 但加注按钮只显示最小额」的矛盾态。
+   *
+   * 口径选择：默认高亮「最小」而非全部取消。理由——render 的
+   * `raiseTo = max(this.data.raiseTo, legal.minRaiseTo)` 决定了轮到我时
+   * 加注按钮**必然**显示最小额；若档位条全不高亮，界面上就没有任何提示
+   * 说明「当前这个金额对应最小档」。默认高亮最小让两者自洽。
+   *
+   * ⚠️ 必须同时置 `_raiseResetPending`：setData 是异步的，startHand 里
+   * resetRaiseState() 之后紧接着的 render() 同帧读 this.data 拿到的还是
+   * 上一手旧值 —— 只 setData 会造成「高亮已重置为最小，金额却还是上一手的」。
+   * render() 用这个实例字段做一次覆盖，读写都在同步路径上，绕开 setData 时序。
+   */
+  resetRaiseState() {
+    this._raiseResetPending = true;
+    this.setData({
+      raisePreset: 'min',
+      raiseTo: 0,
+      raiseSubmit: 0,
+      raiseAllIn: false,
+      raiseCustom: false
+    });
   },
 
   onCustomTap() {
