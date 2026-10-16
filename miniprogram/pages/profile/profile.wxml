@@ -103,12 +103,14 @@
       </view>
     </view>
     <!-- 最值得炫耀的一手：点按跳复盘页重看（from=highlight） -->
-    <view class="badge-best" wx:if="{{highlightBest}}" bindtap="onReplayBest">
+    <view class="badge-best" wx:if="{{highlightBest}}">
       <text class="badge-best-icon">★</text>
-      <view class="badge-best-body">
+      <view class="badge-best-body" bindtap="onReplayBest">
         <text class="badge-best-title">{{highlightBest.summary}}</text>
         <text class="badge-best-sub">点按重看这一手 ›</text>
       </view>
+      <!-- 批⑦：高光分享——原生分享按钮带高光摘要 title -->
+      <button class="badge-best-share" open-type="share">分享</button>
     </view>
     <view class="badge-empty" wx:elif="{{highlightBadges.length}}">
       <text class="badge-empty-text">打出高光时刻（皇家同花顺/四条/诈唬成功/连胜 5 局）会在此点亮</text>

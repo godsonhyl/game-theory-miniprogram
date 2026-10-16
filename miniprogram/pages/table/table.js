@@ -331,6 +331,9 @@ Page({
     // 批⑥：对手画像角色卡（长按头像弹出）——独立 modal toggle，不进三道脏检查指纹
     oppCardShow: false,
     oppCardData: null,      // { name, trait, desc, styleBars, tellHints, oppStats }
+    // 批⑦：高光分享卡片弹层（非 canvas 预览弹层）——独立 modal toggle，不进三道指纹
+    shareCardShow: false,
+    shareCardData: null,    // { handName, summary, myHole, board, mode }
     helpRows: [
       { name: '翻牌前', desc: '每人两张底牌，大小盲先行下注' },
       { name: '翻牌', desc: '发出 3 张公共牌，开始第二轮下注' },
@@ -2015,6 +2018,12 @@ Page({
 
   /** 转发内容：好友房带房间号，好友点开即自动加入 */
   onShareAppMessage() {
+    // 批⑦：若刚分享了高光，title 带高光摘要（「我在博弈论打出了皇家同花顺！」）
+    if (this._shareHighlightTitle) {
+      const title = this._shareHighlightTitle;
+      this._shareHighlightTitle = null;   // 一次性：分享后清掉，下次回到默认
+      return { title: title, path: '/pages/index/index' };
+    }
     if (this.mode === 'friend') {
       return {
         title: '来「博弈论」和我打一局，房间号 ' + this.roomNo,
@@ -3748,6 +3757,41 @@ Page({
       return;
     }
     wx.navigateTo({ url: '/pages/replay/replay?date=' + rec.date });
+  },
+
+  /**
+   * 批⑦：高光分享卡片弹层（非 canvas 方案）。
+   * 零 canvas 硬约束下，微信生图唯一途径（canvas）不可用，故定为「分享卡预览弹层
+   * + 截图引导 + onShareAppMessage title 摘要」：弹层纯 WXML+WXSS 精美排版高光信息，
+   * 引导用户「长按截图可保存到相册」，open-type="share" 按钮带高光摘要 title。
+   * 数据来源：highlightStore.latest() 取最近高光，解码手牌/公共牌/牌型名。
+   */
+  onShareCardShow() {
+    const rec = highlightStore.latest();
+    if (!rec) {
+      wx.showToast({ title: '还没有高光时刻', icon: 'none' });
+      return;
+    }
+    const evals = (rec.result && rec.result.evals) || {};
+    const me = evals[rec.mySeat];
+    const handName = (me && me.name) || highlightStore.summarize(rec, rec.type);
+    const myHole = (rec.myHole || []).map((c, i) => this.cardData(c, i));
+    const board = (rec.board || []).map((c, i) => this.cardData(c, i));
+    this._shareHighlightTitle = '我在「博弈论」打出了' + (rec.summary || handName) + '！';
+    this.setData({
+      shareCardShow: true,
+      shareCardData: {
+        handName: handName,
+        summary: rec.summary || handName,
+        myHole: myHole,
+        board: board,
+        mode: rec.mode || 'ai'
+      }
+    });
+  },
+
+  onShareCardClose() {
+    if (this.data.shareCardShow) this.setData({ shareCardShow: false });
   },
 
   // ---------- 就绪阶段：所有人准备就绪后才发下一手 ----------

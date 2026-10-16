@@ -2031,6 +2031,9 @@ while (guard++ < 400) {
 
     // ---- 对手画像页（批⑥）静态守卫 ----
     guardOpponentProfile(tableSrc, tableWxml, tableWxss, botSrc, saSrc);
+
+    // ---- 高光分享卡片（批⑦）静态守卫 ----
+    guardShareCardIntegration(tableSrc, tableWxml, tableWxss, profSrc, hlSrc);
   })();
 
   /* ---------- 静态守卫函数定义区 ----------
@@ -3329,6 +3332,51 @@ while (guard++ < 400) {
       'style-analyzer.js analyzeOpponent 跟踪 curStreet（action 事件无 street）');
     ok(/本手未行动|本手入池|是|否/.test(saSrc),
       'style-analyzer.js analyzeOpponent 单局布尔级文案（是/否，非百分比）');
+  }
+
+  /**
+   * 批⑦ 高光分享卡片静态守卫：非 canvas 分享卡预览弹层 + 截图引导 + title 摘要。
+   * 覆盖：分享卡弹层 toggle、数据源 highlightStore.latest、截图引导文案、
+   *       onShareAppMessage 高光 title 分支、profile 分享入口、无 canvas、无重排红线。
+   */
+  function guardShareCardIntegration(tableSrc, tableWxml, tableWxss, profSrc, hlSrc) {
+    // ---- table.js 接入 ----
+    ok(/onShareCardShow/.test(tableSrc), 'table.js 定义 onShareCardShow（打开分享卡）');
+    ok(/onShareCardClose/.test(tableSrc), 'table.js 定义 onShareCardClose（关分享卡）');
+    ok(/shareCardShow/.test(tableSrc) && /shareCardData/.test(tableSrc),
+      'table.js data 含 shareCardShow/shareCardData');
+    ok(/_shareHighlightTitle/.test(tableSrc),
+      'table.js 实例字段 _shareHighlightTitle（供 onShareAppMessage 带摘要）');
+    ok(/highlightStore\.latest\(\)/.test(tableSrc),
+      'table.js onShareCardShow 从 highlightStore.latest() 取数据源');
+    ok(/highlightStore\.summarize/.test(tableSrc),
+      'table.js 用 highlightStore.summarize 取高光摘要');
+    ok(/_shareHighlightTitle\s*=/.test(tableSrc),
+      'table.js onShareCardShow 设 _shareHighlightTitle');
+    ok(/onShareAppMessage[\s\S]*_shareHighlightTitle/.test(tableSrc),
+      'table.js onShareAppMessage 优先返回 _shareHighlightTitle 摘要 title');
+
+    // ---- table.wxml ----
+    ok(/class="share-card"/.test(tableWxml), 'table.wxml 含 share-card 分享卡 modal');
+    ok(/分享高光/.test(tableWxml), 'table.wxml 结算弹窗含「分享高光」入口按钮');
+    ok(/长按.*截图/.test(tableWxml), 'table.wxml 含截图引导文案（长按截图保存）');
+    ok(/open-type="share"/.test(tableWxml), 'table.wxml 分享卡含 open-type="share" 按钮');
+    ok(/<canvas/i.test(tableWxml) === false, 'table.wxml 分享卡无 canvas（零 canvas 硬约束）');
+
+    // ---- table.wxss：分享卡无重排红线属性 ----
+    ok(/\.share-card/.test(tableWxss), 'table.wxss 定义 .share-card 系列');
+    const shareCardBlock = tableWxss.match(/\.share-card\s*\{[^}]*\}/);
+    ok(!shareCardBlock || !/transition:\s*(width|top|left)/i.test(shareCardBlock[0]),
+      'table.wxss .share-card 无 width/top/left transition（重排红线）');
+
+    // ---- highlight-store.js（数据源可用） ----
+    ok(/function latest/.test(hlSrc), 'highlight-store.js 导出 latest（分享卡数据源）');
+
+    // ---- profile.js 分享入口 ----
+    ok(/onShareAppMessage/.test(profSrc), 'profile.js 定义 onShareAppMessage（高光摘要 title）');
+    ok(/onShareTimeline/.test(profSrc), 'profile.js 定义 onShareTimeline');
+    ok(/highlightBest\.summary/.test(profSrc) || /best\.summary/.test(profSrc),
+      'profile.js onShareAppMessage 用 highlightBest.summary 作 title');
   }
 
   /* ---------- 输出 ---------- */

@@ -207,6 +207,30 @@ Page({
     wx.navigateTo({ url: '/pages/replay/replay?date=' + best.date + '&from=highlight' });
   },
 
+  /**
+   * 批⑦：分享给好友——onShareAppMessage 带高光摘要 title。
+   * 点「最值得炫耀的一手」旁的「分享」按钮（open-type="share"）触发。
+   * 无高光时退回普通分享文案。profile 页不做分享卡弹层，走 title 摘要最简。
+   */
+  onShareAppMessage() {
+    const best = this.data.highlightBest;
+    if (best && best.summary) {
+      return {
+        title: '我在「博弈论」打出了' + best.summary + '！',
+        path: '/pages/index/index'
+      };
+    }
+    return { title: '博弈论 · 好友房德州扑克', path: '/pages/index/index' };
+  },
+
+  onShareTimeline() {
+    const best = this.data.highlightBest;
+    if (best && best.summary) {
+      return { title: '我在「博弈论」打出了' + best.summary + '！' };
+    }
+    return { title: '博弈论 · 好友房德州扑克' };
+  },
+
   /** 列表触底：加载下一页战绩 */
   onReachBottom() {
     this.loadRecords(false);

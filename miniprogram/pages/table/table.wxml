@@ -442,6 +442,8 @@
 
       <view class="summary-btns">
         <button class="btn-ghost sbtn" bindtap="onReplayTap" wx:if="{{!remoteMode}}">复盘</button>
+        <!-- 批⑦：高光分享入口（有高光存档时显示） -->
+        <button class="btn-ghost sbtn" bindtap="onShareCardShow">分享高光</button>
         <button class="btn-primary sbtn" bindtap="onResultNext">{{remoteMode || readyPhase ? '知道了' : '下一手'}}</button>
       </view>
     </view>
@@ -539,6 +541,37 @@
       </view>
 
       <button class="help-btn" bindtap="onOppCardClose">关闭</button>
+    </view>
+  </view>
+
+  <!-- 批⑦：高光分享卡片（非 canvas 预览弹层）——纯 WXML+WXSS 排版 + 截图引导。
+       零 canvas 硬约束：微信生图唯一途径不可用，定为预览弹层 + open-type="share" 带摘要 title。 -->
+  <view class="help-mask" wx:if="{{shareCardShow}}" bindtap="onShareCardClose">
+    <view class="share-card" catchtap="onBlockTap">
+      <text class="share-card-brand">博弈论 · 德州扑克</text>
+      <text class="share-card-hand">{{shareCardData.handName}}</text>
+      <text class="share-card-summary">{{shareCardData.summary}}</text>
+
+      <view class="share-card-cards">
+        <view class="hc {{c.cls}} {{c.hi ? 'hi' : ''}}" wx:for="{{shareCardData.myHole}}" wx:for-item="c" wx:key="idx">
+          <text class="hc-r">{{c.rank}}</text>
+          <text class="hc-s">{{c.suit}}</text>
+        </view>
+      </view>
+      <text class="share-card-label" wx:if="{{shareCardData.board.length}}">公共牌</text>
+      <view class="share-card-cards" wx:if="{{shareCardData.board.length}}">
+        <view class="hc {{c.cls}}" wx:for="{{shareCardData.board}}" wx:for-item="c" wx:key="idx">
+          <text class="hc-r">{{c.rank}}</text>
+          <text class="hc-s">{{c.suit}}</text>
+        </view>
+      </view>
+
+      <text class="share-card-tip">长按本页截图可保存到相册</text>
+
+      <view class="summary-btns">
+        <button class="btn-ghost sbtn" bindtap="onShareCardClose">关闭</button>
+        <button class="btn-primary sbtn" open-type="share">分享给好友</button>
+      </view>
     </view>
   </view>
 </view>

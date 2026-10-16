@@ -740,6 +740,39 @@
 }
 .help-btn::after { border: none; }
 
+/* ---------- 批⑦：高光分享卡片（非 canvas 预览弹层） ----------
+ * 复用 .hc 牌面与 .summary-btns 按钮；分享卡本体纯排版。
+ * 重排红线：纯 transform/opacity + flex，无 top/left/width transition。
+ * 零 canvas 硬约束（wxml 守卫已断言无 <canvas>）。 */
+.share-card {
+  width: 600rpx; background: linear-gradient(160deg, #1a3a36, #0f2826);
+  border: 1rpx solid rgba(232,163,61,.42); border-radius: calc(3.2 * var(--uh));
+  padding: calc(4 * var(--uh)) calc(4 * var(--uw));
+  display: flex; flex-direction: column; align-items: center;
+}
+.share-card-brand {
+  font-size: calc(2.6 * var(--uh)); color: var(--mut); letter-spacing: 2rpx;
+}
+.share-card-hand {
+  font-size: calc(5.4 * var(--uh)); font-weight: 800; color: var(--gold);
+  margin-top: calc(1.2 * var(--uh)); text-align: center;
+}
+.share-card-summary {
+  font-size: calc(3 * var(--uh)); color: #cfe0d9; margin-top: calc(0.8 * var(--uh));
+  text-align: center;
+}
+.share-card-cards {
+  display: flex; margin-top: calc(2 * var(--uh));
+}
+.share-card-label {
+  font-size: calc(2.4 * var(--uh)); color: var(--mut); margin-top: calc(2 * var(--uh));
+}
+.share-card-tip {
+  font-size: calc(2.4 * var(--uh)); color: #6b7f78; margin-top: calc(2.2 * var(--uh));
+  padding: calc(1 * var(--uh)) calc(2 * var(--uw));
+  border: 1rpx dashed rgba(255,255,255,.16); border-radius: calc(1.6 * var(--uh));
+}
+
 /* ---------- 批⑥：对手画像角色卡（长按头像弹出） ----------
  * 重排红线：风格条 width 静态百分比赋值，不配 transition/keyframes；
  * 零 canvas（硬约束）。纯 transform/opacity 无关本块。 */

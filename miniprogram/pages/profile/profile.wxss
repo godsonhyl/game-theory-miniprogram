@@ -165,6 +165,14 @@
 .badge-best-body { display: flex; flex-direction: column; flex: 1; }
 .badge-best-title { font-size: 26rpx; font-weight: 700; color: #eaf2ee; }
 .badge-best-sub { font-size: 22rpx; color: #9fc3b4; margin-top: 4rpx; }
+/* 批⑦：高光分享按钮——紧凑胶囊，不抢重看入口的视觉 */
+.badge-best-share {
+  font-size: 24rpx; font-weight: 700; color: #1a3a36;
+  background: linear-gradient(160deg, #f4d78a, #d9a441 60%, #b8791f);
+  border: none; border-radius: 999rpx; padding: 0 28rpx; line-height: 60rpx;
+  flex: none; min-width: 96rpx; text-align: center;
+}
+.badge-best-share::after { border: none; }
 
 /* 徽章墙空态 */
 .badge-empty { padding: 24rpx 0; text-align: center; }
