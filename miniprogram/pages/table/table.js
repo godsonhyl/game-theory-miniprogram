@@ -3577,7 +3577,10 @@ Page({
         const legal = game.legalActions(this.mySeat);
         if (legal && game.actionSeat === this.mySeat && !game.result) {
           if (this.data.soundOn) sfx.play('timeout');   // 被动代弃提示
-          if (legal.toCall > 0) this.doAct('call', 0, '跟注', 'act-c');
+          // 超时不替玩家主动下注：有注可跟 → 弃牌（不替玩家跟注，与好友超时
+          // watchFriendAction 同口径）；无注 → 过牌。被动处理应偏保守，不替玩家
+          // 掏筹码（评审 2026-10-16）。
+          if (legal.toCall > 0) this.doAct('fold', 0, '弃牌', 'act-f');
           else this.doAct('check', 0, '过牌', 'act-c');
         }
       }

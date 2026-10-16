@@ -1052,6 +1052,15 @@ while (guard++ < 400) {
       '被动代弃与自动站起各播一声 timeout（中性偏负下行音，共 2 处且都在 soundOn 内）');
     ok(tableSrc.indexOf('被动代弃提示') > 0 && tableSrc.indexOf('被动站起提示') > 0,
       '两处 timeout 各有注释锚点（代弃 vs 站起，防止将来误删一处）');
+    // 超时被动处理偏保守：有注可跟 → 弃牌（不替玩家主动跟注/下注），无注 → 过牌。
+    // 与好友超时 watchFriendAction「自动弃牌」同口径，避免被动处理替玩家掏筹码。
+    const timeoutBlock = (tableSrc.match(/if \(tick <= 0\)\s*\{[\s\S]*?1000\);\r?\n\s*\}/) || [''])[0];
+    ok(/if \(legal\.toCall > 0\) this\.doAct\('fold', 0, '弃牌', 'act-f'\)/.test(timeoutBlock),
+      '超时有注 → 弃牌（不替玩家主动跟注，与好友超时同口径）');
+    ok(/else this\.doAct\('check', 0, '过牌', 'act-c'\)/.test(timeoutBlock),
+      '超时无注 → 过牌（被动处理偏保守，不主动下注）');
+    ok(!/legal\.toCall > 0\) this\.doAct\('call'/.test(timeoutBlock),
+      '超时不再替玩家跟注（旧实现 auto-call 已移除）');
     ok(/this\.data\.soundOn && seat !== this\.mySeat\) sfx\.play\('chat'\)/.test(tableSrc),
       '收到他人/AI 消息播 chat 轻提示；我主动发的（seat===mySeat）不响');
     ok(/pushChat\(this\.mySeat/.test(tableSrc) && tableSrc.indexOf('我主动发，不响提示音') > 0,
