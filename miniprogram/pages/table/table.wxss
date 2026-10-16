@@ -523,6 +523,8 @@
   display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden;
 }
 .mytip.coach { color: #ffd98a; }
+.adv-main { display: block; }
+.adv-explain { font-size: calc(2.6 * var(--uh)); color: #ffd98a; margin-top: calc(0.6 * var(--uh)); line-height: 1.35; }
 
 .mystk { flex: none; display: flex; flex-direction: column; align-items: flex-end; }
 .ms-v { font-size: calc(4.4 * var(--uh)); font-weight: 800; color: var(--gold); line-height: 1.1; }
