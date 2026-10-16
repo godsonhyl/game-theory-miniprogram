@@ -2028,6 +2028,9 @@ while (guard++ < 400) {
     // ---- SNG 淘汰赛（批⑤）静态守卫 ----
     const tableWxss = fs.readFileSync(path.join(__dirname, 'pages', 'table', 'table.wxss'), 'utf8');
     guardSngIntegration(tableSrc, idxSrc, idxWxml, tableWxml, tableWxss, profSrc, hlSrc, sfxSrc);
+
+    // ---- 对手画像页（批⑥）静态守卫 ----
+    guardOpponentProfile(tableSrc, tableWxml, tableWxss, botSrc, saSrc);
   })();
 
   /* ---------- 静态守卫函数定义区 ----------
@@ -3262,6 +3265,70 @@ while (guard++ < 400) {
     ok(/champion\s*\(c,\s*t\)/.test(sfxSrc), 'sfx.js 定义 champion 音色');
     ok(/sfx\.play\(['"]eliminate['"]\)/.test(tableSrc), 'table.js 淘汰播 eliminate 音效');
     ok(/sfx\.play\(['"]champion['"]\)/.test(tableSrc), 'table.js 夺冠播 champion 音效');
+  }
+
+  /**
+   * 批⑥ 对手画像页静态守卫：长按头像弹角色卡，tellPattern 暗线转明线。
+   * 覆盖：longpress 绑定、tap/longpress 冲突防护、角色卡 modal、tellHints、
+   *       analyzeOpponent、style-analyzer 引入、风格条无 canvas/无 width transition。
+   */
+  function guardOpponentProfile(tableSrc, tableWxml, tableWxss, botSrc, saSrc) {
+    // ---- table.js 接入 ----
+    ok(/onAvatarLongPress/.test(tableSrc), 'table.js 定义 onAvatarLongPress（长按头像）');
+    ok(/onOppCardClose/.test(tableSrc), 'table.js 定义 onOppCardClose（关角色卡）');
+    ok(/_computeOppCard/.test(tableSrc), 'table.js 定义 _computeOppCard（构造角色卡数据）');
+    ok(/_buildStyleBars/.test(tableSrc), 'table.js 定义 _buildStyleBars（风格条数组）');
+    ok(/_computeOppStats/.test(tableSrc), 'table.js 定义 _computeOppStats（本局统计）');
+    ok(/oppCardShow/.test(tableSrc) && /oppCardData/.test(tableSrc),
+      'table.js data 含 oppCardShow/oppCardData（角色卡 modal toggle）');
+    ok(/require\(['"].+style-analyzer['"]\)/.test(tableSrc),
+      'table.js 引入 style-analyzer（analyzeOpponent 数据源）');
+    // tap/longpress 冲突防护
+    ok(/_longPressFlag/.test(tableSrc),
+      'table.js onAvatarTap 检查 _longPressFlag（长按后拦误触 tap）');
+    // botProfiles.tellHints 调用
+    ok(/botProfiles\.tellHints/.test(tableSrc),
+      'table.js 调 botProfiles.tellHints（马脚转文案）');
+    // analyzeOpponent 调用
+    ok(/styleAnalyzer\.analyzeOpponent/.test(tableSrc),
+      'table.js 调 styleAnalyzer.analyzeOpponent（单对手单局统计）');
+
+    // ---- table.wxml ----
+    ok(/catchlongpress="onAvatarLongPress"/.test(tableWxml),
+      'table.wxml avatar 绑 catchlongpress');
+    ok(/class="opp-card"/.test(tableWxml), 'table.wxml 含 opp-card 角色卡 modal');
+    ok(/opp-bar-fill/.test(tableWxml), 'table.wxml 含风格条 opp-bar-fill');
+    ok(/opp-hint/.test(tableWxml), 'table.wxml 含马脚提示 opp-hint');
+    ok(/opp-stat/.test(tableWxml), 'table.wxml 含本局统计 opp-stat');
+    ok(/<canvas/i.test(tableWxml) === false, 'table.wxml 角色卡无 canvas（零 canvas 硬约束）');
+
+    // ---- table.wxss：风格条无 width transition（重排红线） ----
+    ok(/\.opp-bar-fill/.test(tableWxss), 'table.wxss 定义 .opp-bar-fill');
+    ok(/\.opp-card/.test(tableWxss), 'table.wxss 定义 .opp-card 系列');
+    // .opp-bar-fill 块内不得出现 transition（width transition 是重排红线）
+    const oppBarFillBlock = tableWxss.match(/\.opp-bar-fill\s*\{[^}]*\}/);
+    ok(!oppBarFillBlock || !/transition/i.test(oppBarFillBlock[0]),
+      'table.wxss .opp-bar-fill 无 transition（width 静态赋值，重排红线）');
+
+    // ---- bot-profiles.js tellHints ----
+    ok(/function tellHints/.test(botSrc), 'bot-profiles.js 定义 tellHints');
+    ok(/bluffFast/.test(botSrc) && /诈唬时反应急促/.test(botSrc),
+      'bot-profiles.js tellHints 含 bluffFast 文案');
+    ok(/bluffSilent/.test(botSrc) && /诈唬时突然沉默/.test(botSrc),
+      'bot-profiles.js tellHints 含 bluffSilent 文案');
+    ok(/bluffTalkBoost/.test(botSrc) && /诈唬时话变多/.test(botSrc),
+      'bot-profiles.js tellHints 含 bluffTalkBoost 文案');
+    ok(/tellHints/.test(botSrc.replace(/^[\s\S]*module.exports/, '')),
+      'bot-profiles.js 导出 tellHints');
+
+    // ---- style-analyzer.js analyzeOpponent ----
+    ok(/function analyzeOpponent/.test(saSrc), 'style-analyzer.js 定义 analyzeOpponent');
+    ok(/analyzeOpponent/.test(saSrc.replace(/^[\s\S]*module.exports/, '')),
+      'style-analyzer.js 导出 analyzeOpponent');
+    ok(/curStreet/.test(saSrc) && /type === 'street'/.test(saSrc),
+      'style-analyzer.js analyzeOpponent 跟踪 curStreet（action 事件无 street）');
+    ok(/本手未行动|本手入池|是|否/.test(saSrc),
+      'style-analyzer.js analyzeOpponent 单局布尔级文案（是/否，非百分比）');
   }
 
   /* ---------- 输出 ---------- */

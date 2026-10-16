@@ -161,4 +161,47 @@ function analyze(list) {
   };
 }
 
-module.exports = { analyze, VPipMin, AGG_PASSIVE, AGG_AGGRESSIVE };
+/**
+ * 单对手单局（或单局 events）风格统计（批⑥ 对手画像页用）。
+ *
+ * 与 analyze() 的区别：analyze 吃 replay-store 多局记录算「我」的画像；
+ * 本函数吃一局 events（或单条复盘记录），按 oppSeat 过滤、统计该对手在本局
+ * 的翻前入池 / 翻后激进度。单局样本是布尔级（入池：是/否），文案用「是/否」
+ * 而非百分比——明确告知玩家这只是「本手观察」，不是长期画像。
+ *
+ * @param {Array} events 一局的 events 数组（含虚拟 blind action 与 street 事件）
+ * @param {number} oppSeat 要统计的对手座位
+ * @returns {object} { vpip:boolean, vpipText, postAgg, postCall, aggText, sample:1 }
+ *   样本不足（events 空或无该座位 action）时 vpip=null、vpipText='本手未行动'。
+ */
+function analyzeOpponent(events, oppSeat) {
+  const evs = Array.isArray(events) ? events : [];
+  let vpip = null;          // null = 未行动（无信息），true/false = 入池与否
+  let postAgg = 0;
+  let postCall = 0;
+  let acted = false;
+  let curStreet = 'preflop';   // 同 analyze：跟踪街（action 事件无 street）
+  evs.forEach(e => {
+    if (!e) return;
+    if (e.type === 'street') { curStreet = e.street; return; }
+    if (e.type !== 'action' || e.seat !== oppSeat) return;
+    acted = true;
+    const st = curStreet;
+    const action = e.action;
+    if (st === 'preflop') {
+      // 同 analyze 口径：blind（被动投）与 check（大盲免费看过）不计自愿。
+      if (action === 'call' || action === 'raise' || action === 'allin') vpip = true;
+      else if (vpip === null) vpip = false;   // blind/check 记「未自愿入池」（暂）
+    } else if (st !== 'showdown') {
+      if (action === 'raise' || action === 'allin') postAgg++;
+      else if (action === 'call') postCall++;
+    }
+  });
+  if (!acted) return { vpip: null, vpipText: '本手未行动', postAgg: 0, postCall: 0, aggText: '—', sample: 1 };
+  const vpipText = vpip ? '是' : '否';
+  const agg = postAgg / Math.max(postCall, 1);
+  const aggText = (postAgg + postCall) > 0 ? agg.toFixed(2) + ' : 1' : '本手翻后未行动';
+  return { vpip: !!vpip, vpipText, postAgg, postCall, aggText, sample: 1 };
+}
+
+module.exports = { analyze, analyzeOpponent, VPipMin, AGG_PASSIVE, AGG_AGGRESSIVE };

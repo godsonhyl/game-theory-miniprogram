@@ -18,6 +18,7 @@ const replayStore = require('../../utils/replay-store');   // 对局复盘缓存
 const highlightStore = require('../../utils/highlight-store'); // 高光时刻存档（本地，结算时判定收割）
 const advisor = require('../../utils/advisor');   // AI 教学提示文案（起手牌分类 + 牌理解释，仅练习模式）
 const botProfiles = require('../../utils/bot-profiles'); // AI 角色档案：5 角色 style + 台词 + 马脚（批②）
+const styleAnalyzer = require('../../utils/style-analyzer'); // 风格分析：analyzeOpponent 给对手画像页用（批⑥）
 
 /**
  * 单次行动倒计时（秒）：计时环按此值计算进度。
@@ -327,6 +328,9 @@ Page({
     flyIn: [],             // 收池筹码飞行：底池 → 赢家 [{x, y, tx, ty, delay, key}]
     streaks: {},           // 座位 → 连胜徽章文案（'' = 不显示，如 '🔥 x2'）
     winFx: '',             // 本手赢家座位列表（逗号串，wxml 给座位加金光脉冲 class）
+    // 批⑥：对手画像角色卡（长按头像弹出）——独立 modal toggle，不进三道脏检查指纹
+    oppCardShow: false,
+    oppCardData: null,      // { name, trait, desc, styleBars, tellHints, oppStats }
     helpRows: [
       { name: '翻牌前', desc: '每人两张底牌，大小盲先行下注' },
       { name: '翻牌', desc: '发出 3 张公共牌，开始第二轮下注' },
@@ -2882,7 +2886,90 @@ Page({
   onAvatarTap(e) {
     const seat = Number(e.currentTarget.dataset.seat);
     if (isNaN(seat) || seat < 0) return;
+    // 批⑥：长按触发 onAvatarLongPress 后仍可能冒泡一次 tap（微信 longpress 不阻断
+    // 后续 tap），用短时标记拦住——长按后短时间内来的 tap 当作误触跳过，不弹表情轮盘。
+    if (this._longPressFlag) { this._longPressFlag = false; return; }
     this.setData({ emoteShow: true, emoteSeat: seat });
+  },
+
+  /**
+   * 批⑥：长按头像弹「对手画像」角色卡。
+   * 仓库首个 longpress。AI 对手显示固定角色档案（性格/打法/马脚/本局统计）；
+   * 真人好友对手无固定档案，只显示本局统计。空位不长按。
+   */
+  onAvatarLongPress(e) {
+    const seat = Number(e.currentTarget.dataset.seat);
+    if (isNaN(seat) || seat < 0) return;
+    this._longPressFlag = true;   // 拦住紧随其后的 tap（防误弹表情轮盘）
+    const data = this._computeOppCard(seat);
+    if (!data) return;
+    this.setData({ oppCardShow: true, oppCardData: data });
+  },
+
+  /** 关对手画像角色卡 */
+  onOppCardClose() {
+    if (this.data.oppCardShow) this.setData({ oppCardShow: false, oppCardData: null });
+  },
+
+  /**
+   * 构造对手画像角色卡数据。
+   *  - AI 对战（mode==='ai'）：按机器人序号查 botProfiles.profileFor，取性格/打法/马脚；
+   *    打法风格条用纯 CSS width 百分比静态赋值（无 canvas、无 transition）。
+   *  - 好友房真人：无固定档案，name 取座位显示名，性格/马脚留空，仅展示本局统计。
+   *  本局统计从 game.events 切本手（最后一个 hand_start 之后）调 analyzeOpponent。
+   */
+  _computeOppCard(seat) {
+    if (!game) return null;
+    const p = game.seatOf(seat);
+    if (!p) return null;
+    // 判机器人序号（同 scheduleAI 口径：小于等于本座位的 Bot 数 - 1）
+    const isAiBot = this.mode === 'ai' && this.botSeats[seat];
+    let botIdx = -1;
+    if (isAiBot) {
+      botIdx = Math.max(0, game.players.filter(x => this.botSeats[x.seat] && x.seat <= seat).length - 1);
+    }
+    const profile = botIdx >= 0 ? botProfiles.profileFor(botIdx) : null;
+    // 打法风格条：6 字段 → 百分比（纯 CSS width 静态赋值，无 transition/keyframes）
+    const styleBars = profile ? this._buildStyleBars(profile.style) : [];
+    const tellHints = profile ? botProfiles.tellHints(profile) : [];
+    // 本局统计：切本手 events
+    const oppStats = this._computeOppStats(seat);
+    return {
+      name: p.name || (this.mode === 'friend' ? '好友' : '对手'),
+      initial: (p.name || '?').slice(0, 1),
+      trait: profile ? profile.trait : '',
+      desc: profile ? profile.desc : '真人好友 · 无固定角色档案',
+      isBot: !!profile,
+      styleBars,
+      tellHints,
+      oppStats
+    };
+  },
+
+  /** 把 style 6 字段转风格条数组（每项 {label, pct}），pct = 字段值*100 取整。 */
+  _buildStyleBars(style) {
+    if (!style) return [];
+    return [
+      { label: '激进', pct: Math.round((style.aggro || 0) * 100) },
+      { label: '紧度', pct: Math.round((style.tight || 0) * 100) },
+      { label: '诈唬', pct: Math.round((style.bluffFreq || 0) * 100) },
+      { label: '英雄跟', pct: Math.round((style.heroCall || 0) * 100) },
+      { label: '慢打', pct: Math.round((style.slowplay || 0) * 100) }
+    ];
+  },
+
+  /** 切本手 events 调 analyzeOpponent 算单对手单局统计。 */
+  _computeOppStats(seat) {
+    if (!game || !game.events) return null;
+    const evs = game.events;
+    // 找最后一个 hand_start（本手起点）
+    let lastStart = -1;
+    for (let i = evs.length - 1; i >= 0; i--) {
+      if (evs[i] && evs[i].type === 'hand_start') { lastStart = i; break; }
+    }
+    if (lastStart < 0) return null;
+    const handEvs = evs.slice(lastStart);
+    return styleAnalyzer.analyzeOpponent(handEvs, seat);
   },
 
   /** 关表情轮盘（点遮罩/选完都走这里） */

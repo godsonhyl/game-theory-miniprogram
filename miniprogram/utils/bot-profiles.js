@@ -178,11 +178,32 @@ function pickTalk(profile, scene) {
   return pool[Math.floor(Math.random() * pool.length)];
 }
 
+/**
+ * 把角色的 tellPattern（马脚）转可读提示文案（批⑥ 对手画像页明线用）。
+ *
+ * tellPattern 原为「暗线」——只在 scheduleAI 内部消费（反应时间/聊天频率），
+ * 从不暴露 UI。本函数把它转成玩家可见的「读人提示」，让长按头像弹出的角色卡
+ * 里能看到该角色的马脚线索。马脚是「线索」非确定信号，文案用「倾向」措辞。
+ *
+ * @param {object} profile PROFILES 元素（profileFor 返回值）
+ * @returns {string[]} 可读提示文案数组（无马脚返回空数组）
+ */
+function tellHints(profile) {
+  if (!profile || !profile.tellPattern) return [];
+  const t = profile.tellPattern;
+  const hints = [];
+  if (t.bluffFast) hints.push('诈唬时反应急促（心虚）');
+  if (t.bluffSilent) hints.push('诈唬时突然沉默（反常）');
+  if (t.bluffTalkBoost) hints.push('诈唬时话变多（掩饰）');
+  return hints;
+}
+
 module.exports = {
   PROFILES,
   LEVEL_MOD,
   styleFor,
   profileFor,
   sceneOf,
-  pickTalk
+  pickTalk,
+  tellHints
 };

@@ -82,7 +82,7 @@
         <!-- 本轮下注：筹码堆 + 金额 -->
         <view class="seat-bet" wx:if="{{item.bet > 0}}"><view class="bet-chip"></view>{{item.bet}}</view>
 
-        <view class="avatar" catchtap="onAvatarTap" data-seat="{{item.seat}}">
+        <view class="avatar" catchtap="onAvatarTap" catchlongpress="onAvatarLongPress" data-seat="{{item.seat}}">
           <text wx:if="{{item.empty}}">＋</text>
           <text wx:else>{{item.initial}}</text>
           <view class="dealer" wx:if="{{item.isDealer}}">D</view>
@@ -494,6 +494,51 @@
               data-e="{{em.e}}" bindtap="onEmotePick">{{em.e}}</view>
       </view>
       <view class="emote-talk" bindtap="onEmoteTalk">💬 快捷语</view>
+    </view>
+  </view>
+
+  <!-- 批⑥：对手画像角色卡（长按头像弹出）——非 canvas 纯排版，复用 help-mask 模式。
+       AI 对手显示角色档案（性格/打法风格条/马脚/本局统计），真人好友仅本局统计。 -->
+  <view class="help-mask" wx:if="{{oppCardShow}}" bindtap="onOppCardClose">
+    <view class="opp-card" catchtap="onBlockTap">
+      <view class="opp-head">
+        <view class="opp-avatar">{{oppCardData.initial}}</view>
+        <view class="opp-head-info">
+          <text class="opp-name">{{oppCardData.name}}</text>
+          <text class="opp-trait" wx:if="{{oppCardData.trait}}">{{oppCardData.trait}}</text>
+          <text class="opp-desc">{{oppCardData.desc}}</text>
+        </view>
+      </view>
+
+      <!-- 打法风格条：纯 CSS width 静态赋值（无 canvas、无 transition） -->
+      <view class="opp-section" wx:if="{{oppCardData.styleBars.length}}">
+        <text class="opp-sec-title">打法风格</text>
+        <view class="opp-bar" wx:for="{{oppCardData.styleBars}}" wx:key="label">
+          <text class="opp-bar-label">{{item.label}}</text>
+          <view class="opp-bar-track"><view class="opp-bar-fill" style="width:{{item.pct}}%"></view></view>
+        </view>
+      </view>
+
+      <!-- 马脚明线提示（tellPattern 转可读文案） -->
+      <view class="opp-section" wx:if="{{oppCardData.tellHints.length}}">
+        <text class="opp-sec-title">读人提示</text>
+        <text class="opp-hint" wx:for="{{oppCardData.tellHints}}" wx:key="*this">· {{item}}</text>
+      </view>
+
+      <!-- 本局统计（单局布尔级 VPIP） -->
+      <view class="opp-section" wx:if="{{oppCardData.oppStats}}">
+        <text class="opp-sec-title">本局观察</text>
+        <view class="opp-stat-row">
+          <text class="opp-stat-k">本手入池</text>
+          <text class="opp-stat-v">{{oppCardData.oppStats.vpipText}}</text>
+        </view>
+        <view class="opp-stat-row">
+          <text class="opp-stat-k">翻后激进度</text>
+          <text class="opp-stat-v">{{oppCardData.oppStats.aggText}}</text>
+        </view>
+      </view>
+
+      <button class="help-btn" bindtap="onOppCardClose">关闭</button>
     </view>
   </view>
 </view>
