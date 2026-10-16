@@ -4,11 +4,12 @@
  */
 let failures = [];
 let passes = 0;
+const toasts = [];
 function ok(c, l) { if (c) passes++; else failures.push(l); }
 
 global.wx = {
   login: ({ success }) => success({ code: 'mock' }),
-  showToast: () => {},
+  showToast: o => { toasts.push(o.title); },
   // 与真实 wx.showModal 语义一致：确认与取消都回调 success（取消时 res.cancel=true、
   // confirm=false），只有弹窗本身失败才走 fail。此前 mock 没有 cancel 分支，取消时
   // 什么也不回调——依赖它的「取消删除」用例验证的不是真机会走的路径（评审 MEDIUM）。
@@ -366,6 +367,71 @@ const pageCtx = Object.assign({}, cfg, {
   ok(typeof cfg.onShareTimeline === 'function', 'index.js 定义了 onShareTimeline');
   const tl = pageCtx.onShareTimeline();
   ok(tl && tl.title.indexOf('博弈论') >= 0, 'onShareTimeline 返回带标题的分享内容');
+
+  /* ---------- 领卡失败 UI 分支：onClaimDaily / onClaimHands 的 toast 与 loading 配对 ----------
+   * auth 层乐观锁/并发在 test-cards.js 已充分覆盖，此处补页面层：
+   *   ① 每日领取成功 → toast「+N 张房卡」并刷新展示；
+   *   ② 每日领取已领过（ok:false）→ toast「今日已领取」；
+   *   ③ 对局奖励无可领（ok:false）→ toast「再打 N 手」；
+   *   ④ 底层抛错 → catch toast「领取失败」且 hideLoading 必被调用（防转圈卡死）。
+   * toasts 数组捕获 showToast 标题，hideLoading 用计数器验证配对。 */
+  {
+    const origClaimDaily = authMod.auth.claimDailyCards;
+    const origClaimHands = authMod.auth.claimHandBonus;
+    let hideCount = 0;
+    const origHide = global.wx.hideLoading;
+    global.wx.hideLoading = () => { hideCount++; };
+
+    // ① 每日领取成功
+    authMod.auth.claimDailyCards = async () => ({ ok: true, gained: 2, roomCards: 14 });
+    toasts.length = 0; hideCount = 0;
+    await pageCtx.onClaimDaily();
+    ok(toasts.indexOf('+2 张房卡') >= 0, '每日领取成功 → toast「+2 张房卡」');
+    ok(dataStore.roomCards === 14, '每日领取成功后 roomCards 刷新展示');
+    ok(hideCount === 1, '每日领取成功路径调用 hideLoading 收起转圈');
+
+    // ② 每日领取已领过（ok:false）
+    authMod.auth.claimDailyCards = async () => ({ ok: false, reason: '今日已领取，明天再来', roomCards: 12 });
+    toasts.length = 0; hideCount = 0;
+    await pageCtx.onClaimDaily();
+    ok(toasts.indexOf('今日已领取，明天再来') >= 0,
+      '每日领取已领过 → toast 显示 reason「今日已领取，明天再来」');
+    ok(hideCount === 1, '每日领取 ok:false 路径也调用 hideLoading（不卡转圈）');
+
+    // ④ 每日领取底层抛错 → catch toast「领取失败」
+    authMod.auth.claimDailyCards = async () => { throw new Error('网络异常'); };
+    toasts.length = 0; hideCount = 0;
+    await pageCtx.onClaimDaily();
+    ok(toasts.indexOf('网络异常') >= 0, '每日领取底层抛错 → toast 显示错误信息');
+    ok(hideCount === 1, '每日领取抛错路径调用 hideLoading（catch 内不漏收转圈）');
+
+    // ①' 对局奖励成功
+    authMod.auth.claimHandBonus = async () => ({ ok: true, gained: 1, roomCards: 15 });
+    toasts.length = 0; hideCount = 0;
+    await pageCtx.onClaimHands();
+    ok(toasts.indexOf('+1 张房卡') >= 0, '对局奖励成功 → toast「+1 张房卡」');
+    ok(dataStore.roomCards === 15, '对局奖励成功后 roomCards 刷新展示');
+    ok(hideCount === 1, '对局奖励成功路径调用 hideLoading 收起转圈');
+
+    // ③ 对局奖励无可领（ok:false）
+    authMod.auth.claimHandBonus = async () => ({ ok: false, reason: '再打 3 手可领 1 张', roomCards: 15 });
+    toasts.length = 0; hideCount = 0;
+    await pageCtx.onClaimHands();
+    ok(toasts.indexOf('再打 3 手可领 1 张') >= 0,
+      '对局奖励无可领 → toast 显示 reason「再打 3 手可领 1 张」');
+    ok(hideCount === 1, '对局奖励 ok:false 路径也调用 hideLoading（不卡转圈）');
+
+    // ④' 对局奖励底层抛错 → catch toast
+    authMod.auth.claimHandBonus = async () => { throw new Error('发放失败'); };
+    toasts.length = 0; hideCount = 0;
+    await pageCtx.onClaimHands();
+    ok(toasts.indexOf('发放失败') >= 0, '对局奖励底层抛错 → toast 显示错误信息');
+    ok(hideCount === 1, '对局奖励抛错路径调用 hideLoading（catch 内不漏收转圈）');
+
+    global.wx.hideLoading = origHide;
+    authMod.auth.claimDailyCards = origClaimDaily;
+    authMod.auth.claimHandBonus = origClaimHands;
+  }
 
   /* ---------- 加入防抖 + showLoading mask ---------- */
   ok(/this\.joining/.test(require('fs').readFileSync(require('path').join(__dirname, 'pages/index/index.js'), 'utf8')),
