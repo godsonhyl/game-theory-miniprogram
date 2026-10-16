@@ -13,6 +13,7 @@
  */
 const P = require('../../core/poker-core.js');
 const puzzles = require('../../utils/puzzles');
+const highlightStore = require('../../utils/highlight-store');
 
 const EQUITY_ITERS = 1200;   // 胜率蒙特卡洛迭代数（教学场景，1200 够稳且快）
 
@@ -36,6 +37,26 @@ Page({
   },
 
   onLoad(query) {
+    // 批⑧：真人局回放——从高光存档构造「你当时在这里」题目
+    const from = query.from;
+    if (from === 'highlight') {
+      const date = Number(query.date);
+      const rec = date ? highlightStore.findByDate(date) : null;
+      if (!rec) {
+        wx.showToast({ title: '高光记录不存在', icon: 'none' });
+        setTimeout(() => wx.navigateBack(), 800);
+        return;
+      }
+      const p = puzzles.fromHighlight(rec, P.quickEquity, P.createRng());
+      if (!p) {
+        wx.showToast({ title: '无法构造题目', icon: 'none' });
+        setTimeout(() => wx.navigateBack(), 800);
+        return;
+      }
+      this._loadPuzzle(p);
+      return;
+    }
+    // 硬编码题库：按 id 定位，否则按日期取当天题
     const id = query.id;
     let p = id ? puzzles.findById(id) : null;
     if (!p) p = puzzles.puzzleForDate(new Date());
@@ -44,6 +65,12 @@ Page({
       setTimeout(() => wx.navigateBack(), 800);
       return;
     }
+    this._loadPuzzle(p);
+  },
+
+  /** 加载一题（硬编码题与真人局高光题共用）：解码牌面、算胜率/赔率、setData。
+   *  提取自 onLoad，避免 from=highlight 分支与硬编码分支重复解码/胜率逻辑。 */
+  _loadPuzzle(p) {
     const myHoleCards = p.setup.myHole.map(decodeCard).filter(Boolean);
     const boardCards = p.setup.board.map(decodeCard).filter(Boolean);
     // 算胜率与赔率（onLoad 即算好，揭示时直接显示；胜率固定不随 RNG 抖动）

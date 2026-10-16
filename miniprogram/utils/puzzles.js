@@ -150,4 +150,149 @@ function findById(id) {
   return PUZZLES.filter(p => p.id === id)[0] || null;
 }
 
-module.exports = { PUZZLES, puzzleForDate, findById };
+/**
+ * 从高光存档构造「真人局」题目（批⑧）
+ *
+ * 把玩家自己打出的高光回放成一道「你当时在这里，怎么打？」的题——遍历高光记录的
+ * events 流，定位「我方第一个非 blind 的 action 前」的决策点快照（手牌/公共牌/底池/
+ * 要跟额度），用 quickEquity 算参考胜率，按胜率 vs 赔率给推荐动作。
+ *
+ * 设计要点（与 replay.js buildStreets / style-analyzer 同源约束）：
+ * - 引擎 action 事件 emit 时**不带 street 字段**，必须靠 type:'street' 事件跟踪
+ *   curStreet（与 replay.js buildStreets / style-analyzer.analyze 完全同法）。
+ * - 高光可能翻前只有 blind（我方是大盲免费看过），此时翻前无我方决策点——遍历不限街，
+ *   找「第一个非 blind 的我方 action 前」的快照；若该 action 在翻后，board 已有牌，
+ *   quickEquity 仍能正常算。
+ * - toCall 反算：currentBet（到该街为止的最高单注）- 我方已投（myBet，按 action amount
+ *   累加，blind 计入）。与 replay-store buildStreets 累加口径一致（已有先例）。
+ * - 零引擎依赖：quickEquityFn / rng 由调用方（puzzle.js）注入，本文件不 require
+ *   poker-core，保持 puzzles.js 零引擎依赖（教学数据模块的纯粹性）。
+ * - 无法构造（我方从未非 blind 行动 / events 缺失）返回 null。
+ *
+ * @param rec 高光存档记录（highlightStore.findByDate 返回值）
+ * @param quickEquityFn 引擎 quickEquity（只读），签名 (hole,board,opponents,iters,rng)
+ * @param rng 引擎 RNG（P.createRng()）
+ * @returns 题对象（含 fromHighlight:true,date 标记）或 null
+ */
+function fromHighlight(rec, quickEquityFn, rng) {
+  if (!rec || !rec.events || !rec.events.length) return null;
+  const mySeat = rec.mySeat;
+  let curStreet = 'preflop';
+  let board = [];
+  let pot = 0;
+  let currentBet = 0;          // 到该街为止的最高单注（用于反算 toCall）
+  let myBet = 0;               // 我方已投（盲注 + 主动投）
+
+  for (let i = 0; i < rec.events.length; i++) {
+    const e = rec.events[i];
+    if (!e) continue;
+    // 跟踪当前街（action 事件无 street，靠 street 事件推进）
+    if (e.type === 'street') {
+      curStreet = e.street;
+      // 新街开始时重置 currentBet/myBet（与引擎每街重置 currentBet 同口径）
+      currentBet = 0;
+      myBet = 0;
+      continue;
+    }
+    if (e.type === 'deal') {
+      (e.cards || []).forEach(c => { if (board.indexOf(c) < 0) board.push(c); });
+      continue;
+    }
+    if (e.type !== 'action') continue;
+    const amt = Number(e.amount) || 0;
+
+    // 找到「我方第一个非 blind 的 action」前的快照作为决策点
+    if (e.seat === mySeat && e.action !== 'blind') {
+      const toCall = Math.max(0, currentBet - myBet);
+      // 估算我方剩余筹码：高光存档有 players[].endStack，但那是结算后；近似用 setup 口径
+      // 高光 rec 无 startStack 字段，用 rec.players[mySeat].endStack + 本手已投作近似兜底
+      const myPlayer = (rec.players || []).filter(p => p.seat === mySeat)[0] || {};
+      const stack = (myPlayer.endStack || 0) + myBet + amt;
+      // 活跃人数：到该决策点为止仍在本手的人数（粗算——有非 fold action 的不同 seat 数 + 我方）
+      const seen = {};
+      let activeSeats = 0;
+      for (let j = 0; j <= i; j++) {
+        const a = rec.events[j];
+        if (a && a.type === 'action' && a.action !== 'fold' && a.action !== 'blind' && a.seat !== undefined) {
+          if (!seen[a.seat]) { seen[a.seat] = 1; activeSeats++; }
+        }
+      }
+      // 至少含我方
+      if (!seen[mySeat]) activeSeats++;
+      const numActive = Math.max(2, activeSeats);
+      const opponents = Math.max(1, numActive - 1);
+
+      const eq = quickEquityFn(rec.myHole, board, opponents, 1200, rng);
+      const potOdds = toCall > 0 ? toCall / (pot + toCall) : 0;
+
+      // 推荐动作：胜率 > 赔率+0.06 → call（胜率高于赔率值得跟）；toCall=0 → check；否则 fold
+      let action = 'fold', reason;
+      const eqPct = Math.round(eq.equity * 100);
+      const oddsPct = Math.round(potOdds * 100);
+      if (toCall === 0) {
+        action = 'check';
+        reason = '无需跟注，可免费看牌（过牌控制节奏）';
+      } else if (eq.equity > potOdds + 0.06) {
+        action = 'call';
+        reason = '胜率 ' + eqPct + '% 高于赔率 ' + oddsPct + '%，值得跟注';
+      } else {
+        action = 'fold';
+        reason = '胜率 ' + eqPct + '% 低于赔率 ' + oddsPct + '%，建议弃牌';
+      }
+
+      return {
+        id: 'hl-' + rec.date,
+        title: '真人局回放 · 第' + rec.handNo + '手',
+        desc: '这是你自己打出的一手高光。当时手持 ' + _holeStr(rec.myHole) +
+              '，公共牌 ' + _boardStr(board) + '，底池 ' + pot + '，要跟 ' + toCall + '。你怎么打？',
+        setup: {
+          myHole: rec.myHole,
+          board: board,
+          pot: pot,
+          toCall: toCall,
+          stack: stack,
+          currentBet: currentBet,
+          numActive: numActive,
+          street: curStreet,
+          opponents: opponents
+        },
+        answer: { action: action, reason: reason },
+        minEquity: eq.equity,
+        fromHighlight: true,
+        date: rec.date
+      };
+    }
+
+    // 累积 pot / currentBet / myBet（在该 action 之后，供下一个决策点用）
+    pot += amt;
+    if (e.action !== 'fold') {
+      // raise/call/allin 按「本轮总投」口径累加到 currentBet（与引擎 currentBet 近似）
+      if (amt > currentBet) currentBet = amt;
+    }
+    if (e.seat === mySeat) myBet += amt;
+  }
+  return null;
+}
+
+/** 底牌转可读串（如「A♠ K♥」）——解码依赖 RANK_DISPLAY/SUIT_CHARS。 */
+function _holeStr(hole) {
+  if (!hole || !hole.length) return '—';
+  return hole.map(_cardStr).join(' ');
+}
+
+/** 公共牌转可读串。 */
+function _boardStr(board) {
+  if (!board || !board.length) return '无';
+  return board.map(_cardStr).join(' ');
+}
+
+/** 单张牌转可读串（RANK_DISPLAY 机读 + 花色字符）。纯算术，无引擎依赖。 */
+function _cardStr(id) {
+  if (id == null) return '?';
+  const r = id >> 2, s = id & 3;     // 位运算口径，括号由优先级保证（>> & 低于赋值但此处独立）
+  const RANK_DISPLAY = ['2','3','4','5','6','7','8','9','T','J','Q','K','A'];
+  const SUIT_CHARS = ['♠','♣','♦','♥'];
+  return (RANK_DISPLAY[r] || '?') + (SUIT_CHARS[s] || '?');
+}
+
+module.exports = { PUZZLES, puzzleForDate, findById, fromHighlight };

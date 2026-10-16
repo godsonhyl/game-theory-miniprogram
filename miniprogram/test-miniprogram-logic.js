@@ -2013,6 +2013,7 @@ while (guard++ < 400) {
     const idxWxml = fs.readFileSync(path.join(__dirname, 'pages', 'index', 'index.wxml'), 'utf8');
     const appJson = fs.readFileSync(path.join(__dirname, 'app.json'), 'utf8');
     guardPuzzleIntegration(puzzleSrc, pzPageSrc, pzWxml, pzWxss, idxSrc, idxWxml, replaySrc, appJson);
+    guardFromHighlightIntegration(puzzleSrc, pzPageSrc, pzWxml);
 
     // ---- AI 人格化组（批②）行为级 + 静态守卫 ----
     const botSrc = fs.readFileSync(path.join(__dirname, 'utils', 'bot-profiles.js'), 'utf8');
@@ -2979,6 +2980,43 @@ while (guard++ < 400) {
     // 注：当前 puzzle 自带揭示页，from=puzzle 为预留方向；此处仅断言不破坏既有 from 分支
     ok(/from\s*===\s*['"]highlight['"]/.test(replaySrc),
       'replay.js 仍保留 from=highlight 分支（puzzle 未破坏既有高光回看）');
+  }
+
+  /* 每日一题真人局化（批⑧）静态守卫：fromHighlight 题源 + puzzle.js from=highlight 分支。
+     高光存档的 events 流 → 「你当时在这里」题目。零引擎依赖（quickEquity 函数注入）。 */
+  function guardFromHighlightIntegration(puzzleSrc, pzPageSrc, pzWxml) {
+    // ---- puzzles.js fromHighlight 题源约束 ----
+    ok(/fromHighlight/.test(puzzleSrc), 'puzzles.js 导出 fromHighlight（高光题源）');
+    ok(/module\.exports[\s\S]*fromHighlight/.test(puzzleSrc),
+      'puzzles.js 导出表含 fromHighlight');
+    ok(/quickEquityFn/.test(puzzleSrc),
+      'fromHighlight 接收 quickEquityFn 函数参数（零引擎依赖，puzzles.js 不直接 require poker-core）');
+    ok(/curStreet\s*=\s*['"]preflop['"]/.test(puzzleSrc),
+      'fromHighlight 用 curStreet 跟踪（引擎 action 事件无 street）');
+    ok(/fromHighlight/.test(puzzleSrc) && /action\s*!==\s*['"]blind['"]/.test(puzzleSrc),
+      'fromHighlight 跳过 blind 动作定位我方决策点');
+    ok(/potOdds/.test(puzzleSrc),
+      'fromHighlight 算赔率 potOdds（toCall/(pot+toCall)）');
+    ok(!/require\(['"].+poker-core['"]\)/.test(puzzleSrc),
+      'puzzles.js 不直接引入引擎（fromHighlight 接收 quickEquityFn 函数参数，保持零引擎依赖）');
+
+    // ---- puzzle.js from=highlight 分支约束 ----
+    ok(/from\s*===\s*['"]highlight['"]/.test(pzPageSrc),
+      'puzzle.js 识别 from=highlight 分支（高光真人局题源）');
+    ok(/highlightStore\.findByDate/.test(pzPageSrc),
+      'puzzle.js 用 highlightStore.findByDate 取高光记录');
+    ok(/require\(['"].+highlight-store['"]\)/.test(pzPageSrc),
+      'puzzle.js 引入 highlight-store');
+    ok(/puzzles\.fromHighlight/.test(pzPageSrc),
+      'puzzle.js 调 puzzles.fromHighlight 构造真人局题目');
+    ok(/_loadPuzzle/.test(pzPageSrc),
+      'puzzle.js 提取 _loadPuzzle 公共方法（硬编码题与高光题共用）');
+
+    // ---- puzzle.wxml 真人局标识约束 ----
+    ok(/fromHighlight/.test(pzWxml),
+      'puzzle.wxml 含真人局回放标识（fromHighlight 条件渲染）');
+    ok(!/canvas/.test(pzWxml),
+      'puzzle.wxml 仍无 canvas（硬约束，批⑧不破）');
   }
 
   /* AI 人格化组（批②）静态守卫：bot-profiles 模块 + table.js 角色绑定/台词/马脚/难度 + index 难度入口。

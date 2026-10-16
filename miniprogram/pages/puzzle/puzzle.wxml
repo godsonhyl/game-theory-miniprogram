@@ -8,6 +8,7 @@
 
   <!-- 题目卡片 -->
   <view class="pz-card" wx:if="{{puzzle}}">
+    <view class="pz-from-highlight" wx:if="{{puzzle.fromHighlight}}">真人局回放</view>
     <view class="pz-qtitle">{{puzzle.title}}</view>
     <view class="pz-desc">{{puzzle.desc}}</view>
 
