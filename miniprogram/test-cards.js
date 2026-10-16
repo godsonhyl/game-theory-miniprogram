@@ -2,14 +2,15 @@
  * 房卡逻辑仿真测试
  *
  * 覆盖「房卡不足怎么办」这条路径：
- *  - 发放（每日领取 / 对局奖励）与扣减（创建房间）走同一套乐观锁
- *  - 每日只能领一次；对局奖励按累计手数发放且有单次上限
- *  - 并发双领防护（评审 2026-10-15 MEDIUM「三段非原子」收口）：资格标记
- *    先行 + 乐观锁闸——两台设备同时读到旧快照时，只有抢到标记的一方发卡
- *  - 战绩累计统计的并发覆盖防护：连打两手读到同一快照时不互相丢计数
+ *  - 发放（每日领取 / 对局奖励）与扣减（创建房间）全部走 rpc（服务端权威化第一期）
+ *  - 每日只能领一次（rpc 幂等：唯一约束 (owner_id, day)）；对局奖励按累计手数发放且有单次上限
+ *  - 并发双领防护：rpc 在服务端事务内原子完成，客户端不再有「两段提交」中间态
+ *  - 战绩累计统计：rpc 在同一函数内 insert 流水 + update 档案，并发不丢手
+ *  - 扣卡幂等：同 token 重发不二次扣
+ *  - 流水落表：poker_card_grants 有对应 kind 的记录
  *  - 首页有可点的领卡入口（WXML 静态检查）
  *
- * 用内存版 cloud.database 模拟云端表，避免依赖真实网络。
+ * 用内存版 cloud.database + rpc 派发模拟云端表与 PostgreSQL 函数，避免依赖真实网络。
  */
 const path = require('path');
 const Module = require('module');
@@ -40,14 +41,26 @@ global.wx = {
 const store = {
   poker_profiles: [],
   poker_records: [],
-  poker_rooms: []
+  poker_rooms: [],
+  poker_card_grants: []      // 服务端权威化第一期：发放/扣减流水表
 };
 let seq = 1;
+let grantSeq = 1;             // poker_card_grants 的 id 序列
 
 const DEFAULTS = {
   poker_profiles: { room_cards: 12, total_hands: 0, total_wins: 0, total_net: 0, last_checkin: '', bonus_base: 0 },
   poker_rooms: { mode: 'friend', max_players: 6, duration_min: 0, status: 'open' }
 };
+
+const MOCK_UID = 'mock_uid';
+const CARD_RULES = { daily: 2, handsPerCard: 10, bonusCap: 5 };
+
+/** mock 服务端日期（与客户端 claimStatus 内联的 todayStr 同格式） */
+function mockToday() {
+  const d = new Date();
+  const p = n => (n < 10 ? '0' : '') + n;
+  return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate());
+}
 
 function matches(row, filters) {
   return filters.every(f => {
@@ -79,7 +92,7 @@ const makeQuery = table => {
     try {
       const rows = store[table] || [];
       if (q._op === 'insert') {
-        const row = Object.assign({ id: seq++, owner_id: 'mock_uid', created_at: new Date().toISOString() },
+        const row = Object.assign({ id: seq++, owner_id: MOCK_UID, created_at: new Date().toISOString() },
           DEFAULTS[table] || {}, q._payload);
         rows.push(row);
         out = { data: [row], error: null };
@@ -110,11 +123,148 @@ const makeQuery = table => {
   return q;
 };
 
+/* ---------- mock rpc 派发（模拟 4 个 PL/pgSQL SECURITY DEFINER 函数） ---------- */
+function getProfile() {
+  return store.poker_profiles.find(r => r.owner_id === MOCK_UID) || null;
+}
+
+const rpcHandlers = {
+  /**
+   * 签到：幂等键 (owner_id, day, kind='daily')，唯一约束冲突 = 今日已领
+   * 服务端定 current_date，客户端不传敏感日期。
+   */
+  poker_claim_daily(/* args */) {
+    const day = mockToday();       // 服务端 current_date
+    const p = getProfile();
+    if (!p) return { data: null, error: { message: '档案不存在' } };
+
+    // 幂等：检查流水是否已有 (owner_id, day, kind='daily')
+    const exists = store.poker_card_grants.some(
+      g => g.owner_id === MOCK_UID && g.kind === 'daily' && g.day === day
+    );
+    if (exists) {
+      return { data: { ok: false, reason: '今日已领取，明天再来', roomCards: p.room_cards }, error: null };
+    }
+
+    // 插流水 + 发卡 + 置 last_checkin（同一事务）
+    const bal = p.room_cards + CARD_RULES.daily;
+    store.poker_card_grants.push({
+      id: grantSeq++, owner_id: MOCK_UID, kind: 'daily',
+      amount: CARD_RULES.daily, balance_after: bal, day: day,
+      hand_base: null, token: null, created_at: new Date().toISOString()
+    });
+    p.room_cards = bal;
+    p.last_checkin = day;
+    return { data: { ok: true, gained: CARD_RULES.daily, roomCards: bal }, error: null };
+  },
+
+  /**
+   * 对局奖励：FOR UPDATE 抢占，拉档发卡。
+   * mock 中 getProfile 返回引用，并发顺序调用天然串行化。
+   */
+  poker_claim_hands(/* args */) {
+    const p = getProfile();
+    if (!p) return { data: null, error: { message: '档案不存在' } };
+
+    const hands = p.total_hands || 0;
+    const base = p.bonus_base || 0;
+    const gained = Math.min(CARD_RULES.bonusCap, Math.floor((hands - base) / CARD_RULES.handsPerCard));
+    if (gained <= 0) {
+      const left = CARD_RULES.handsPerCard - ((hands - base) % CARD_RULES.handsPerCard);
+      return { data: { ok: false, reason: '再打 ' + left + ' 手可领 1 张', roomCards: p.room_cards }, error: null };
+    }
+
+    const newBase = base + gained * CARD_RULES.handsPerCard;
+    const bal = p.room_cards + gained;
+    p.bonus_base = newBase;
+    p.room_cards = bal;
+    store.poker_card_grants.push({
+      id: grantSeq++, owner_id: MOCK_UID, kind: 'hands',
+      amount: gained, balance_after: bal, day: null,
+      hand_base: newBase, token: null, created_at: new Date().toISOString()
+    });
+    return { data: { ok: true, gained: gained, roomCards: bal }, error: null };
+  },
+
+  /**
+   * 建房扣卡：余额校验 + 扣减 + 流水 + token 幂等。
+   */
+  poker_consume_room_card(args) {
+    const count = args.p_count || 1;
+    const token = args.p_token || null;
+    const p = getProfile();
+    if (!p) return { data: null, error: { message: '档案不存在' } };
+
+    // 幂等：同 token 已扣过 → 返回当前余额
+    if (token) {
+      const existing = store.poker_card_grants.some(
+        g => g.owner_id === MOCK_UID && g.token === token
+      );
+      if (existing) {
+        return { data: { ok: true, roomCards: p.room_cards, reason: '已扣减（幂等命中）' }, error: null };
+      }
+    }
+
+    // 余额校验
+    if (p.room_cards < count) {
+      return { data: { ok: false, reason: '房卡不足', roomCards: p.room_cards }, error: null };
+    }
+
+    // 扣减 + 流水（同一事务）
+    const bal = p.room_cards - count;
+    p.room_cards = bal;
+    store.poker_card_grants.push({
+      id: grantSeq++, owner_id: MOCK_UID, kind: 'consume',
+      amount: -count, balance_after: bal, day: null,
+      hand_base: null, token: token, created_at: new Date().toISOString()
+    });
+    return { data: { ok: true, roomCards: bal }, error: null };
+  },
+
+  /**
+   * 战绩上报：insert poker_records + update poker_profiles 累计统计。
+   * p_row 不含 owner_id，由服务端 auth.uid() 填。
+   */
+  poker_record_hand(args) {
+    const p_row = args.p_row;
+    const p = getProfile();
+    if (!p) return { data: null, error: { message: '档案不存在' } };
+
+    const row = {
+      id: seq++,
+      owner_id: MOCK_UID,               // 服务端 auth.uid() 填
+      table_id: p_row.table_id || 'ai',
+      hand_no: p_row.hand_no || 1,
+      seat: p_row.seat || 0,
+      hole_cards: p_row.hole_cards || '',
+      board: p_row.board || '',
+      hand_type: p_row.hand_type || '',
+      net: p_row.net || 0,
+      won: !!p_row.won,
+      created_at: new Date().toISOString()
+    };
+    store.poker_records.push(row);
+
+    // 同函数累计档案统计
+    p.total_hands = (p.total_hands || 0) + 1;
+    p.total_wins = (p.total_wins || 0) + (row.won ? 1 : 0);
+    p.total_net = (p.total_net || 0) + row.net;
+
+    return { data: row, error: null };
+  }
+};
+
 const fakeCloud = {
   database: {
     from: table => {
       if (!store[table]) store[table] = [];
       return makeQuery(table);
+    },
+    rpc: (fn, args) => {
+      const handler = rpcHandlers[fn];
+      if (!handler) return Promise.resolve({ data: null, error: { message: '未知函数: ' + fn } });
+      // rpc 返回 thenable，与 SDK 的 PostgrestFilterBuilder 一致
+      return Promise.resolve(handler(args || {}));
     }
   }
 };
@@ -142,22 +292,33 @@ Module.prototype.require = origRequire;
   eq(st.handCards, 0, '0 手时无可领对局奖励');
   eq(st.handsToNext, 10, '还差 10 手可领 1 张');
 
-  /* ---------- 每日领取：一天只能一次 ---------- */
+  /* ---------- 每日领取：rpc 幂等，一天只能一次 ---------- */
   const d1 = await auth.claimDailyCards();
   ok(d1.ok === true && d1.gained === 2, '首次每日领取 +2，实际 ' + JSON.stringify(d1));
   eq(d1.roomCards, 14, '领取后余额 14');
 
+  // 流水落表：poker_card_grants 有一条 daily 记录
+  eq(store.poker_card_grants.filter(g => g.kind === 'daily').length, 1,
+    'rpc 路径：daily 流水落表 1 条');
+  eq(store.poker_card_grants[0].balance_after, 14,
+    '流水 balance_after = 领取后余额 14');
+
   const d2 = await auth.claimDailyCards();
-  ok(d2.ok === false, '同一天第二次领取被拒绝');
+  ok(d2.ok === false, '同一天第二次领取被拒绝（rpc 幂等）');
   ok((d2.reason || '').indexOf('今日已领取') >= 0, '拒绝原因提示今日已领取：' + d2.reason);
   eq(d2.roomCards, 14, '重复领取不改变余额');
+
+  // 幂等：流水仍只有 1 条 daily（不重复发）
+  eq(store.poker_card_grants.filter(g => g.kind === 'daily').length, 1,
+    'rpc 幂等：同日重发不新增 daily 流水');
 
   st = auth.claimStatus(await auth.ensureProfile());
   ok(st.dailyReady === false, '领过之后 dailyReady = false（按钮置灰）');
 
-  // 换一天：把 last_checkin 改成昨天即可再领
+  // 换一天：把 last_checkin 改成昨天、删除流水即可再领（模拟次日）
   const cur = await auth.ensureProfile();
   cur.last_checkin = '2000-01-01';
+  store.poker_card_grants = store.poker_card_grants.filter(g => g.kind !== 'daily');
   const d3 = await auth.claimDailyCards();
   ok(d3.ok === true && d3.gained === 2, '换日之后可以再领 +2');
   eq(d3.roomCards, 16, '换日领取后余额 16');
@@ -176,6 +337,10 @@ Module.prototype.require = origRequire;
   const after = await auth.ensureProfile();
   eq(after.bonus_base, 20, 'bonus_base 推进到 20（已奖励的手数基准）');
 
+  // 流水落表：hands 流水
+  ok(store.poker_card_grants.some(g => g.kind === 'hands' && g.amount === 2),
+    'rpc 路径：hands 流水落表');
+
   st = auth.claimStatus(after);
   eq(st.handCards, 0, '25 手且基准 20 → 暂不可再领');
   eq(st.handsToNext, 5, '还差 5 手可领下一张');
@@ -187,132 +352,118 @@ Module.prototype.require = origRequire;
   eq(h3.gained, 5, '长时间未领时单次最多补 5 张（防一次性刷爆），实际 ' + h3.gained);
   eq((await auth.ensureProfile()).bonus_base, 50, '上限档位只推进 50 手基准');
 
-  /* ---------- 扣卡：不足时不扣、不透支 ---------- */
+  /* ---------- 扣卡：rpc 路径，不足时不扣、不透支 ---------- */
   const poor = await auth.ensureProfile();
   poor.room_cards = 0;
-  const c1 = await auth.consumeRoomCard(1);
+  const c1 = await auth.consumeRoomCard(1, 'token_test_1');
   ok(c1.ok === false, '房卡为 0 时创建房间被拒绝');
   eq(c1.reason, '房卡不足', '拒绝原因 = 房卡不足');
   eq((await auth.ensureProfile()).room_cards, 0, '拒绝后余额仍为 0（不会变负数）');
 
   poor.room_cards = 3;
-  const c2 = await auth.consumeRoomCard(1);
+  const c2 = await auth.consumeRoomCard(1, 'token_test_2');
   ok(c2.ok === true, '有余量时扣卡成功');
   eq(c2.roomCards, 2, '扣 1 张后余额 2');
 
-  // 乐观锁：本次调用读到的仍是旧余额 2，但库中已被改为 99（另一台设备刚领了卡）
-  // → 更新条件不匹配、0 行受影响，扣卡作废而不是覆盖掉别人的改动
-  const staleCards = (await auth.ensureProfile()).room_cards;   // 2
-  const realEnsure = auth.ensureProfile.bind(auth);
-  auth.ensureProfile = async () => Object.assign({}, poor, { room_cards: staleCards });
-  poor.room_cards = 99;
-  const c3 = await auth.consumeRoomCard(1);
-  auth.ensureProfile = realEnsure;
-  ok(c3.ok === false, '乐观锁：余额已变动时扣卡失败（不覆盖他人改动）');
-  eq(c3.reason, '房卡已变动，请重试', '失败原因提示重试');
-  eq((await auth.ensureProfile()).room_cards, 99, '并发下余额保持为最新值 ' + staleCards + ' → 99');
+  // 扣卡流水落表
+  ok(store.poker_card_grants.some(g => g.kind === 'consume' && g.amount === -1 && g.token === 'token_test_2'),
+    'rpc 路径：consume 流水落表（含 token）');
 
-  /* ---------- 并发双领防护（评审 2026-10-15 MEDIUM 收口） ---------- */
-  // 场景：两台设备同时读到「last_checkin 还是昨天」的快照并发领取。
-  // 修复前：发卡在前、标记在后，两个请求都能发卡 → 双领；另一台置标记
-  // 失败被吞、无感知。修复后：置标记先行 + 乐观锁，只有抢到标记的一方发卡。
+  /* ---------- 扣卡幂等：同 token 重发不二次扣 ---------- */
+  const c2b = await auth.consumeRoomCard(1, 'token_test_2');   // 同 token
+  ok(c2b.ok === true, '同 token 重发返回 ok（幂等命中）');
+  ok((c2b.reason || '').indexOf('幂等') >= 0, '幂等命中提示：' + c2b.reason);
+  eq(c2b.roomCards, 2, '幂等命中：余额不二次扣（仍为 2）');
+  eq(store.poker_card_grants.filter(g => g.token === 'token_test_2').length, 1,
+    '幂等：同 token 流水只有 1 条（不重复扣）');
+
+  // 不同 token 正常扣
+  const c3 = await auth.consumeRoomCard(1, 'token_test_3');
+  ok(c3.ok === true, '不同 token 正常扣卡');
+  eq(c3.roomCards, 1, '扣后余额 1');
+
+  /* ---------- 并发双领防护（rpc 事务原子，不再有客户端两段中间态） ---------- */
   {
-    // 重置到干净的并发起点（上一段曾直接改库模拟并发，把余额摸成 99）
+    // 重置到干净的并发起点
     const me2 = await auth.ensureProfile();
     me2.last_checkin = '';
     me2.room_cards = 100;
+    store.poker_card_grants = store.poker_card_grants.filter(g => g.kind !== 'daily');
     const beforeA = me2.room_cards;
 
-    const rA = await auth.claimDailyCards();
-    ok(rA.ok === true && rA.gained === 2, '并发-先到方领取成功 +2');
-
-    // B 后走：仍用 A 已消费过的旧快照（last_checkin 还是 ''）判断「未领」，
-    // 但置标记因 .eq('last_checkin', '') 不再命中（库里已是今天）→ 被拒
-    const snapB = Object.assign({}, me2);
-    const realEnsureB = auth.ensureProfile.bind(auth);
-    auth.ensureProfile = async () => Object.assign({}, snapB, { last_checkin: '' });
-    try {
-      const rB = await auth.claimDailyCards();
-      ok(rB.ok === false, '并发-后到方从旧快照领取被拒（标记闸拦截）');
-      eq(store.poker_profiles[0].room_cards, beforeA + 2,
-        '并发领取后余额只增加一份（不再双领）');
-    } finally {
-      auth.ensureProfile = realEnsureB;
-    }
-    eq(store.poker_profiles[0].last_checkin, auth.today(), '并发领取后标记只置一次');
-
-    // 原子失败方向：置标记成功但发卡失败 → 当天不能再重发（宁可少发）
-    me2.last_checkin = '';
-    const realGrant = auth.grantRoomCards.bind(auth);
-    auth.grantRoomCards = async () => ({ ok: false, reason: '房卡已变动，请重试', roomCards: me2.room_cards });
-    try {
-      const rC = await auth.claimDailyCards();
-      ok(rC.ok === false, '发卡失败时整体返回失败（不再静默半段成功）');
-      eq(store.poker_profiles[0].last_checkin, auth.today(),
-        '标记已置：发卡失败当天也不重发（少发而非多发，服务端事务兜底见蓝图）');
-    } finally {
-      auth.grantRoomCards = realGrant;
-    }
+    // rpc 幂等：两个并发 claimDailyCards 只有第一个发卡
+    const [rA, rB] = await Promise.all([
+      auth.claimDailyCards(),
+      auth.claimDailyCards()
+    ]);
+    // 至少一个成功 +2，另一个被拒（rpc 原子幂等）
+    const okCount = [rA, rB].filter(r => r.ok).length;
+    eq(okCount, 1, 'rpc 并发：双领只有一个成功（事务原子幂等），实际 ' + okCount);
+    eq(me2.room_cards, beforeA + 2, '并发领取后余额只增加一份（不再双领）');
+    eq(store.poker_card_grants.filter(g => g.kind === 'daily').length, 1,
+      'rpc 并发：daily 流水只有 1 条');
   }
 
-  /* ---------- 对局奖励并发：bonus_base 乐观锁 ---------- */
+  /* ---------- 对局奖励并发：rpc FOR UPDATE 抢占 ---------- */
   {
-    // A 领完只剩 5 手余量：B 拿旧快照重试时会重读到新基准 → 无可领卡。
-    // 若乐观锁失效，B 会用旧基准再发一整批（多发）。
     const me3 = await auth.ensureProfile();
     me3.total_hands = 25;
     me3.bonus_base = 0;
+    const beforeCards = me3.room_cards;
 
-    const snapB = Object.assign({}, me3, { total_hands: 25, bonus_base: 0 });
-    const rA = await auth.claimHandBonus();
-    ok(rA.ok === true && rA.gained === 2, '对局奖励-先到方领 2 张（25 手基准 0）');
-    eq(me3.bonus_base, 20, '先到方把 bonus_base 推进到 20');
-
-    const realEnsureB = auth.ensureProfile.bind(auth);
-    let calls = 0;
-    auth.ensureProfile = async () => {
-      calls++;
-      return calls <= 1
-        ? Object.assign({}, snapB)          // 第一次：A 消费前的旧快照
-        : await realEnsureB();              // 冲突后：真实重读
-    };
-    try {
-      const rB = await auth.claimHandBonus();
-      ok(rB.ok === false, '后到方重读新基准后无可领卡（不再按旧基准多发）');
-      eq(me3.bonus_base, 20, 'bonus_base 只被推进一次（并发不重发）');
-    } finally {
-      auth.ensureProfile = realEnsureB;
-    }
+    const [rA, rB] = await Promise.all([
+      auth.claimHandBonus(),
+      auth.claimHandBonus()
+    ]);
+    // 第一个 gained=2，第二个 gained=0（基准已推进）
+    const totalGained = (rA.gained || 0) + (rB.gained || 0);
+    eq(totalGained, 2, 'rpc 并发：对局奖励只发一批（FOR UPDATE 抢占），实际总共 ' + totalGained);
+    eq(me3.bonus_base, 20, 'bonus_base 只被推进一次（并发不重发）');
+    eq(me3.room_cards, beforeCards + 2, '并发对局奖励余额只加一份');
   }
 
-  /* ---------- 战绩累计统计并发覆盖防护（saveRecord） ---------- */
+  /* ---------- 战绩累计统计：rpc 同函数 insert + update，并发不丢手 ---------- */
   {
-    // 并发连打两手：两个 saveRecord 都 cur=0 的旧快照起跑。
-    // 修复前：后写的 UPDATE 用旧 cur 覆盖先写 → total_hands 只 +1（丢一手）。
-    // 修复后：.eq('total_hands', cur) 乐观锁，后到方 0 行命中 → 重读到 cur=1 再写。
     const before = (await auth.ensureProfile()).total_hands;
+    const beforeWins = (await auth.ensureProfile()).total_wins;
     const [r1, r2] = await Promise.all([
       auth.saveRecord({ tableId: 'ai', handNo: 1, seat: 0, net: 10, won: true }),
       auth.saveRecord({ tableId: 'ai', handNo: 2, seat: 0, net: -5, won: false })
     ]);
     const after = (await auth.ensureProfile());
-    eq(after.total_hands, before + 2, '连打两手累计不丢（并发覆盖防护生效）');
-    eq(after.total_wins, (await auth.ensureProfile()).total_wins, '胜场统计读取一致');
+    eq(after.total_hands, before + 2, 'rpc 路径：连打两手累计不丢（同函数原子累计）');
+    eq(after.total_wins, beforeWins + 1, 'rpc 路径：胜场 +1（一胜一负）');
+    ok(r1 && r1.owner_id === MOCK_UID, 'rpc 路径：saveRecord 返回行 owner_id 由服务端填');
+    ok(r2 && r2.owner_id === MOCK_UID, 'rpc 路径：第二条 saveRecord 返回行 owner_id 由服务端填');
     ok(Array.isArray(store.poker_records) && store.poker_records.length >= 2,
-      '战绩流水两条都在（流水 insert 天然无并发问题）');
+      '战绩流水两条都在（rpc insert 流水无并发问题）');
   }
 
-
-  /* ---------- NULL last_checkin 的历史行也能领签到（is 过滤兜底） ---------- */
+  /* ---------- NULL last_checkin 的历史行也能领签到（rpc 幂等不依赖 NULL 比较） ---------- */
   {
-    // PostgREST 的 eq 对 NULL 永不命中：老行 last_checkin 为 NULL 时，若标记闸
-    // 用 .eq('last_checkin', null) 就永远 0 行 → 这条历史行永远领不了签到。
-    // 修复后 NULL 旧值改走 .is('last_checkin', null)。
+    // rpc 路径：last_checkin 为 NULL 的历史行，claimDailyCards 走 rpc 幂等检查
+    // 流水里没有当日记录 → 可领，领后 last_checkin 被服务端置为今天。
     const old = await auth.ensureProfile();
     old.last_checkin = null;
+    store.poker_card_grants = store.poker_card_grants.filter(g => g.kind !== 'daily');
     const r = await auth.claimDailyCards();
-    ok(r.ok === true, 'last_checkin 为 NULL 的历史行可以领每日卡（is 过滤兜底）');
-    eq(old.last_checkin, auth.today(), 'NULL 行领取后标记置为今天');
+    ok(r.ok === true, 'last_checkin 为 NULL 的历史行可以领每日卡（rpc 幂等检查流水）');
+    eq(old.last_checkin, mockToday(), 'NULL 行领取后标记置为今天（服务端 current_date）');
+    eq(store.poker_card_grants.filter(g => g.kind === 'daily').length, 1,
+      'NULL 行领取：daily 流水落表 1 条');
+  }
+
+  /* ---------- auth.js 不再含 today()/grantRoomCards（服务端权威化收口） ---------- */
+  {
+    const authSrc = require('fs').readFileSync(path.join(__dirname, 'utils', 'auth.js'), 'utf8');
+    // today() 方法已删除；claimStatus 内联 todayStr 闭包仅供 dailyReady 乐观展示
+    ok(!/this\.today\(\)/.test(authSrc) && !/auth\.today\(\)/.test(authSrc),
+      'auth.js 不再暴露 today() 方法（客户端日期判定已收口）');
+    ok(authSrc.indexOf('grantRoomCards') < 0, 'auth.js 不再含 grantRoomCards（已被 rpc 收编）');
+    ok(authSrc.indexOf('poker_claim_daily') >= 0, 'auth.js 调用 rpc poker_claim_daily');
+    ok(authSrc.indexOf('poker_claim_hands') >= 0, 'auth.js 调用 rpc poker_claim_hands');
+    ok(authSrc.indexOf('poker_consume_room_card') >= 0, 'auth.js 调用 rpc poker_consume_room_card');
+    ok(authSrc.indexOf('poker_record_hand') >= 0, 'auth.js 调用 rpc poker_record_hand');
   }
 
   const fs = require('fs');
