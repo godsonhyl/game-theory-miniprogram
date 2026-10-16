@@ -1118,6 +1118,14 @@
   border: 1rpx solid rgba(255,255,255,.12);
 }
 .emote-cell:active { transform: scale(.88); background: rgba(232,163,61,.2); }
+/* 快捷语入口（轮盘底部）：观战者/在局者都可经此发一条快捷语，复用聊天面板通道 */
+.emote-talk {
+  margin-top: calc(1.6 * var(--uh)); padding: calc(1.2 * var(--uh)) 0;
+  text-align: center; font-size: calc(3 * var(--uh)); color: var(--ink);
+  background: rgba(255,255,255,.07); border: 1rpx solid rgba(255,255,255,.13);
+  border-radius: calc(1.6 * var(--uh));
+}
+.emote-talk:active { background: rgba(232,163,61,.2); }
 
 /* ---------- .no-anim 兜底：关闭动画时氛围全部禁用 ----------
  * 与既有 .no-anim .card/.seat-bet 同口径——动画关闭只跳数字/状态，

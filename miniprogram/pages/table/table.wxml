@@ -479,14 +479,16 @@
     </view>
   </view>
 
-  <!-- 表情轮盘（点头像弹出）：6 格 emoji，点遮罩关闭。本地即时冒泡 +
-       好友房经 emote 动作上行广播（设计 §2.1）。观战者同样可发（§2.4）。 -->
+  <!-- 表情轮盘（点头像弹出）：6 格 emoji + 快捷语入口，点遮罩关闭。
+       本地即时冒泡 + 好友房经 emote/chat 动作上行广播（设计 §2.1 / §2.4）。
+       观战者同样可发（§2.4）。快捷语入口 onEmoteTalk 复用聊天面板 onQuickChat 通道。 -->
   <view class="emote-mask" wx:if="{{emoteShow}}" bindtap="onEmoteClose">
     <view class="emote-wheel" catchtap="onBlockTap">
       <view class="emote-grid">
         <view class="emote-cell" wx:for="{{emoteSet}}" wx:for-item="em" wx:key="e"
               data-e="{{em.e}}" bindtap="onEmotePick">{{em.e}}</view>
       </view>
+      <view class="emote-talk" bindtap="onEmoteTalk">💬 快捷语</view>
     </view>
   </view>
 </view>

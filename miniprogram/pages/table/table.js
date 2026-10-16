@@ -89,6 +89,13 @@ const AI_WAIT_HINT = {
 };
 const QUICK_TALK = ['打得不错', '运气真好', '好牌！', '跟一手', '谢谢', '再想想'];
 const EMOJIS = ['👍', '😂', '😮', '🔥', '💰', '😢'];
+/** 好友房快捷语/表情广播白名单（防伪造内容/超长 payload）。
+ *  与 onQuickChat/onEmoji 的 data-t/data-e 来源严格一致——只有面板上能点的文案
+ *  才允许上行广播，房主消化前再过一次白名单。聊天内容不在快照里全文广播，只取
+ *  最近 CHAT_QUEUE_MAX 条滚动，与 emotes 队列同构。 */
+const CHAT_TEXT_SET = QUICK_TALK.concat(EMOJIS);
+/** 聊天队列广播上限：房主行 state 里保留的最近聊天条数（镜像端只渲染面板，不存历史）。 */
+const CHAT_QUEUE_MAX = 8;
 
 /** 花色配色（四色牌）：0♠ 黑 / 1♣ 绿 / 2♦ 蓝 / 3♥ 红 */
 const SUIT_CLS = ['s-spade', 's-club', 's-diamond', 's-heart'];
@@ -1049,6 +1056,16 @@ Page({
       this._showEmoteBubble(seat, a.emoji);
       return;
     }
+    if (a.type === 'chat') {
+      // 快捷语/表情文字：rowSeat 断言同防伪冒——他人不能替我发快捷语。
+      // 文案过 CHAT_TEXT_SET 白名单才进面板（防伪造内容/超长 payload）。
+      // 用 rowSeat 对应玩家的引擎名字作显示名，与本地站起/入局系统消息同口径。
+      if (Number(a.seat) !== Number(a.rowSeat)) return;
+      if (CHAT_TEXT_SET.indexOf(a.text) < 0) return;
+      const p = game.seatOf(seat);
+      this.pushChat(seat, p ? p.name : '', a.text);
+      return;
+    }
   },
 
   /** 立即广播一次（忽略 500ms 节流与脏检查）：站起/坐下/结算等关键状态变化用。
@@ -1180,7 +1197,12 @@ Page({
       handNo: game.handNo,
       // 氛围表情队列（设计 §1）：随快照广播，镜像端按放行窗口渲染。
       // 频控已在发送端/冒泡侧做过，这里只做滚动上限截断。
-      emotes: (this.data.emotes || []).slice(-EMOTE_QUEUE_MAX)
+      emotes: (this.data.emotes || []).slice(-EMOTE_QUEUE_MAX),
+      // 快捷语队列（设计 §2.4 观战快捷语）：随快照广播，镜像端按座次重映射后进聊天面板。
+      // 与 emotes 同构——最近 N 条滚动，房主消化 chat 动作后追加到 chatLog 再裁剪广播。
+      // chatLog 里的系统消息（站起/入局/超时代弃）也在队列里，镜像端按白名单过滤后只回放
+      // 好友发的快捷语/表情（系统消息在镜像端由其自己的本地逻辑生成，避免重复）。
+      chats: (this.data.chatLog || []).slice(-CHAT_QUEUE_MAX)
     };
     // 脏检查（评审 2026-10-15 MEDIUM「房主全量写库无脏检查」）：房主 500ms 节流后
     // 仍会因每次 render / 轮询而调到这里；若牌局实质未变（同手同街同注同池同动作
@@ -1197,7 +1219,9 @@ Page({
       this.data.summary ? 's' + JSON.stringify(this.data.summary) : '',
       this.data.clockPendingEnd ? 'cp' : '',
       // 表情队列内容/位置变化必须触发写库——否则好友端看不到新表情（轮询内唯一广播时机）
-      'e' + (state.emotes || []).map(x => x.seat + x.emoji + x.bornAt).join('|')
+      'e' + (state.emotes || []).map(x => x.seat + x.emoji + x.bornAt).join('|'),
+      // 快捷语队列变化必须触发写库——否则好友端看不到新快捷语（轮询内唯一广播时机）
+      'c' + (state.chats || []).map(x => x.id + ':' + x.seat + ':' + (x.text || '')).join('|')
     ].join('#');
     if (this._lastPlayFp === fingerprint) return;
     this._lastPlayFp = fingerprint;
@@ -1281,11 +1305,34 @@ Page({
       });
       patch.emotes = merged;
     }
+    // 快捷语镜像（设计 §2.4）：房主广播的 chats 按座次重映射后进聊天面板。
+    // 只回放白名单内的好友快捷语/表情——系统消息（站起/入局/超时代弃）在镜像端由
+    // 其自己的本地逻辑生成，不重复回放。以 chatLog 的 id 为去重键：已见过的 id 不再
+    // 追加，避免 1.5s 轮询反复重放同一条（与 emote 的 bornAt 窗口同理防重放）。
+    const freshChats = [];
+    const seenChatIds = this._seenChatIds || (this._seenChatIds = {});
+    ((st.chats) || []).forEach(c => {
+      if (!c || CHAT_TEXT_SET.indexOf(c.text) < 0) return;   // 只回放白名单快捷语
+      const localSeat = remapS[Number(c.seat)];
+      if (localSeat === undefined) return;
+      if (c.id && seenChatIds[c.id]) return;                  // 同一条不重放
+      freshChats.push({ id: c.id, seat: localSeat, name: '', text: c.text });
+      if (c.id) seenChatIds[c.id] = true;
+    });
+    if (freshChats.length) {
+      const merged = (this.data.chatLog || []).slice();
+      freshChats.forEach(c => {
+        const p = game.seatOf(c.seat);
+        merged.push({ id: ++this.chatSeq, seat: c.seat, name: p ? p.name : '', text: c.text });
+      });
+      while (merged.length > 8) merged.shift();
+      patch.chatLog = merged;
+    }
     // 脏检查（评审 2026-10-15 MEDIUM「镜像端每 1.5s 全量 setData 无脏检查」）：
     // 好友端 1.5s 轮询拿到房主快照；若牌局实质未变，loadSnapshot 后渲染出的 patch
     // 与上一帧逐字段相同——整帧 setData 纯属空转，触发全量 diff/重绘、低端机掉帧。
     // 以快照的关键牌桌字段拼出指纹，与上一帧比对：未变则跳过 setData + render。
-    // 牌桌外字段（就绪名单/结算/计时/表情）变化照常更新——指纹覆盖它们，不会被吞。
+    // 牌桌外字段（就绪名单/结算/计时/表情/快捷语）变化照常更新——指纹覆盖它们，不会被吞。
     const fp = [
       snap.handNo, snap.street, snap.currentBet, snap.pot, snap.actionSeat,
       snap.boardCodes.join(','),
@@ -1296,7 +1343,8 @@ Page({
       st.clockPendingEnd ? 'cp' : '',
       snap.result ? 'r' + JSON.stringify(snap.result.winners) : '',
       (snap.reveal && JSON.stringify(snap.reveal)) || '',
-      (patch.emotes ? 'e' + patch.emotes.map(x => x.seat + x.emoji + x.bornAt).join('|') : '')
+      (patch.emotes ? 'e' + patch.emotes.map(x => x.seat + x.emoji + x.bornAt).join('|') : ''),
+      (patch.chatLog ? 'c' + patch.chatLog.map(x => x.id + ':' + x.seat + ':' + (x.text || '')).join('|') : '')
     ].join('#');
     if (this._lastRemoteFp === fp) return;
     this._lastRemoteFp = fp;
@@ -2551,10 +2599,16 @@ Page({
     this.setData({ emotes });
   },
 
-  /** 观战快捷语入口保留（P3 预留位）：当前只关轮盘。快捷语与表情同通道
-   *  （emote 动作上行 + 房主广播），文案版后续接 pushChat 即可。 */
+  /** 观战快捷语入口（P3 落地）：点头像轮盘里的「快捷语」区，复用聊天面板的
+   *  onQuickChat 通道——本地进面板 + 好友房 type:'chat' 上行广播，与表情同通道。
+   *  发送目标座位用轮盘选中的 emoteSeat（点了谁的头像就发给谁那桌的聊天区），
+   *  但快捷语本身是全桌广播聊天，seat 字段仍是我自己的座位（payload seat=roomSeat）。
+   *  这里只关轮盘并触发一条快捷语；文案固定取 QUICK_TALK[0]，避免引入额外 UI 选择态。 */
   onEmoteTalk() {
+    const seat = this.data.emoteSeat;
     this.onEmoteClose();
+    if (seat < 0) return;
+    this.onQuickChat({ currentTarget: { dataset: { t: QUICK_TALK[0] } } });
   },
 
   /** 牌 ID → 渲染数据（花色配色：四色牌时 ♠黑 / ♣绿 / ♦蓝 / ♥红） */
@@ -2664,14 +2718,32 @@ Page({
     if (this.data.soundOn && seat !== this.mySeat) sfx.play('chat');
   },
 
+  /** 快捷语：本地即时进聊天面板 + 好友房上行广播（type:'chat'），房主消化后随快照
+   *  广播给所有镜像端。上行失败静默降级（氛围功能，与 emote 同口径：不弹错不重试）。
+   *  seat 上行用 roomSeat（云端座次），房主按 rowSeat 断言防伪冒——与 emote 同通道。 */
   onQuickChat(e) {
-    this.pushChat(this.mySeat, this.meLabel(false), e.currentTarget.dataset.t);
+    const text = e.currentTarget.dataset.t;
+    this.pushChat(this.mySeat, this.meLabel(false), text);
     this.feedback();
+    if (this.mode === 'friend' && this.syncLive && this.roomNo &&
+        CHAT_TEXT_SET.indexOf(text) >= 0) {
+      const payloadSeat = this.remoteMode ? this.roomSeat : this.mySeat;
+      roomSync.pushAction(this.roomNo, { type: 'chat', seat: payloadSeat, text })
+        .catch(() => { /* 静默降级：本地已进面板，失败不提示（氛围功能非关键路径） */ });
+    }
   },
 
+  /** 表情快捷：与 onQuickChat 同通道（type:'chat'），emoji 亦过 CHAT_TEXT_SET 白名单。 */
   onEmoji(e) {
-    this.pushChat(this.mySeat, this.meLabel(false), e.currentTarget.dataset.e);
+    const text = e.currentTarget.dataset.e;
+    this.pushChat(this.mySeat, this.meLabel(false), text);
     this.feedback();
+    if (this.mode === 'friend' && this.syncLive && this.roomNo &&
+        CHAT_TEXT_SET.indexOf(text) >= 0) {
+      const payloadSeat = this.remoteMode ? this.roomSeat : this.mySeat;
+      roomSync.pushAction(this.roomNo, { type: 'chat', seat: payloadSeat, text })
+        .catch(() => { /* 静默降级：本地已进面板，失败不提示（氛围功能非关键路径） */ });
+    }
   },
 
   // ---------- 折叠面板（聊天 / 菜单）----------

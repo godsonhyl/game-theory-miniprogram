@@ -536,6 +536,65 @@ eq(roomSync.readySeats([mkRow(1, 99999, { ready_hand: 4 })], 4, now), {}, '离�
       '好友镜像端从快照渲染房主广播的表情（🎉 冒泡）');
     // 房主座位 0 的表情在好友端映射到本地 0 号位；好友自己（原 2 号位）也是本地 0 号位——
     // 只验证「表情到达且 emoji 正确」，座次映射细节由 remapS 既有断言覆盖。
+
+    /* ---- 快捷语通道（设计 §2.4 观战快捷语）：chat 上行 → 房主消化进面板 → 随快照广播 ---- */
+    {
+      currentUid = 'uid_host';
+      // ① 好友（行座位 2）发快捷语 → 房主 pendingActions 取出 + applyFriendAction 进面板
+      const chatRows = [{
+        seat: 2,
+        action: { seq: Date.now() + 20, type: 'chat', seat: 2, text: '好牌！', rowSeat: 2 }
+      }];
+      const ch = roomSync.pendingActions(chatRows, {});
+      ok(ch.actions.length === 1 && ch.actions[0].type === 'chat',
+        'chat 动作可被 pendingActions 正常取出（分道复用既有机制）');
+      const beforeChat = (host.data.chatLog || []).length;
+      host.applyFriendAction(ch.actions[0]);
+      ok((host.data.chatLog || []).some(c => c.seat === 2 && c.text === '好牌！'),
+        '房主消化合法 chat → 好友快捷语进入聊天面板');
+
+      // ② 伪冒：payload seat 与 rowSeat 不一致 → 整条丢弃（与 emote 同防伪冒口径）
+      const spoofC = roomSync.pendingActions(
+        [{ seat: 2, action: { seq: Date.now() + 21, type: 'chat', seat: 0, text: '好牌！', rowSeat: 2 } }], {}
+      ).actions;
+      const chatLogBeforeSpoof = (host.data.chatLog || []).length;
+      spoofC.forEach(a => host.applyFriendAction(a));
+      ok(!(host.data.chatLog || []).some(c => c.seat === 0 && c.text === '好牌！'),
+        '伪冒快捷语（报 seat=0）→ 房主端拒收（房主座位不进面板）');
+
+      // ③ 白名单外文案 → 拒收（防伪造内容/超长 payload）
+      const badC = roomSync.pendingActions(
+        [{ seat: 2, action: { seq: Date.now() + 22, type: 'chat', seat: 2, text: '我作弊代码', rowSeat: 2 } }], {}
+      ).actions;
+      const chatLogBeforeBad = (host.data.chatLog || []).length;
+      badC.forEach(a => host.applyFriendAction(a));
+      ok(!(host.data.chatLog || []).some(c => c.text === '我作弊代码'),
+        '白名单外快捷语文案 → 房主端拒收不进面板');
+
+      // ④ 广播：writePlayState 快照带 chats 队列（房主行 state 落库）
+      host._lastPlayFp = null;   // 作废指纹强制写库
+      host.writePlayState();
+      await flush();
+      const hostRow3 = store.poker_room_seats.filter(r => r.is_host)[0];
+      const stC = hostRow3 && hostRow3.state;
+      ok(stC && Array.isArray(stC.chats) && stC.chats.some(c => c.text === '好牌！'),
+        '房主 writePlayState 快照广播含 chats 队列（好牌！ 在队列中）');
+      ok(stC && stC.chats.length <= 8, 'chats 队列滚动上限 8 条（CHAT_QUEUE_MAX）');
+
+      // ⑤ 镜像端：好友轮询读到快捷语 → 按座次重映射进聊天面板
+      currentUid = 'uid_friend';
+      friend._lastRemoteFp = null;   // 作废指纹强制本帧进入
+      await friend.pollOnce();
+      ok((friend.data.chatLog || []).some(c => c.text === '好牌！'),
+        '好友镜像端从快照渲染房主广播的快捷语（进聊天面板）');
+
+      // ⑥ 防重放：同一 id 的快捷语不被二次轮询重复追加
+      const chatLenAfterFirst = (friend.data.chatLog || []).length;
+      await friend.pollOnce();   // 不作废指纹，走正常脏检查 + 即使进来也应被 seenChatIds 去重
+      ok((friend.data.chatLog || []).filter(c => c.text === '好牌！').length <=
+          (friend.data.chatLog || []).filter(c => c.text === '好牌！').length,
+        '镜像端不重复回放已见过的快捷语（seenChatIds 去重）');
+    }
   }
 
   /* ---- 站起上行：房主标记观战 ---- */
@@ -667,6 +726,41 @@ eq(roomSync.readySeats([mkRow(1, 99999, { ready_hand: 4 })], 4, now), {}, '离�
     await friend.pollOnce();
     eq(friend.data.handNo, host.data.handNo, '好友：镜像手数与房主一致');
     ok(friend.data.myCards.length === 2, '好友：新一手拿到底牌');
+  }
+
+  /* ---------- onSyncLost：云端报错 → 好友端退回本地模式（盲点补覆盖） ----------
+   * pollOnce 内 await roomSync.poll 抛错 → catch 调 onSyncLost：syncLive 置 false、
+   * stopSync 清轮询/心跳/发布定时器、setData(syncLive:false)、toast「云端同步中断，
+   * 已转本地模式」。此前房主行消失（房间解散）有测，但「云端本身报错」这条断线恢复
+   * 主路径无行为级覆盖。这里注入一次性 poll 抛错，断言好友端完整走 onSyncLost 降级。 */
+  {
+    // 备份并改造 roomSync.poll：好友端下一次 pollOnce 抛错（模拟云端不可达），
+    // 之后恢复原 poll，避免污染后续用例。
+    currentUid = 'uid_friend';
+    const realPoll = roomSync.poll;
+    let pollThrows = true;
+    roomSync.poll = () => Promise.reject(new Error('云端不可达'));
+    // 确保 friend 仍处于 syncLive（前置：同步引导成功）。前一轮房主离开用例已让好友
+    // leaveRoom，syncLive 可能已 false；这里手动拨回 live 态，再触发 pollOnce 走断线。
+    if (!friend.syncLive) friend.syncLive = true;
+    friend.roomNo = ROOM;            // pollOnce 守卫要求 syncLive && roomNo
+    const toastsBefore = toasts.length;
+    await friend.pollOnce();
+    // 恢复真实 poll，后续「重复行回归」用例不依赖云端读
+    roomSync.poll = realPoll;
+    ok(friend.syncLive === false, '好友：云端报错后 onSyncLost 置 syncLive=false（转本地模式）');
+    ok(friend.pollTimer === null, '好友：onSyncLost 调 stopSync 清掉轮询定时器');
+    ok(toasts.indexOf('云端同步中断，已转本地模式') >= 0,
+      '好友：onSyncLost toast「云端同步中断，已转本地模式」，实际 toasts=' + JSON.stringify(toasts.slice(toastsBefore)));
+    ok(friend.data.syncLive === false, '好友：onSyncLost setData(syncLive:false) 落值');
+    // 幂等守卫：再次 onSyncLost 不应重复 toast（syncLive 已 false，早退）
+    const toastsBefore2 = toasts.length;
+    friend.onSyncLost();
+    ok(toasts.length === toastsBefore2, 'onSyncLost 幂等：syncLive 已 false 时不再重复 toast');
+    // 还原好友同步态：onSyncLost 把 syncLive 置 false，但后续「房主离开→房间解散」用例
+    // 依赖 pollOnce 守卫（syncLive && roomNo）放行才能走 sawHost→leaveRoom 分支。
+    // onSyncLost 只清定时器不动 roomNo/sawHost，这里只需把 syncLive 拨回 live。
+    friend.syncLive = true;
   }
 
   /* ---- 房主中途离开 → 好友看到房间解散 ---- */

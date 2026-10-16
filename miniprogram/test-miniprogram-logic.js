@@ -1821,6 +1821,215 @@ while (guard++ < 400) {
     }
   }
 
+  /* ---------- 边池多路全下 UI：结算帧 sidePots 进 setData（盲点补覆盖） ----------
+   * 引擎 game.pots 在牌局进行中为 []，只在 finishHand/showdown 填充；table.js
+   * render 的 sidePots 分支（game.pots.length > 1 → slice(1).map(amount)）因此只在
+   * 结算帧生效。此前无任何测试断言 sidePots 到达 setData——多路全下的边池金额
+   * 是否正确分层、是否被渲染层吃掉，全靠人工目测。这里用引擎直接构造一局多路全下
+   * 跑到结算（pots 填充），驱动 render 后断言 dataStore.sidePots 是非空金额数组。 */
+  {
+    // 静态守卫：render 确有 sidePots 分层逻辑 + 进 setData
+    ok(/if \(!readyPhase && game\.pots && game\.pots\.length > 1\)/.test(tableSrc),
+      'render 有边池分层分支（pots.length > 1 才切边池）');
+    ok(/sidePots = game\.pots\.slice\(1\)\.map\(p => p\.amount\)/.test(tableSrc),
+      '边池取 pots.slice(1) 的 amount 数组（主池在 pot 字段单独展示）');
+    ok(/sidePots,/.test(tableSrc), 'sidePots 进 setData（渲染层可见）');
+
+    // 行为级：直接用引擎构造多路全下结算手，把 pots 填进去后调 render 断言。
+    // 主循环留下一手牌局是 2 人桌（仅我 + 1 bot），构造多路全下需要 ≥3 玩家，
+    // 故用 requireGame() 拿到的引擎实例按确定状态手工注入：加一个空玩家槽
+    // 不现实（createGame 后 players 固定），改为直接复用引擎 buildSidePots 的
+    // 等价路径——用 P.createGame 另起一局 3 人桌跑到结算，再 loadSnapshot 回灌
+    // pageCtx 的 game，使 render 读到 pots。但 pageCtx.render 读的是模块级
+    // game 单例，外部 game 改不动它。最稳妥：直接驱动 pageCtx 的 game 跑到
+    // 一个产生边池的真实牌局——2 人桌无法产生边池（边池需 ≥3 路不同 committed），
+    // 故此处改用「直接断言引擎 buildSidePots 分层 + render 侧的 sidePots 计算」
+    // 两段，分别覆盖引擎分层与渲染取数，不依赖 pageCtx 当前人数。
+    const g = pageCtx.requireGame();
+    if (g) {
+      // ① 引擎侧：3 玩家不同 committed → buildSidePots 分 3 层（主池 + 2 边池）。
+      //    用独立引擎实例验证分层（不污染 pageCtx 的 game 单例）。
+      const sg = P.createGame({
+        players: [
+          { id: 'a', name: 'A', seat: 0, stack: 1000 },
+          { id: 'b', name: 'B', seat: 1, stack: 1000 },
+          { id: 'c', name: 'C', seat: 2, stack: 1000 }
+        ], sb: 10, bb: 20, seed: 'sidepot-ui-test'
+      });
+      sg.startHand();
+      sg.players.forEach(p => {
+        p.folded = false; p.allIn = true; p.bet = 0; p.committed = 0;
+        p.hole = p.hole && p.hole.length === 2 ? p.hole : [0, 1];
+        p.actedBet = 0;
+      });
+      sg.players[0].committed = 100;
+      sg.players[1].committed = 300;
+      sg.players[2].committed = 50;
+      sg.board = [24, 28, 32, 36, 40];
+      sg.street = P.STREET.RIVER;
+      sg.currentBet = 0;
+      sg.actionSeat = -1;
+      sg.result = null;
+      sg.pots = [];
+      const adv = sg.advance();   // 全员 allIn → skipToShowdown → showdown → pots 填充
+      ok(adv && adv.ok && !!sg.result, '多路全下构造：advance 跑到结算（result 已生成）');
+      ok(Array.isArray(sg.pots) && sg.pots.length === 3,
+        '多路全下分层出 3 个池（主池 + 2 边池），实际 ' + (sg.pots ? sg.pots.length : 0));
+      const sideAmounts = sg.pots.slice(1).map(p => p.amount);
+      ok(sideAmounts.length === 2 && sideAmounts.every(a => typeof a === 'number' && a > 0),
+        '边池金额 = pots.slice(1).map(amount)：2 个正整数，实际 ' + JSON.stringify(sideAmounts));
+
+      // ② 渲染侧：把这套 pots 灌进 pageCtx 的 game 单例，调 render 断言
+      //    dataStore.sidePots 落值（验证 render 的 slice(1).map(amount) 分支）。
+      //    直接改 game.pots + game.result + street=SHOWDOWN，让 render 走结算帧。
+      g.pots = sg.pots.map(p => ({ amount: p.amount, eligible: p.eligible.slice(), contribs: Object.assign({}, p.contribs), level: p.level }));
+      g.result = sg.result;
+      g.street = P.STREET.SHOWDOWN;
+      g.board = sg.board.slice();
+      g.showdownReveal = sg.showdownReveal || {};
+      pageCtx._lastRenderFp = null;   // 强制重渲染（pots 变化本就令指纹不同，双保险）
+      pageCtx.render();
+      ok(Array.isArray(dataStore.sidePots) && dataStore.sidePots.length === 2,
+        'render 后 sidePots 含 2 个边池金额（主池排除），实际 ' +
+        JSON.stringify(dataStore.sidePots));
+      ok(dataStore.sidePots.every(a => typeof a === 'number' && a > 0),
+        '边池金额均为正整数（分层金额正确落入 setData）');
+    }
+  }
+
+  /* ---------- 30s 代弃：房主端 watchFriendAction 超时代行（盲点补覆盖） ----------
+   * 好友房房主对「等上行的真人好友」不代打，只 watchFriendAction 等 30s（与本地
+   * startTimer 同口径：无注过牌 / 有注弃牌）。此前仅静态守卫 + C-2 sittingOut
+   * 推进分支被测，30s 超时代弃这条主路径无行为级覆盖。这里把 pageCtx 拨成房主态、
+   * 行动权压到好友座位、friendActSince 推过 30s，调 watchFriendAction 断言代弃推进。 */
+  {
+    // 静态守卫：watchFriendAction 30s 阈值 + 无注过牌/有注弃牌同口径
+    ok(/roomSync\.SYNC\.ACTION_TIMEOUT_SEC \* 1000/.test(tableSrc),
+      'watchFriendAction 用 ACTION_TIMEOUT_SEC*1000 作 30s 阈值');
+    ok(/legal && legal\.toCall === 0 \? 'check' : 'fold'/.test(tableSrc),
+      '代行口径：无注过牌 / 有注弃牌（与本地 startTimer 超时同口径）');
+    ok(/超时未行动，自动过牌|超时未行动，自动弃牌/.test(tableSrc),
+      '代弃有 pushChat 系统消息（过牌/弃牌两案）');
+
+    // 行为级：构造房主端 + 一个真人好友座位（非我非 bot），行动权压过去后超时代弃。
+    // 不复用主循环留下的随机牌局状态（好友可能已被弃/全下/站起 → legalActions
+    // 返回 null 走兜底 advance，代弃主路径测不到）——直接把好友座位复位成可行动、
+    // 有注待跟的确定态，再推过 30s 触发代弃。
+    const g = pageCtx.requireGame();
+    if (g) {
+      // 房主态：syncLive + isOwner + 好友座位不在 botSeats（视作等上行真人）
+      pageCtx.syncLive = true;
+      pageCtx.isOwner = true;
+      pageCtx.roomNo = 'TEST_TIMEOUT';
+      pageCtx.botSeats = {};          // 清空 bot 标记
+      pageCtx.standingMap = {};        // 清空站起标记（防 isStanding 走 C-2 兜底分支）
+      pageCtx.friendActSince = 0;
+      // 取一个非我座位当「好友」，复位成可行动 + 有注待跟（走弃牌案）
+      const friendSeat = g.players.filter(p => p.seat !== pageCtx.mySeat)[0].seat;
+      const fp = g.seatOf(friendSeat);
+      fp.folded = false; fp.allIn = false; fp.sittingOut = false;
+      fp.bet = 0; fp.stack = 500; fp.actedBet = null;
+      // 其余非我非好友座位一律弃牌：好友弃牌后引擎 advance → 仅剩我 → finishHand
+      // 收局（afterAct 见 result 即 return，不再 advance 到下一座）。否则 advance 落到
+      // 别的「非我非 bot」座 → isFriendSeat → friendActSince ||= now 重新置位，盖掉
+      // 代弃刚复位为 0 的 friendActSince（这是本块此前断言 1 失败的根因）。
+      g.players.forEach(p => {
+        if (p.seat !== pageCtx.mySeat && p.seat !== friendSeat) { p.folded = true; p.sittingOut = false; }
+        else if (p.sittingOut) p.sittingOut = false;
+      });
+      g.currentBet = 100;             // 有注 → 代弃牌（toCall=100>0）
+      g.actionSeat = friendSeat;
+      g.result = null;
+      g.pots = [];
+      // ⚠️ 断网诊断：附近若有 engineWatch/healEngine 异步调度的 AI 动作在本块
+      // 之前/之中落地，会改 g.actionSeat/g.result/g.street 致 watchFriendAction 走兜底。
+      // 这里把可能正挂着的看门狗与 AI 调度一并停掉，进入本块的确定态。
+      pageCtx.stopEngineWatch();
+      pageCtx.onEnterBackground();   // 全量暂停：停看门狗/AI 调度/音效泵/轮询
+      // 推过 30s：friendActSince 设到 31s 前（ACTION_TIMEOUT_SEC=30，避免硬编码）
+      const TIMEOUT_MS = 30 * 1000;
+      pageCtx.friendActSince = Date.now() - (TIMEOUT_MS + 1000);
+      // 清空 chatLog 到容量以下：主循环积累的系统消息可能已满 8 条，pushChat 入队后
+      // while(log.length>8) log.shift() 会把新消息挤掉，致 chatLog 净增 0（本块此前
+      // 断言 2 失败的根因）。置空后 pushChat 入队净增 1。
+      dataStore.chatLog = [];
+      const chatBefore = (dataStore.chatLog || []).length;
+      pageCtx.watchFriendAction();
+      // 30s 到 → 代行弃牌并推进：friendActSince 复位为 0，pushChat 系统消息入队
+      ok(pageCtx.friendActSince === 0,
+        '30s 超时代弃后 friendActSince 复位为 0（不再重复代弃）');
+      const added = (dataStore.chatLog || []).length - chatBefore;
+      ok(added === 1, '代弃 pushChat 恰好一条系统消息，实际 +' + added);
+      ok(fp.folded === true, '有注时超时代弃 → 好友被弃牌');
+      ok(/自动弃牌/.test(dataStore.chatLog[dataStore.chatLog.length - 1].text),
+        '有注案系统消息为「自动弃牌」: ' + (dataStore.chatLog[dataStore.chatLog.length - 1] || {}).text);
+      // 还原运行时，避免污染后续断言
+      pageCtx.syncLive = false;
+      pageCtx.isOwner = false;
+      pageCtx.roomNo = null;
+      pageCtx.botSeats = {};
+      pageCtx.standingMap = {};
+      pageCtx.friendActSince = 0;
+      // 恢复被本块暂停的后台定时器，保证后续 sfxPump/engineWatch 测试环境一致
+      pageCtx.onLeaveBackground();
+    }
+  }
+
+  /* ---------- publishPlay 500ms 节流：到期直发 / 未到期延后（盲点补覆盖） ----------
+   * publishPlay 用 publishDue/publishTimer 做 ~500ms 节流：到期直发 writePlayState，
+   * 未到期 clearTimeout 后 setTimeout 延后。此前 syncFailToast 节流与 EMOTE 频控有测，
+   * 这条房主广播节流（deferred setTimeout 路径）无行为级覆盖。这里验证两条分支：
+   * 到期直发不挂 timer、未到期挂延后 timer 并在到点后发。 */
+  {
+    // 静态守卫：节流机制存在
+    ok(/publishDue\|publishTimer/.test(tableSrc) || (/publishDue/.test(tableSrc) && /publishTimer/.test(tableSrc)),
+      'publishPlay 用 publishDue/publishTimer 做 500ms 节流');
+    ok(/if \(now >= due\)/.test(tableSrc), 'publishPlay 到期分支（now >= due 直发）');
+    ok(/this\.publishTimer = setTimeout/.test(tableSrc),
+      'publishPlay 未到期分支挂延后 setTimeout');
+
+    // 行为级：拨成房主态，第一次 publishPlay 因 publishDue=0 直发（不挂 timer）；
+    // 再调一次在节流窗内 → 挂延后 timer，writePlayState 不立即执行。
+    const g = pageCtx.requireGame();
+    if (g) {
+      pageCtx.syncLive = true;
+      pageCtx.isOwner = true;
+      pageCtx.roomNo = 'TEST_THROTTLE';
+      pageCtx.data.phase = 'playing';
+      pageCtx.publishDue = 0;
+      pageCtx.publishTimer = null;
+      pageCtx._lastPlayFp = null;
+      let writeCount = 0;
+      const realWrite = pageCtx.writePlayState.bind(pageCtx);
+      pageCtx.writePlayState = () => { writeCount++; return realWrite(); };
+      try {
+        pageCtx.publishPlay();          // 到期（due=0）→ 直发 writePlayState
+        ok(writeCount === 1, '到期时 publishPlay 直发 writePlayState 1 次，实际 ' + writeCount);
+        ok(pageCtx.publishTimer === null, '到期直发不挂延后 timer');
+        ok(pageCtx.publishDue > 0, '直发后 publishDue 推到 500ms 后');
+        const dueAfter = pageCtx.publishDue;
+        // 模拟「现在仍在节流窗内」：把 due 推到 300ms 后，now < due
+        pageCtx.publishDue = Date.now() + 300;
+        writeCount = 0;
+        pageCtx.publishPlay();          // 未到期 → 挂延后 timer，不立即写
+        ok(writeCount === 0, '节流窗内 publishPlay 不立即 writePlayState（延后），实际 ' + writeCount);
+        ok(pageCtx.publishTimer !== null, '未到期时挂延后 setTimeout（publishTimer 非空）');
+        // 清掉延后 timer 避免后台触发污染后续
+        if (pageCtx.publishTimer) { clearTimeout(pageCtx.publishTimer); pageCtx.publishTimer = null; }
+        pageCtx.publishDue = dueAfter;
+      } finally {
+        pageCtx.writePlayState = realWrite;
+        pageCtx.syncLive = false;
+        pageCtx.isOwner = false;
+        pageCtx.roomNo = null;
+        pageCtx.publishDue = 0;
+        pageCtx.publishTimer = null;
+        pageCtx._lastPlayFp = null;
+        pageCtx.data.phase = pageCtx.data.phase;   // phase 保持原值
+      }
+    }
+  }
+
   /* ---------- 牌桌互动与氛围（设计 2026-10-15 §2）静态守卫 + 行为 ----------
    * 四类动画：筹码飞行 / 赢牌金光+星光粒子 / 连胜徽章 / 表情轮盘+气泡。
    * 全部走 transform/opacity + keyframes，animOn=false 时 .no-anim 兜底禁用。
@@ -1881,16 +2090,41 @@ while (guard++ < 400) {
     ok(/Number\(a\.seat\) !== Number\(a\.rowSeat\)/.test(tableSrc) && /EMOTE_SET\.indexOf\(a\.emoji\) < 0/.test(tableSrc),
       'emote 分支：rowSeat 伪冒断言 + emoji 白名单双校验');
 
+    // —— applyFriendAction chat 分支（设计 §2.4 快捷语广播）：rowSeat 断言 + 白名单 ——
+    ok(/if \(a\.type === 'chat'\)/.test(tableSrc), 'applyFriendAction 有 chat 动作分支');
+    ok(/CHAT_TEXT_SET\.indexOf\(a\.text\) < 0/.test(tableSrc),
+      'chat 分支：文案过 CHAT_TEXT_SET 白名单（防伪造内容/超长 payload）');
+    ok(/if \(Number\(a\.seat\) !== Number\(a\.rowSeat\)\) return;[\s\S]*?CHAT_TEXT_SET/.test(tableSrc),
+      'chat 分支：rowSeat 伪冒断言先于白名单（与 emote 同防伪冒口径）');
+
+    // —— 快捷语上行：onQuickChat/onEmoji 好友房走 pushAction type:'chat' ——
+    ok(/pushAction\(this\.roomNo, \{ type: 'chat'/.test(tableSrc),
+      '好友房快捷语/表情走 pushAction 上行（type:chat，复用既有分道机制）');
+    ok(/CHAT_TEXT_SET\.indexOf\(text\) >= 0/.test(tableSrc),
+      'onQuickChat/onEmoji 上行前过 CHAT_TEXT_SET 白名单（面板外文案不上行）');
+
     // —— writePlayState emotes 随快照广播 + 指纹含 emote ——
     ok(/emotes: \(this\.data\.emotes \|\| \[\]\)\.slice\(-EMOTE_QUEUE_MAX\)/.test(tableSrc),
       'writePlayState 快照带 emotes 队列（滚动 10 条上限）');
     ok(/'e' \+ \(state\.emotes \|\| \[\]\.map/.test(tableSrc) || /'e' \+\s*\(state\.emotes/.test(tableSrc),
       '房主写库指纹含 emotes 项（表情变化触发写库广播）');
 
+    // —— writePlayState chats 随快照广播 + 指纹含 chats ——
+    ok(/chats: \(this\.data\.chatLog \|\| \[\]\)\.slice\(-CHAT_QUEUE_MAX\)/.test(tableSrc),
+      'writePlayState 快照带 chats 队列（滚动 8 条上限）');
+    ok(/'c' \+ \(state\.chats \|\| \[\]\)\.map/.test(tableSrc),
+      '房主写库指纹含 chats 项（快捷语变化触发写库广播）');
+
     // —— enterRemote 表情镜像 ——
     ok(/st\.emotes/.test(tableSrc), 'enterRemote 读取房主广播的 emotes 字段');
     ok(/const localSeat = remapS\[Number\(e\.seat\)\]/.test(tableSrc),
       '镜像端按座次重映射 emote 的 seat（remapS，我=0 号位）');
+
+    // —— enterRemote 快捷语镜像：按座次重映射 + seenChatIds 防重放 ——
+    ok(/st\.chats/.test(tableSrc), 'enterRemote 读取房主广播的 chats 字段');
+    ok(/_seenChatIds/.test(tableSrc), '镜像端用 seenChatIds 记录已放过的快捷语 id（防轮询重放）');
+    ok(/CHAT_TEXT_SET\.indexOf\(c\.text\) < 0/.test(tableSrc),
+      '镜像端只回放白名单内的快捷语（系统消息由镜像端本地逻辑生成，不重复回放）');
 
     // —— WXML 节点齐备 ——
     ok(wxmlSrc.indexOf('class="fly-chip fly-out"') >= 0 && wxmlSrc.indexOf('class="fly-chip fly-in"') >= 0,
@@ -1920,6 +2154,13 @@ while (guard++ < 400) {
     ok(wxmlSrc.indexOf('emote-mask') >= 0 && wxmlSrc.indexOf('emote-wheel') >= 0 &&
       wxmlSrc.indexOf('emote-grid') >= 0 && wxmlSrc.indexOf('emote-cell') >= 0,
       'WXML 表情轮盘弹层四件套：emote-mask/wheel/grid/cell');
+    // P3 观战快捷语：轮盘底部「快捷语」入口（onEmoteTalk 复用 onQuickChat 通道）
+    ok(wxmlSrc.indexOf('emote-talk') >= 0 && wxmlSrc.indexOf('onEmoteTalk') >= 0,
+      'WXML 表情轮盘含「快捷语」入口（emote-talk 节点 + onEmoteTalk 绑定）');
+    ok(wxssSrc.indexOf('.emote-talk') >= 0, 'WXSS 快捷语入口样式 .emote-talk 存在');
+    // onEmoteTalk 落地为触发一条快捷语（不再是只关轮盘的空预留位）
+    ok(/onEmoteTalk\(\)\s*\{[\s\S]*?onQuickChat\(/.test(tableSrc),
+      'onEmoteTalk 落地：复用 onQuickChat 通道发一条快捷语（P3 预留位已实现）');
 
     // —— WXSS 样式 + keyframes 齐备，且只用 transform/opacity ——
     ['.seat.winfx .avatar', '.streak-badge', '.emote-bubble', '.spark',
