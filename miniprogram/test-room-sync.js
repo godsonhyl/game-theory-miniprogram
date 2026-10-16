@@ -616,6 +616,40 @@ eq(roomSync.readySeats([mkRow(1, 99999, { ready_hand: 4 })], 4, now), {}, '离�
   await friend.pollOnce();
   ok(global.__navBack === true, '好友：房主行消失 → 离开房间');
 
+  /* ---------- 回归：同一用户重复行 → 牌桌不能出现两个自己 ----------
+   * 病根（用户 2026-10-16 反馈「有时候重入能看个两个自己」）：
+   * 房主从邀请链接重进被判成访客 → 换座到新座位 → 旧行仍在，
+   * 云端同一 owner_id 留下两条行，渲染层遍历 rows 就会画出两个自己。 */
+  {
+    const now = Date.now();
+    const hb = new Date(now).toISOString();
+    const dup = [
+      { id: 'a', room_no: 'DUP1', owner_id: 'uid_x', seat: 0, name: '我', is_host: false, stack: 1000, heartbeat_at: hb },
+      { id: 'b', room_no: 'DUP1', owner_id: 'uid_x', seat: 3, name: '我', is_host: false, stack: 1000, heartbeat_at: hb }
+    ];
+    const layout = roomSync.buildWaitLayout(dup, null, 6, 3, now);
+    const mine = layout.filter(s => s.isMe);
+    ok(mine.length <= 1, '同座位去重后布局里「我」至多出现一次，实际 ' + mine.length + ' 次');
+    ok(layout.filter(s => s.occupied).length === 2, '两个座位仍各自有人（去重只影响同一座位）');
+
+    // 真正的同座位重复：两条行都写 seat=0
+    const dupSame = [
+      { id: 'c', room_no: 'DUP2', owner_id: 'uid_y', seat: 0, name: '我', heartbeat_at: hb },
+      { id: 'd', room_no: 'DUP2', owner_id: 'uid_y', seat: 0, name: '我', heartbeat_at: hb }
+    ];
+    const l2 = roomSync.buildWaitLayout(dupSame, null, 6, 0, now);
+    ok(l2.filter(s => s.occupied).length === 1,
+      '同一座位两条重复行 → 只渲染 1 个人，实际 ' + l2.filter(s => s.occupied).length);
+
+    // 自己的行优先于同座位的他人行（自己视角不能被别人顶掉）
+    const conflict = [
+      { id: 'e', room_no: 'DUP3', owner_id: 'uid_other', seat: 2, name: '别人', heartbeat_at: hb },
+      { id: 'f', room_no: 'DUP3', owner_id: 'uid_me', seat: 2, name: '我', heartbeat_at: hb }
+    ];
+    const l3 = roomSync.buildWaitLayout(conflict, null, 6, 2, now);
+    ok(l3.filter(s => s.seat === 2)[0].isMe === true, '同座位冲突时优先认自己的行');
+  }
+
   /* ---------- 输出 ---------- */
   console.log('\n' + '='.repeat(52));
   if (failures.length === 0) {

@@ -1331,6 +1331,35 @@ while (guard++ < 400) {
       'start-btn 纵向排列，主副标题各占一行');
   }
 
+  /* ---------- 回归：房主身份回收 + 唯一座位（不能出现两个自己） ---------- */
+  {
+    // isOwner 不得只由 URL 的 own=1 决定：邀请链接不带 own，房主自点自己分享的卡片会丢身份
+    ok(/auth\.findRoom\(this\.roomNo\)/.test(tableSrc),
+      'bootstrapSync 查询房间行（房主归属的权威来源）');
+    ok(/roomOwner === myUid\) this\.isOwner = true/.test(tableSrc),
+      '以 poker_rooms.owner_id 与登录 uid 比对回收房主身份（own 参数退化为乐观提示）');
+    ok(/this\.setData\(\{ isOwner: this\.isOwner \}\)/.test(tableSrc),
+      '房主身份回收后同步到 data（UI 的房主标/开始按钮跟着更新）');
+    // 顺序：必须先定身份再定座位，否则会出现「按访客坐 -1 号位之后又切成房主」
+    const iRoom = tableSrc.indexOf('auth.findRoom(this.roomNo)');
+    const iSeat = tableSrc.indexOf('let seat = this.isOwner ? 0 : -1');
+    ok(iRoom > 0 && iSeat > 0 && iRoom < iSeat, '先回收房主身份再决定座位（顺序不能反）');
+
+    // 离房必须释放自己的行：原先只删访客行，房主重进被判访客 → 同一人占两座
+    ok(/if \(this\.syncLive\) \{\s*roomSync\.leave\(this\.roomNo\)/.test(tableSrc),
+      '离房对所有人（含房主）释放自己的座位行，避免同一人占两个座位');
+    ok(!/if \(this\.syncLive && !this\.isOwner\)/.test(tableSrc),
+      '旧的「只给访客删行」写法已移除（那是两个自己的病根）');
+
+    // 同座位唯一性收敛（云端兜底）
+    const syncSrc = require('fs').readFileSync(
+      require('path').join(__dirname, 'utils/room-sync.js'), 'utf8');
+    ok(/upsertMe[\s\S]{0,600}?\.neq\('seat', Number\(patch\.seat\)\)/.test(syncSrc),
+      'upsertMe 写入座位前先清理同房间其他座位的自己的行（同用户唯一座位）');
+    ok(/const liveBySeat = \{\}/.test(syncSrc) && /rank\(r\) > rank\(cur\)/.test(syncSrc),
+      'buildWaitLayout 同座位多行去重（渲染层兜底，绝不画出两个自己）');
+  }
+
   /* ---------- 静态守卫：金额入口全部收口到 setRaiseTo ---------- */
   {
     // 时长到点不得中途掀桌：startClock 只能调 onClockExpired，不得直连 endGame

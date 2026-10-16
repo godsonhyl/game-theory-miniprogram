@@ -660,26 +660,49 @@ Page({
   async bootstrapSync() {
     if (this.mode !== 'friend' || !this.roomNo) return;
     try {
-      // 房主恢复之前选过的座位；好友未选座时为 -1（进等待室再点空位）
-      let seat = this.isOwner ? 0 : -1;
       let rows = [];
       try { rows = await roomSync.poll(this.roomNo); } catch (e) { rows = []; }
+
+/**
+     * 房主身份回收（关键修复，用户 2026-10-16 反馈「退出去邀请好友再进，房主就变人了」）。
+     *
+     * 病根：isOwner 只看 URL 的 own=1。而分享/邀请链接**不带 own 参数**，
+     * 房主从自己分享出去的卡片重进 → isOwner 变 false → 自己被当成访客。
+     *
+     * 修法：以 **poker_rooms.owner_id**（服务端 auth.uid() 写入，客户端伪造不了）
+     * 为唯一权威，与当前登录用户比对。own=1 退化为「乐观提示」——
+     * 拿不到房间行时（首次进入 / 网络异常）才生效。
+     *
+     * 顺序很关键：必须先查房主归属再决定 seat，否则会出现「按访客逻辑坐 -1 号位、
+     * 之后又切成房主」的座位错乱。
+     */
+      let roomOwner = null;
+      try {
+        const r = await auth.findRoom(this.roomNo);
+        roomOwner = r && r.owner_id ? r.owner_id : null;
+      } catch (e) { roomOwner = null; }
+      let myUid = null;
+      try {
+        const p = await auth.ensureProfile();
+        if (p) { app.globalData.profile = p; myUid = p.owner_id || null; }
+      } catch (e) { /* 档案读取失败用兜底名，不阻断同步 */ }
+      if (roomOwner && myUid && roomOwner === myUid) this.isOwner = true;
+      this.setData({ isOwner: this.isOwner });
+
+      // 房主恢复之前选过的座位；好友未选座时为 -1（进等待室再点空位）
+      let seat = this.isOwner ? 0 : -1;
       if (this.isOwner) {
-        const mine = rows.filter(r => r.is_host)[0];
-        if (mine && mine.seat >= 0) seat = mine.seat;
         // 房主重进房间：把历史动作序号先推到最新，避免重放离开期间积压的动作
         this.appliedSeqBySeat = roomSync.pendingActions(rows, {}).nextBySeat;
       }
       // 名字：广播给同桌好友看的那份，默认用我的微信昵称；
-      // ensureProfile 顺带把登录态里的档案补齐（否则 myName 只能回落兜底名）
-      try {
-        const p = await auth.ensureProfile();
-        if (p) app.globalData.profile = p;
-      } catch (e) { /* 档案读取失败用兜底名，不阻断同步 */ }
+      // ensureProfile 已在上面调用过（顺带把登录态里的档案补齐，否则 myName 只能回落兜底名）
       const name = auth.myName(this.isOwner ? '房主' : '好友');
       // 买入额：房主沿用上次选择（重进房间不重置），好友入座时再选
       const mineRow = rows.filter(r => r.is_host)[0];
       const joinStack = this.isOwner && mineRow && mineRow.stack ? mineRow.stack : DEFAULT_BUY_IN;
+      // 座位：房主优先沿用自己残留的行座位（离开时行未删干净的场景）
+      if (this.isOwner && mineRow && Number(mineRow.seat) >= 0) seat = Number(mineRow.seat);
       this.buyInStack[seat] = joinStack;
       await roomSync.join(this.roomNo, {
         seat: seat,
@@ -1519,8 +1542,12 @@ Page({
       } else {
         this.saveSnapshot();   // 牌局进行中离开：暂存本地快照，云端房间保持 active
       }
-      // 好友离房释放自己的座位行；房主保留行（房间仍在，可回来续局）
-      if (this.syncLive && !this.isOwner) {
+      // 离房释放自己的座位行。
+      // 【修复】原先只对访客删行，房主保留——但房主从邀请链接重进时会被判成访客，
+      // 于是「房主的行」与「新访客的行」同时存在 → 同一人占两个座位，
+      // 表现为牌桌上出现两个自己。改为所有人都删自己的行：
+      // 房间本身（poker_rooms + 快照）不受影响，仍可重新进入续局。
+      if (this.syncLive) {
         roomSync.leave(this.roomNo).catch(e => console.error('[table] 离房清理失败',
           JSON.stringify({ stage: 'leaveRoom-sync', room: this.roomNo, err: e && e.message })));
       }

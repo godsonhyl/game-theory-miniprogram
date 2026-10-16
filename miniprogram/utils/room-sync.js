@@ -55,9 +55,33 @@ function nowIso() { return new Date().toISOString(); }
 /**
  * 更新自己的行；没有命中则插入（join / moveSeat / 心跳 / 动作上行共用）。
  * 云端不可用时抛错，由上层决定是否降级。
+ *
+ * 【同座位唯一性收敛】patch 带 seat 时，先把本用户在同房间、**其他座位**的行删掉。
+ * 病根（用户 2026-10-16 反馈「有时候重入能看个两个自己」）：
+ *   upsertMe 原本只 update「我的行」。一旦同一用户在这个房间留下了两条行
+ *   （典型场景：房主从邀请链接重进被判成访客 → 换座到新座位 → 旧行仍在），
+ *   update 会同时命中两条，两条都被搬到同一座位 → 云端出现重复行；
+ *   buildWaitLayout 按 seat 取 live[0]，就只显示一个，但渲染层的
+ *   renderAmbiace / 座位环按 rows 逐条遍历时会渲染出两个「自己」。
+ * 收敛后同一用户在同房间恒有且仅有一行。
  */
 async function upsertMe(roomNo, patch) {
   if (!roomNo) throw new Error('房间号为空');
+  // 座位唯一性：RLS 保证只能删自己的行，因此这条 delete 天然只清自己的残留。
+  if (patch && patch.seat !== undefined && patch.seat !== null) {
+    try {
+      await db().from(T_SEATS)
+        .delete()
+        .eq('room_no', roomNo)
+        .neq('seat', Number(patch.seat));
+    } catch (e) {
+      // 清理失败不阻断主流程：重复行的实际危害由下面的 buildWaitLayout 去重兜底。
+      console.error('[room-sync] 清理同座位残留行失败', JSON.stringify({
+        stage: 'upsert-dedupe', room: roomNo, seat: patch.seat,
+        message: e && e.message
+      }));
+    }
+  }
   const upd = await db().from(T_SEATS)
     .update(Object.assign({ heartbeat_at: nowIso() }, patch))
     .eq('room_no', roomNo)
@@ -218,10 +242,23 @@ function readySeats(rows, nextHandNo, nowMs) {
 function buildWaitLayout(rows, hostState, maxSeats, mySeat, nowMs) {
   const now = nowMs || Date.now();
   const live = activeSeats(rows, now);
+  /**
+   * 同座位去重：同一座位若有**多条**在线行（历史残留 / 并发写竞争），
+   * 只认一条，否则牌桌会渲染出两个相同的人（用户反馈「重入能看个两个自己」）。
+   * 保留规则：优先自己的行，其次房主行，最后 seat 最小的一条（保证确定性）。
+   */
+  const liveBySeat = {};
+  live.forEach(r => {
+    const s = Number(r.seat);
+    const cur = liveBySeat[s];
+    if (!cur) { liveBySeat[s] = r; return; }
+    const rank = (x) => (Number(x.seat) === Number(mySeat) ? 2 : (x.is_host ? 1 : 0));
+    if (rank(r) > rank(cur)) liveBySeat[s] = r;
+  });
   const broadcast = (hostState && hostState.kind === 'waiting' && Array.isArray(hostState.seats)) ? hostState.seats : [];
   const out = [];
   for (let i = 0; i < maxSeats; i++) {
-    const row = live.filter(r => Number(r.seat) === i)[0];
+    const row = liveBySeat[i];
     const bc = broadcast.filter(s => Number(s.seat) === i)[0];
     const occupied = !!row || !!bc;
     out.push({
