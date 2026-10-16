@@ -687,11 +687,26 @@ while (guard++ < 400) {
   /* ---------- 就绪超时：超过 30 秒未点就绪自动站起 ---------- */
   pageCtx.enterReadyPhase();
   ok(dataStore.readyPhase === true, '再次进入就绪阶段以验证超时逻辑');
+  const handBeforeTimeout = dataStore.handNo;
   pageCtx.autoStandUnready();     // 模拟 30 秒到点（不等待真实时间）
   ok(dataStore.myStanding === true, '超时未准备，我被自动站起（仍留在房间内）');
   ok(pageCtx.seatedOf(0) === false, '自动站起后不再算「在座」，下一手不参与发牌');
-  ok(dataStore.readyHint.indexOf('人数不足') >= 0 || dataStore.readyPhase === false,
-    '自动站起后给出提示或直接开下一手，实际提示：' + dataStore.readyHint);
+
+  // ⚠️ 这条断言此前写成 `readyHint 含人数不足 || readyPhase === false`，
+  // 用 || 同时接受了两种结果 —— 而后者正是「我还没点准备就绪牌局就自己开了」
+  // 这个真机 bug 的表现。断言过宽会把 bug 固化成合法行为，必须拆开精确断言。
+  // 注意：本块是**好友房 2 人局**（我站起后只剩 1 个 bot，本就被「不足 2 人」
+  // 挡住），走不到自动开局那条分支。真正的复现放在文件末尾的 AI 对战 4 人局块。
+  ok(dataStore.readyPhase === true && dataStore.handNo === handBeforeTimeout,
+    '好友房 2 人局：我超时站起后不自动开下一手（handNo 保持 ' +
+    handBeforeTimeout + '，实际 ' + dataStore.handNo + '）');
+
+  // 语义守卫：锁死「单机不许在唯一真人站起后自动开局」这条判断还在
+  const tableSrcReady = require('fs').readFileSync(
+    path.join(__dirname, 'pages', 'table', 'table.js'), 'utf8');
+  ok(/const soleHumanStoodUp = this\.mode !== 'friend'/.test(tableSrcReady) &&
+    /if \(!soleHumanStoodUp && seated\.length >= 2/.test(tableSrcReady),
+    'autoStandUnready 里有「唯一真人站起则不自动开局」的判断（锁结构不锁数值）');
   pageCtx.clearReadyClock();      // 清理电脑玩家的自动就绪定时器，避免干扰后续断言
 
   /* ---------- 「站起退出本局」入口可见性（WXML 静态检查） ---------- */
@@ -3148,6 +3163,61 @@ while (guard++ < 400) {
     // ---- sfx.js blind 音色 ----
     ok(/blind\s*\(c,\s*t\)/.test(sfxSrc), 'sfx.js 定义 blind 音色（blind(c, t) 预设）');
     ok(/盲注涨盲/.test(sfxSrc), 'sfx.js 注释含「盲注涨盲」说明（与 table.js play 调用对齐）');
+  }
+
+  /* ---------- 回归：AI 对战「还没点准备就绪，牌局就自己开始了」 ----------
+   * 真机反馈的完整触发链：
+   *   一手结束 → 结算弹窗（RESULT_MODAL_MS=10s 后自动关闭）
+   *   → closeResultModal(true) → enterReadyPhase() → 30s 就绪倒计时
+   *   → autoStandUnready() 把我站起 → 我从名单移除
+   *   → 剩下的电脑玩家早已自动 ready → 判定「全员就绪」→ 直接开局
+   * 结果：玩家既没点准备，开局后还变成了观战。
+   *
+   * ⚠️ 复现必须同时满足两个条件，缺一不可：
+   *   ① mode 必须是 'ai'（好友房里有人超时站起、其他人继续是设计意图，不能改）
+   *   ② 人数必须 >= 3（2 人局里我站起后只剩 1 个 bot，会被「不足 2 人」挡住，
+   *      根本走不到自动开局那条分支 —— 只测 2 人局会漏掉这个 bug）
+   */
+  {
+    pageCtx.onLoad();                      // 无参 → mode='ai'
+    pageCtx.chooseSeat({ currentTarget: { dataset: { seat: 0 } } });
+    pageCtx.confirmBuyIn({ currentTarget: { dataset: { amt: '1000' } } });
+    for (let i = 0; i < 3; i++) pageCtx.addBot();   // 我 + 3 bot = 4 人
+    pageCtx.startGame();
+    ok(pageCtx.mode === 'ai' && dataStore.phase === 'playing',
+      '复现前置：AI 对战已开局（mode=' + pageCtx.mode + ' phase=' +
+      dataStore.phase + '）');
+    // 只断言「3 人以上」：game 是模块级单例，前面用例留下的 bot 可能还在，
+    // 硬编码具体人数会随用例顺序变动而误报。复数才是复现的必要前提。
+    ok((dataStore.seats || []).length >= 3,
+      '复现前置：至少 3 人在座（2 人局会被「不足 2 人」挡住，测不出这个 bug），实际 ' +
+      (dataStore.seats || []).length);
+
+    // 进入就绪阶段后，让所有电脑玩家先准备好（真机上它们在 1.5~4s 内自动 ready）
+    pageCtx.enterReadyPhase();
+    ok(dataStore.readyPhase === true, '进入就绪阶段（等所有人准备就绪）');
+    dataStore.readyList.forEach(r => { if (!r.isMe) pageCtx.markReady(r.seat, true); });
+
+    const handBeforeTimeout2 = dataStore.handNo;
+    ok(dataStore.readyPhase === true,
+      '只有电脑玩家准备好、我还没点 → 不该开下一手（实际 readyPhase=' +
+      dataStore.readyPhase + '）');
+
+    // 模拟 30 秒到点：我超时被自动站起
+    pageCtx.autoStandUnready();
+    ok(dataStore.myStanding === true, '我超时未准备 → 被自动站起');
+
+    ok(dataStore.readyPhase === true,
+      '★ AI 对战：我站起后**不**自动开下一手（真机 bug：还没点准备就绪牌局就开始了）' +
+      '，实际 readyPhase=' + dataStore.readyPhase);
+    ok(dataStore.handNo === handBeforeTimeout2,
+      '★ AI 对战：我站起后不发新一手（handNo 保持 ' + handBeforeTimeout2 +
+      '，实际 ' + dataStore.handNo + '）');
+    ok(/自动站起/.test(dataStore.readyHint),
+      '给出「已自动站起 · 可重新入局」的明确提示，实际：' + dataStore.readyHint);
+    ok((dataStore.readyList || []).every(r => r.seat !== 0),
+      '站起后我已被移出就绪名单（只剩电脑玩家，此时绝不能开局）');
+    pageCtx.clearReadyClock();
   }
 
   /* ---------- 输出 ---------- */

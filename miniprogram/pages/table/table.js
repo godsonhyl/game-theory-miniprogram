@@ -3647,12 +3647,23 @@ Page({
     const seated = list.filter(x => this.seatedOf(x.seat));
     this.setData({ readyList: seated });
 
-    if (seated.length >= 2 && seated.every(x => !!this.readyMap[x.seat])) {
+    // ⚠️ AI 对战（单机）里「我」是唯一的真人。超时把我站起后，若还照常判断
+    //「剩余在座者是否都已准备」，我已被移出名单、剩下的电脑玩家又都已经准备，
+    // 于是直接开局——真机反馈：「我还没点准备就绪，怎么牌局就开始了」，
+    // 而且开局后我还变成了观战，更让人摸不着头脑。
+    // 单机场景必须留在这个阶段，等玩家自己从菜单「坐下加入游戏」重新入局，
+    // 不能开一局没有真人参与的纯电脑互打。好友房不受影响（那边本就是多人，
+    // 有人超时挂机、其他人继续是设计意图）。
+    const soleHumanStoodUp = this.mode !== 'friend' && !seated.some(x => x.seat === this.mySeat);
+
+    if (!soleHumanStoodUp && seated.length >= 2 && seated.every(x => !!this.readyMap[x.seat])) {
       this.finishReadyPhase();
       return;
     }
     this.renderReady();
-    if (seated.length < 2) {
+    if (soleHumanStoodUp) {
+      this.setData({ readyHint: '你已自动站起 · 菜单「坐下加入游戏」可重新入局' });
+    } else if (seated.length < 2) {
       this.setData({ readyHint: '人数不足 2 人 · 菜单「坐下加入游戏」可重新入局' });
     }
     this.render();
