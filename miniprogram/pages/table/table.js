@@ -243,6 +243,9 @@ Page({
     // 我的区域（微扑克式：手牌与操作集中在屏幕下半区）
     myCards: [],          // 我的两张底牌
     myStack: 0,
+    myBuyIn: 0,          // 本局带入筹码（盈亏基准，随 startStacks 延续）
+    myNetLive: 0,        // 实时盈亏 = myStack − myBuyIn
+    myNetLiveText: '0',
     myBet: 0,
     myFolded: false,
     myActive: false,      // 轮到我行动
@@ -277,6 +280,10 @@ Page({
     // 折叠面板：聊天与菜单默认收起，不抢占主视觉（微扑克：社区折叠在边栏）
     chatOpen: false,
     menuOpen: false,
+    // 实时盈亏面板（菜单 →「我的筹码」）：带入 / 剩余 / 盈亏，随时可查
+    bankShow: false,
+    // 时长已到但本手仍在打：倒计时停在 00:00，等这手结束才总结束
+    clockPendingEnd: false,
 
     // 社交：快捷聊天 + 表情
     chatLog: [],          // 最近聊天/表情（最多 8 条）
@@ -365,6 +372,7 @@ Page({
       remainSec: this.durationMin * 60,
       remainText: this.durationMin ? this.fmtRemain(this.durationMin * 60) : '',
       timeUp: false,
+      clockPendingEnd: false,
       summary: null,
       myStanding: false,
       mySeated: true,
@@ -1132,6 +1140,7 @@ Page({
       readyLeft: this.data.readyLeft || 0,
       readyHint: this.data.readyHint || '',
       summary: this.data.summary || null,
+      clockPendingEnd: !!this.data.clockPendingEnd,   // 到点挂起中：好友端也显示「本手后」
       handNo: game.handNo,
       // 氛围表情队列（设计 §1）：随快照广播，镜像端按放行窗口渲染。
       // 频控已在发送端/冒泡侧做过，这里只做滚动上限截断。
@@ -1150,6 +1159,7 @@ Page({
         (p.hole ? p.hole.join('.') : '')).join('|'),
       this.data.readyPhase ? 'r' + (this.data.readyList || []).map(x => x.seat + (x.ready ? 1 : 0)).join(',') : '',
       this.data.summary ? 's' + JSON.stringify(this.data.summary) : '',
+      this.data.clockPendingEnd ? 'cp' : '',
       // 表情队列内容/位置变化必须触发写库——否则好友端看不到新表情（轮询内唯一广播时机）
       'e' + (state.emotes || []).map(x => x.seat + x.emoji + x.bornAt).join('|')
     ].join('#');
@@ -1204,7 +1214,10 @@ Page({
       readyLeft: st.readyLeft || 0,
       readyHint: st.readyHint || '',
       summary: st.summary || null,
-      timeUp: !!st.summary
+      timeUp: !!st.summary,
+      // 房主挂起（到点但本手仍在打）：镜像端同样显示「本手后」，
+      // 否则好友端倒计时停在 00:00 会误以为断线/卡死
+      clockPendingEnd: !st.summary && st.clockPendingEnd === true
     };
     if (hostLeftResult && this.data.resultModal) patch.resultModal = null;
     // 表情镜像（设计 §1）：房主广播的 emotes 按「我=0 号位」重映射后冒泡。
@@ -1244,6 +1257,7 @@ Page({
         (p.folded ? 1 : 0) + (p.allIn ? 1 : 0) + (p.sittingOut ? 1 : 0)).join('|'),
       !!st.readyPhase, (st.readyList || []).map(x => x.seat + (x.ready ? 1 : 0)).join(','),
       st.readyLeft, st.readyHint, JSON.stringify(st.summary || null),
+      st.clockPendingEnd ? 'cp' : '',
       snap.result ? 'r' + JSON.stringify(snap.result.winners) : '',
       (snap.reveal && JSON.stringify(snap.reveal)) || '',
       (patch.emotes ? 'e' + patch.emotes.map(x => x.seat + x.emoji + x.bornAt).join('|') : '')
@@ -1613,11 +1627,12 @@ Page({
     // 续局从断点恢复时，若已过最后 1 分钟阈值则不再补播钟音
     this.sfxClockWarned = left <= 60;
     this.setData({ timeUp: false, remainSec: left, remainText: this.fmtRemain(left) });
+    this.pendingTimeUp = false;   // 新一轮（或续局恢复）清掉上一轮的「到点挂起」标记
     clock = setInterval(() => {
       left--;
       if (left <= 0) {
         this.clearClock();
-        this.endGame();
+        this.onClockExpired();
         return;
       }
       // 限时局最后 1 分钟：与 UI 变橙（remainSec <= 60）同阈值，钟音一声
@@ -1645,6 +1660,26 @@ Page({
   },
 
   /**
+   * 时长到点。
+   *
+   * 关键规则（用户 2026-10-16 反馈）：到点时若**本手还在打**，不能直接把牌局掀了——
+   * 玩家看到的是「两手打到一半突然 game over，筹码悬在半路」，无法接受。
+   * 正确做法是「打完这一手再总结束」：
+   *   - 不在打牌中（等待室/就绪阶段/本手已结算）→ 立即结束；
+   *   - 正在打牌 → 置 pendingTimeUp 标记，等本手走完亮牌/结算流程，
+   *     在 enterReadyPhase（每手唯一的收口）里再真正 endGame。
+   *
+   * pendingTimeUp 期间 UI 显示「本手结束后结束」，玩家知道还有多久。
+   */
+  onClockExpired() {
+    const inPlay = !!(game && !game.result && this.data.phase === 'playing' && !this.data.readyPhase);
+    if (!inPlay) { this.endGame(); return; }
+    this.pendingTimeUp = true;
+    this.setData({ remainSec: 0, remainText: '00:00', clockPendingEnd: true });
+    this.render();
+  },
+
+  /**
    * 时长到点：结束本局，统计所有参与人盈亏（当前筹码 − 起始筹码），按盈亏排名。
    * 结束的是「这一局」，不是退出房间——房间仍在，可再来一局或返回。
    */
@@ -1658,6 +1693,7 @@ Page({
       seat: p.seat,
       name: p.name,
       stack: p.stack,
+      buyIn: this.startStacks[p.seat] !== undefined ? this.startStacks[p.seat] : p.stack,
       // 盈亏基准 = 起始筹码。兜底不再是常数 1000（站起观战者/续局快照缺项者曾被
       // 凭空记 ±几百的假盈亏），而是该玩家当前筹码——即「无基准记录则视为 0 盈亏」，
       // 与 startStacks 的记账语义一致（评审 2026-10-15 MEDIUM）。
@@ -1668,6 +1704,7 @@ Page({
     const me = rows.filter(r => r.isMe)[0];
     this.setData({
       timeUp: true,
+      clockPendingEnd: false,
       isMyTurn: false,
       legal: null,
       readyPhase: false,
@@ -1680,7 +1717,10 @@ Page({
         sub: '共 ' + game.handNo + ' 手 · 全员盈亏结算',
         rows: rows,
         myNet: me ? me.net : 0,
-        myNetText: me ? ((me.net >= 0 ? '+' : '') + me.net) : '0'
+        myNetText: me ? ((me.net >= 0 ? '+' : '') + me.net) : '0',
+        // 我的「带入 / 剩余 / 盈亏」三件套（结算单顶部概览用）
+        myBuyIn: me ? me.buyIn : 0,
+        myStack: me ? me.stack : 0
       }
     });
 
@@ -1712,7 +1752,8 @@ Page({
       id: p.id, name: p.name, seat: p.seat, stack: 1000,
       isHuman: !!p.isHuman, style: p.style
     }));
-    this.setData({ summary: null, timeUp: false });
+    this.setData({ summary: null, timeUp: false, clockPendingEnd: false });
+    this.pendingTimeUp = false;
     this.initGame(players);   // startHand 内部会清理就绪状态
     this.startClock();
   },
@@ -2079,6 +2120,12 @@ Page({
       const myCards = readyPhase ? [] : this.markBest(
         (meP && !standing) ? meP.hole.map((card, i) => this.cardData(card, i)) : [], bestSet);
 
+      // 实时盈亏口径：带入 = startStacks[mySeat]，缺失兜底为当前筹码（视作 0 盈亏）。
+      // 与 endGame 的结算口径逐字一致 —— 否则会出现「面板显示的盈亏和结算单不一样」，
+      // 这类不一致最难排查。面板与结算都读这三个值。
+      const myBuyIn = meP ? (this.startStacks[meP.seat] !== undefined ? this.startStacks[meP.seat] : meP.stack) : 0;
+      const myNetLive = meP ? meP.stack - myBuyIn : 0;
+
       // 操作区（站起观战时不参与行动）
       const isMyTurn = game.actionSeat === this.mySeat && !result && !standing;
       let legal = null;
@@ -2132,6 +2179,10 @@ Page({
         // 我的区域（底部）
         myCards,
         myStack: meP ? meP.stack : 0,
+        // 实时盈亏面板（菜单「我的筹码」）：带入 / 剩余 / 盈亏三项，随每帧渲染刷新
+        myBuyIn: myBuyIn,
+        myNetLive: myNetLive,
+        myNetLiveText: myNetLive > 0 ? '+' + myNetLive : String(myNetLive),
         myBet: meP ? meP.bet : 0,
         myFolded: meP ? !!meP.folded : false,
         myActive: game.actionSeat === this.mySeat && !result,
@@ -2543,6 +2594,20 @@ Page({
 
   closePanels() {
     if (this.data.chatOpen || this.data.menuOpen) this.setData({ chatOpen: false, menuOpen: false });
+  },
+
+  /**
+   * 菜单 →「我的筹码」：实时盈亏面板。
+   * 展示带入 / 剩余 / 盈亏三项，数值与结算单逐字同源（都读 startStacks[mySeat]），
+   * 所以玩家在局中看到的盈亏 == 结束时结算单上的盈亏。
+   */
+  onMenuBank() {
+    this.setData({ menuOpen: false, bankShow: true });
+    if (this.data.soundOn) sfx.play('click');
+  },
+
+  onBankClose() {
+    this.setData({ bankShow: false });
   },
 
   onMenuHelp() {
@@ -3071,6 +3136,9 @@ Page({
    */
   enterReadyPhase() {
     if (!game || this.data.timeUp) return;   // 时长已到或牌局已结束，不再开下一手
+    // 时长已到但本手还在打 → 这里就是那手的收口，此刻才真正结束总牌局，
+    // 保证玩家打完完整的一手（摊牌/结算弹窗都看完）才 game over。
+    if (this.pendingTimeUp) { this.pendingTimeUp = false; this.endGame(); return; }
     if (this.remoteMode) return;             // 镜像端的就绪状态以房主广播为准
     this.clearReadyClock();
 

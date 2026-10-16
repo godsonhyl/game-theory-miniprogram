@@ -1238,6 +1238,99 @@ while (guard++ < 400) {
       '就绪后按钮文案变「已准备」且不再显示倒计时秒数');
   }
 
+  /* ---------- 行为：时长到点必须「打完这手再结束」，不能中途 game over ---------- */
+  {
+    pageCtx.onLoad({ room: '300007', own: '1', dur: '10' });
+    pageCtx.addBot();
+    pageCtx.addBot();
+    pageCtx.startGame();
+    ok(dataStore.phase === 'playing', '限时局已开局（10 分钟）');
+    const gNow = pageCtx.requireGame();
+    ok(!!gNow && !gNow.result, '新一局已发牌，本手进行中（无结算）');
+
+    // 到点 + 本手在打 → 不结束，挂起
+    pageCtx.onClockExpired();
+    ok(dataStore.timeUp === false, '到点时若本手仍在打，不立即 game over（timeUp 仍为 false）');
+    ok(dataStore.clockPendingEnd === true, '置 clockPendingEnd 标记，UI 提示「本手后结束」');
+    ok(dataStore.remainText === '00:00', '倒计时定格 00:00，实际 ' + dataStore.remainText);
+
+    // 本手走完 → enterReadyPhase 收口时才真正结束
+    pageCtx.enterReadyPhase();
+    ok(dataStore.timeUp === true, '本手结束后才真正总结束（timeUp=true）');
+    ok(!!dataStore.summary, '总结束弹出入员结算单');
+    ok(dataStore.summary && dataStore.summary.rows.length >= 2, '结算单含所有在座玩家');
+
+    // 结算单必须给出「带入 / 剩余 / 盈亏」三项
+    const s = dataStore.summary;
+    ok(s && typeof s.myBuyIn === 'number' && typeof s.myStack === 'number' && typeof s.myNet === 'number',
+      '结算单含带入/剩余/盈亏三项（myBuyIn / myStack / myNet）');
+    ok(s && s.myNet === s.myStack - s.myBuyIn, '结算单盈亏恒等式：盈亏 = 剩余 − 带入');
+    ok(s && s.rows.every(r => typeof r.buyIn === 'number' && r.net === r.stack - r.buyIn),
+      '结算单每行都带 buyIn 且 net = stack − buyIn');
+
+    // 实时面板口径必须与结算一致（同一 startStacks 基准）
+    ok(dataStore.myBuyIn === s.myBuyIn, '实时面板带入 === 结算单带入（同源同口径）');
+    ok(dataStore.myNetLive === s.myNet, '实时面板盈亏 === 结算单盈亏');
+
+    // 不在打牌中（已结算）→ 到点立即结束。
+    // 用引擎真实结算出 result（伪造对象会被 buildResult 拒绝，结构不对反而测不到东西）。
+    pageCtx.restartGame();
+    const g2 = pageCtx.requireGame();
+    if (g2) {
+      // 直接走引擎的摊牌结算：所有非弃牌玩家 award=0
+      const live = g2.players.filter(p => !p.folded && !p.sittingOut);
+      g2.result = {
+        winners: live.map(p => p.seat),
+        awards: live.map(p => ({ seat: p.seat, amount: 0 }))
+      };
+    }
+    pageCtx.onClockExpired();
+    ok(dataStore.timeUp === true, '不在打牌中（已结算）时到点立即结束');
+  }
+
+  /* ---------- 行为：实时盈亏面板（菜单 → 我的筹码） ---------- */
+  {
+    pageCtx.onMenuBank();
+    ok(dataStore.bankShow === true, '菜单「我的筹码」打开实时盈亏面板');
+    ok(dataStore.menuOpen === false, '打开面板时自动收起菜单');
+    pageCtx.onBankClose();
+    ok(dataStore.bankShow === false, '面板可关闭');
+  }
+
+  /* ---------- 静态守卫：金额入口全部收口到 setRaiseTo ---------- */
+  {
+    // 时长到点不得中途掀桌：startClock 只能调 onClockExpired，不得直连 endGame
+    ok(/onClockExpired\(\)/.test(tableSrc), '存在 onClockExpired()：时长到点的决策入口');
+    ok(/left <= 0\) \{\s*this\.clearClock\(\);\s*this\.onClockExpired\(\);/.test(tableSrc),
+      'startClock 到点走 onClockExpired，不再直接 endGame（避免中途 game over）');
+    ok(/onClockExpired\(\)\s*\{[\s\S]{0,700}?inPlay[\s\S]{0,400}?if \(!inPlay\) \{ this\.endGame\(\); return; \}/.test(tableSrc),
+      'onClockExpired：不在打牌中才立即结束，打牌中则挂起');
+    ok(/enterReadyPhase\(\)\s*\{[\s\S]{0,300}?if \(this\.pendingTimeUp\) \{ this\.pendingTimeUp = false; this\.endGame\(\); return; \}/.test(tableSrc),
+      'enterReadyPhase 是「打完这手再总结束」的收口点');
+
+    // 结算单三件套：买入/剩余/盈亏必须同源（都读 startStacks[mySeat]）
+    ok(/myBuyIn: me \? me\.buyIn : 0/.test(tableSrc) && /myStack: me \? me\.stack : 0/.test(tableSrc),
+      'endGame 的 summary 输出 myBuyIn / myStack');
+    ok(/buyIn: this\.startStacks\[p\.seat\] !== undefined/.test(tableSrc),
+      '结算单每行带 buyIn（带入筹码）');
+    ok(/sum-bank/.test(wxmlSrc) && /带入/.test(wxmlSrc) && /剩余/.test(wxmlSrc),
+      '结算单与实时面板共用「带入/剩余/盈亏」三件套组件');
+
+    // 实时盈亏面板必须存在菜单入口 + 数据源
+    ok(/bindtap="onMenuBank"/.test(wxmlSrc) && /onMenuBank\(\)\s*\{[\s\S]{0,200}?bankShow: true/.test(tableSrc),
+      '菜单「我的筹码」入口打开实时盈亏面板');
+    ok(/onBankClose\(\)\s*\{[\s\S]{0,120}?bankShow: false/.test(tableSrc),
+      '实时盈亏面板可关闭');
+    ok(/myNetLive: myNetLive/.test(tableSrc) && /myNetLiveText:/.test(tableSrc),
+      'render 逐帧派生 myNetLive / myNetLiveText（面板实时刷新）');
+    // 挂起状态要跨端同步：好友端不能把 00:00 误读为断线
+    ok(/clockPendingEnd: !!this\.data\.clockPendingEnd/.test(tableSrc) &&
+       /clockPendingEnd: !st\.summary && st\.clockPendingEnd === true/.test(tableSrc),
+      'clockPendingEnd 随房主广播同步给好友端');
+    ok(/clockPendingEnd \? '本手后' : remainText/.test(wxmlSrc),
+      '顶栏到点挂起显示「本手后」而非停在 00:00');
+  }
+
   /* ---------- 静态守卫：金额入口全部收口到 setRaiseTo ---------- */
   ok(/setRaiseTo\(amt, preset\)/.test(tableSrc),
     '存在统一入口 setRaiseTo()：一次写入 raiseTo + raiseSubmit + raiseAllIn');

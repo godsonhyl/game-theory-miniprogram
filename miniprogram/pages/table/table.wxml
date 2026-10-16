@@ -10,7 +10,10 @@
     <view class="tb-r">
       <text class="tb-street" wx:if="{{phase === 'playing'}}">{{streetCn}}</text>
       <text class="tb-hand" wx:if="{{phase === 'playing'}}">{{handNo}} 手</text>
-      <text class="tb-clock {{remainSec <= 60 ? 'urgent' : ''}}" wx:if="{{phase === 'playing' && durationMin > 0 && !timeUp}}">{{remainText}}</text>
+      <!-- 时长到点但本手仍在打：倒计时定格 00:00，改为「本手后结束」提示，
+           避免玩家以为卡死/断线（用户反馈：不能玩到一半直接 game over） -->
+      <text class="tb-clock {{clockPendingEnd ? 'pending' : (remainSec <= 60 ? 'urgent' : '')}}"
+            wx:if="{{phase === 'playing' && durationMin > 0 && !timeUp}}">{{clockPendingEnd ? '本手后' : remainText}}</text>
       <view class="ibtn {{chatOpen ? 'on' : ''}}" bindtap="toggleChat" wx:if="{{phase === 'playing'}}"><text class="ib-txt">💬</text>
         <view class="chat-badge" wx:if="{{chatUnread > 0 && !chatOpen}}">{{chatUnread > 9 ? '9+' : chatUnread}}</view>
       </view>
@@ -21,6 +24,7 @@
   <!-- 折叠菜单：次要操作收纳于此（等待室仅保留规则说明/退出房间） -->
   <view class="menu-pop" wx:if="{{menuOpen}}">
     <view class="mi" bindtap="onMenuHelp">规则说明</view>
+    <view class="mi" bindtap="onMenuBank" wx:if="{{phase === 'playing'}}">我的筹码 · 盈亏</view>
     <view class="mi" bindtap="onMenuSettings">牌桌设置</view>
     <button class="mi" open-type="share" wx:if="{{mode === 'friend'}}">邀请好友</button>
     <view class="mi" wx:if="{{phase === 'playing' && myStanding && !mySeated}}" bindtap="onMenuSit">坐下加入游戏</view>
@@ -316,11 +320,61 @@
     </view>
   </view>
 
+  <!-- 实时盈亏面板（菜单 →「我的筹码」）：带入 / 剩余 / 盈亏，
+     随牌局每帧刷新。与结算单同源同口径，所见即最终结算。 -->
+  <view class="help-mask" wx:if="{{bankShow}}" bindtap="onBankClose">
+    <view class="summary-dialog bank-dialog" catchtap="onBlockTap">
+      <text class="summary-title">我的筹码</text>
+      <text class="summary-sub">实时盈亏 · 与本局结束时的结算口径一致</text>
+
+      <view class="sum-bank big">
+        <view class="sb-item">
+          <text class="sb-label">带入</text>
+          <text class="sb-val">{{myBuyIn}}</text>
+        </view>
+        <view class="sb-item">
+          <text class="sb-label">剩余</text>
+          <text class="sb-val">{{myStack}}</text>
+        </view>
+        <view class="sb-item">
+          <text class="sb-label">盈亏</text>
+          <text class="sb-val {{myNetLive > 0 ? 'up' : (myNetLive < 0 ? 'down' : '')}}">{{myNetLiveText}}</text>
+        </view>
+      </view>
+
+      <view class="bank-note">
+        <text>带入为本局起始筹码，剩余为桌上面额筹码。</text>
+        <text>盈亏 = 剩余 − 带入，牌局进行中实时变动。</text>
+        <text class="bank-tip">买入/换桌请返回房间重新开局。</text>
+      </view>
+
+      <view class="summary-btns">
+        <button class="btn-primary sbtn" bindtap="onBankClose">知道了</button>
+      </view>
+    </view>
+  </view>
+
   <!-- 本局结束：时长到点后的全员盈亏结算 -->
   <view class="help-mask" wx:if="{{summary}}">
     <view class="summary-dialog" catchtap="onBlockTap">
       <text class="summary-title">{{summary.title}}</text>
       <text class="summary-sub">{{summary.sub}}</text>
+
+      <!-- 我的三件套：带入 / 剩余 / 盈亏。放在最上面，玩家第一眼就能对上账 -->
+      <view class="sum-bank">
+        <view class="sb-item">
+          <text class="sb-label">带入</text>
+          <text class="sb-val">{{summary.myBuyIn}}</text>
+        </view>
+        <view class="sb-item">
+          <text class="sb-label">剩余</text>
+          <text class="sb-val">{{summary.myStack}}</text>
+        </view>
+        <view class="sb-item">
+          <text class="sb-label">盈亏</text>
+          <text class="sb-val {{summary.myNet > 0 ? 'up' : (summary.myNet < 0 ? 'down' : '')}}">{{summary.myNetText}}</text>
+        </view>
+      </view>
 
       <view class="summary-rows">
         <view class="summary-row {{item.isMe ? 'me' : ''}}" wx:for="{{summary.rows}}" wx:key="seat">
@@ -334,7 +388,7 @@
       </view>
 
       <view class="summary-my">
-        <text class="sm-label">我的盈亏</text>
+        <text class="sm-label">合计盈亏</text>
         <text class="sm-val {{summary.myNet > 0 ? 'up' : (summary.myNet < 0 ? 'down' : '')}}">{{summary.myNetText}}</text>
       </view>
 

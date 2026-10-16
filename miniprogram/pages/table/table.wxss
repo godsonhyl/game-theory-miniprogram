@@ -783,6 +783,45 @@
 .sm-val { font-size: calc(4.2 * var(--uh)); font-weight: 800; color: #ffd98a; }
 .sm-val.up { color: #ff6b5a; }
 .sm-val.down { color: #4caf7d; }
+
+/* ---------- 带入 / 剩余 / 盈亏 三件套 ----------
+ * 结算单与「我的筹码」面板共用一套组件：玩家对账时要能一眼扫到
+ * 「我带了多少 → 还剩多少 → 赚了/亏多少」，所以做成等宽三格而非行式文本。
+ * 配色沿用牌桌约定：涨红跌绿（.up / .down）。 */
+.sum-bank {
+  display: flex; align-items: stretch; margin-top: calc(1.8 * var(--uh));
+  background: rgba(255,255,255,.05); border: 1rpx solid rgba(255,255,255,.1);
+  border-radius: calc(2 * var(--uh)); overflow: hidden; flex: none;
+}
+.sum-bank .sb-item {
+  flex: 1; display: flex; flex-direction: column; align-items: center;
+  padding: calc(1.4 * var(--uh)) calc(0.6 * var(--uw));
+  border-right: 1rpx solid rgba(255,255,255,.08);
+}
+.sum-bank .sb-item:last-child { border-right: none; }
+.sb-label { font-size: calc(2.5 * var(--uh)); color: var(--mut); }
+.sb-val {
+  font-size: calc(3.6 * var(--uh)); font-weight: 800; color: #ffd98a;
+  font-variant-numeric: tabular-nums; margin-top: calc(0.3 * var(--uh));
+}
+.sb-val.up { color: #ff6b5a; }
+.sb-val.down { color: #4caf7d; }
+.sum-bank.big .sb-val { font-size: calc(4.6 * var(--uh)); }
+.sum-bank.big .sb-item { padding: calc(2 * var(--uh)) calc(0.6 * var(--uw)); }
+
+/* 实时盈亏面板的说明区 */
+.bank-note {
+  margin-top: calc(1.6 * var(--uh)); display: flex; flex-direction: column;
+  font-size: calc(2.5 * var(--uh)); color: var(--mut); line-height: calc(3.8 * var(--uh));
+}
+.bank-tip { color: rgba(255,255,255,.32); margin-top: calc(0.6 * var(--uh)); }
+
+/* 到点挂起：倒计时改为「本手后」提示，用中性灰而非红色闪烁
+ *（红色 urgent 闪烁的含义是「还剩 60s  hurry」，此处含义是「已到点，等这手打完」）。 */
+.tb-clock.pending {
+  color: rgba(255,255,255,.72); background: rgba(255,255,255,.1);
+  border-color: rgba(255,255,255,.26); animation: none;
+}
 .summary-btns { display: flex; gap: calc(2.2 * var(--uw)); margin-top: calc(2.2 * var(--uh)); flex: none; }
 .sbtn {
   flex: 1; line-height: calc(8.2 * var(--uh)); font-size: calc(3.2 * var(--uh)); font-weight: 700;
