@@ -240,7 +240,7 @@ Page({
         rate: hands ? Math.round(wins / hands * 100) + '%' : '0%'
       }
     });
-    this.loadMyRooms();
+    return this.loadMyRooms();   // 返回 promise，供 onPullDownRefresh await 等列表就绪
   },
 
   /** 重试登录 */
@@ -281,11 +281,13 @@ Page({
       try {
         cost = await app.consumeRoomCard(1);
       } catch (cardErr) {
-        auth.closeRoom(room.room_no).catch(() => {});
+        auth.closeRoom(room.room_no).catch(e => console.error('[index] 扣卡异常回滚关房失败',
+          JSON.stringify({ stage: 'createRoom-cardErr', room: room.room_no, err: e && e.message })));
         throw cardErr;
       }
       if (!cost.ok) {
-        auth.closeRoom(room.room_no).catch(() => {});
+        auth.closeRoom(room.room_no).catch(e => console.error('[index] 扣卡失败回滚关房失败',
+          JSON.stringify({ stage: 'createRoom-noCard', room: room.room_no, err: e && e.message })));
         wx.hideLoading();
         this.syncFromCloud();
         this.showNoCards();
@@ -546,7 +548,8 @@ Page({
       });
       stale.forEach(no => {
         snapshot.clear(no);
-        auth.closeRoom(no).catch(() => {});
+        auth.closeRoom(no).catch(e => console.error('[index] 僵尸房清理关房失败',
+          JSON.stringify({ stage: 'loadMyRooms-stale', room: no, err: e && e.message })));
       });
       this.setData({
         roomsLoading: false,

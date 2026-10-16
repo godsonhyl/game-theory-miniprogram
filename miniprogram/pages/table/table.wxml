@@ -433,6 +433,7 @@
       </view>
 
       <view class="summary-btns">
+        <button class="btn-ghost sbtn" bindtap="onReplayTap" wx:if="{{!remoteMode}}">复盘</button>
         <button class="btn-primary sbtn" bindtap="onResultNext">{{remoteMode || readyPhase ? '知道了' : '下一手'}}</button>
       </view>
     </view>

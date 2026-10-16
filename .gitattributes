@@ -1,0 +1,14 @@
+# 统一文本文件为 LF（仓库历史为 LF；历史编辑器曾将工作区转成 CRLF，
+# 导致全量假 diff。本文件锁定 LF，配合 git add --renormalize 杜绝复发）。
+* text=auto eol=lf
+
+# 二进制资源不动行尾
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.webp binary
+*.mp3 binary
+*.wav binary
+*.key binary

@@ -51,6 +51,18 @@ npm run preview                 # 仅生成预览包，不上传
 - 座位环用统一的 `ringPositions()`（我固定底部中央，其余铺上方半圆），等待室与游戏中共用坐标（开局无跳变）。
 - 音效走 `utils/sfx.js` 的 WebAudio 实时合成（14 个 PRESETS 音色，零资源文件），`drainSfx()` 300ms 事件泵轮询 `game.events`（`sfxSeq` 游标）；提示音（倒计时警告/限时局/被动代弃/收到消息）挂在 startTimer/startClock/autoStandUnready/pushChat，全部 `soundOn` 门控，`unlock()` 必须在用户手势栈内（`onFirstTouch`）调用一次。
 
+### 渲染脏检查指纹（三处，改动 render/sync 前必读）
+
+牌桌有三道「同势跳过」指纹，避免轮询/计时每帧空转 setData 与写库。三者结构相同（拼关键状态字段 → 与缓存键比对 → 命中跳过），**改动任一指纹的字段集必须同步覆盖所有由它派生、且会写进 setData/写库的字段**，否则跳过分支会吞掉该字段的变化导致画面/同步漏帧：
+
+- **`render()` 的 `_lastRenderFp`**：渲染前算指纹，命中跳过整帧 setData，但仍调 `_renderTail()`（结算弹窗时序 + `publishPlay`），防漏调度。指纹**必须含 `tick`**——但 `startTimer` 每秒走局部 setData（`seats[actIdx].timer`/`myTimer`，不调 render），故 render 不被每秒触发、指纹稳定；`tick` 入指纹是为「其他触发引起的 render 落在计时中段时也能取到当前残值」。`myActText`/`myActCls`/`myStanding`/`pendingSit`/`foldConfirm`/`raiseTo`/`raiseCustom`/`resultModal` 等派生态都要进指纹。新增任何写入 render 的 setData 字段都要同步加进指纹。
+- **`writePlayState()` 的 `_lastPlayFp`**：房主 500ms 节流后仍每帧调到，指纹未变跳过写库；`forcePublish()`（站起/新手牌等关键状态）置 `_lastPlayFp=null` 穿透。
+- **`enterRemote()` 的 `_lastRemoteFp`**：好友端 1.5s 轮询拿快照，指纹未变跳过 setData+render；座位重映射后用快照字段拼指纹。
+
+### 渲染层缓存（纯函数 + 浅克隆隔离）
+
+`ringPositions()` 有模块级 `_ringCache`（键 = 排序后 seatSet + mySeat），`cardData()` 有按 card id 的 `_cardCache`。两者都是纯函数缓存，命中即返回。**`cardData` 命中时必须浅克隆返回**——`markBest` 会原地写 `c.hi`，不克隆会污染缓存令下一帧 `hi` 残留。新增同类缓存遵循：纯输入 → 缓存 → 被下游原地改的返回值要克隆。
+
 ### 跨设备同步（utils/room-sync.js）
 
 基于云端表的轮询模型：每个真人一行（RLS 只许改自己），房主行存房间公开状态（waiting/playing + snapshot + appliedSeqBySeat），好友动作写自己行动作字段上行，房主 1.5s 轮询按序号消化，心跳 5s / 15s 判离线，30s 行动超时代弃牌。云端不可用时静默降级为本地模拟。
@@ -75,6 +87,10 @@ npm run preview                 # 仅生成预览包，不上传
 
 自研轻量框架：脚本内 mock `wx`/`Page`/`getApp` 后真实加载页面 JS 驱动逻辑（`test:mp`/`test-room-sync.js` 通过 reload require-cache 拿多个独立页面闭包模拟房主+好友）。`test-room-sync.js` 用内存版 cloud.database 模拟云端表，不依赖网络。不装微信开发者工具也能跑全部测试。
 
+- 测试分两类：**行为级**（mock 运行时后真实调页面方法，断言 setData 落值）与**静态守卫**（读源码字符串正则，断言「某字段/方法/节点存在」或「不再出现某种写法」）。改 UI 但难在测试里复现的场景用静态守卫兜底——例如 `.chat-badge`/`recordsError` 这类 WXML/WXSS 节点靠正则守卫。
+- `test-miniprogram-logic.js` 顶部 mock 的 `wx` 对象是全局共享的，多个 `pageCtx.onLoad()` 复用同一份；若新增 wx API 调用，需在 mock wx 里补桩，否则 `test:cloud` 的「源码 wx.* 调用 vs 隐私声明」清单会对不上。当前声明的 wx.* 调用见 `test-cloud-integration.js` 输出（含 `stopPullDownRefresh` 等）。
+- 测 setData 次数可用「包装 setData 计数器」模式（见 `test-miniprogram-logic.js` 中 `_lastPlayFp`/`_lastRemoteFp`/`_lastRenderFp` 三个验证块：`pageCtx.setData = (d) => { count++; return realSetData(d); }`，用 try/finally 还原）。
+
 ## 文档
 
 - `README.md`：合规一号风险（版号/ICP/行动建议限制）、服务端权威架构蓝图（WebSocket + 事件溯源 + MySQL/Redis）、上线检查清单。
@@ -91,3 +107,5 @@ npm run preview                 # 仅生成预览包，不上传
 - `project.private.config.json`、`private.*.key`、`miniprogram/.wbapp_*.privacy.json` 等本地/密钥文件不进版本库（已在 .gitignore）。
 - 「行动建议」类功能（`advise(game, seat, { practiceMode: true })`）仅在练习模式/AI 对战启用（引擎层默认返回 null，`renderAdvice` 再加 `mode !== 'ai'` 门槛），好友房与匹配对战必须关闭（合规硬约束）。
 - 战绩/签到客户端层已收口（乐观锁 + 置标记先行），但 total_hands 仍客户端自报、签到日期仍客户端时钟——完整服务端化（rpc 事务 + 发放流水表 + 收表权限 + 服务端时钟）已写成 `docs/服务端化蓝图.md`，接支付前照单实施。
+- 同步链路禁止裸 `.catch(() => {})` 静默吞错（`test-miniprogram-logic.js` 的 `SILENT_OK_COUNT` 守卫拦截）：上行失败要么 `syncFailToast` 提示用户，要么 `console.error` 记录。离房清理（closeRoom/roomSync.leave）原为静默吞，已全部改 `console.error`，`SILENT_OK_COUNT` 已降为 0。
+- 改动 `table.js` 的同步链路（`pollOnce`/`bootstrapSync`/`writePlayState`/`enterRemote`）时注意：`pollOnce` 有 `_polling` 重入守卫（防 1.5s 轮询与上次 await 重叠），`bootstrapSync` catch 先 `stopSync()` 再降级（防定时器泄漏）。新增轮询/定时器要配对清理。

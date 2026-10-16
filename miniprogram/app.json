@@ -2,7 +2,8 @@
   "pages": [
     "pages/index/index",
     "pages/table/table",
-    "pages/profile/profile"
+    "pages/profile/profile",
+    "pages/replay/replay"
   ],
   "window": {
     "backgroundTextStyle": "dark",
