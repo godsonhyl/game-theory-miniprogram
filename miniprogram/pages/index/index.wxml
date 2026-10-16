@@ -61,6 +61,16 @@
       <text class="mode-arrow">›</text>
     </view>
 
+    <!-- SNG 淘汰赛（批⑤） -->
+    <view class="mode mode-sng" bindtap="onSngMode">
+      <view class="mode-icon ic ic-rank"></view>
+      <view class="mode-body">
+        <text class="mode-title">SNG 淘汰赛</text>
+        <text class="mode-desc">筹码归零即淘汰，活到最后夺冠</text>
+      </view>
+      <text class="mode-arrow">›</text>
+    </view>
+
     <!-- 每日一题 -->
     <view class="mode mode-puzzle" bindtap="onPuzzleTap">
       <view class="mode-icon ic ic-cards"></view>

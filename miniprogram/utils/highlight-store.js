@@ -107,6 +107,7 @@ function summarize(rec, type) {
   if (type === 'quads') return (handName ? '拿到' + handName : '四条');
   if (type === 'streak5') return '连胜 ' + (rec.streak || 5) + ' 局';
   if (type === 'bluff_success') return '诈唬成功，对手弃牌';
+  if (type === 'sng_win') return 'SNG 夺冠';
   return handName || '高光时刻';
 }
 

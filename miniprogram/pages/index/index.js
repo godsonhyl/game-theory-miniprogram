@@ -548,6 +548,24 @@ Page({
     });
   },
 
+  /** SNG 淘汰赛（批⑤）：纯客户端赛制编排，不消耗房卡。
+   *  涨盲默认 3 分钟（天然推进僵局），筹码归零即淘汰，最后一人夺冠。
+   *  选用专家级 AI 对手（与 AI 对战同口径，走 mode=ai&level=expert 路径，
+   *  table.js 内 mode=sng 分支关闭补筹、启用淘汰编排）。 */
+  onSngMode() {
+    wx.showActionSheet({
+      itemList: ['新手场 · 对手较温和', '进阶场 · 均衡对手', '高手场 · 对手更狡猾'],
+      success: res => {
+        const levels = ['rookie', 'advanced', 'expert'];
+        const level = levels[res.tapIndex] || 'advanced';
+        wx.navigateTo({ url: '/pages/table/table?mode=sng&level=' + level + '&blind=3' });
+      },
+      fail: () => {
+        wx.navigateTo({ url: '/pages/table/table?mode=sng&level=advanced&blind=3' });
+      }
+    });
+  },
+
   /** 每日一题 / 局面挑战（纯教学，无房卡消耗） */
   onPuzzleTap() {
     wx.navigateTo({ url: '/pages/puzzle/puzzle' });

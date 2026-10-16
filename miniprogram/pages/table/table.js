@@ -340,10 +340,12 @@ Page({
 
   onLoad(options) {
     const opts = options || {};
-    this.mode = opts.room ? 'friend' : 'ai';
-    // AI 难度档位（批②）：rookie/advanced/expert，默认 advanced。仅 AI 桌生效，
+    // 批⑤：SNG 淘汰赛模式（mode=sng）。复用 AI 桌引擎路径，但关闭补筹、
+    // 启用淘汰编排（筹码归零即淘汰，最后一人夺冠）。不消耗房卡、无好友同步。
+    this.mode = opts.room ? 'friend' : (opts.mode === 'sng' ? 'sng' : 'ai');
+    // AI 难度档位（批②）：rookie/advanced/expert，默认 advanced。仅 AI/SNG 桌生效，
     // 好友房的机器人沿用默认梯度（好友房 Bot 不该比真人强太多）
-    this.level = (this.mode === 'ai' && opts.level) ? opts.level : 'advanced';
+    this.level = ((this.mode === 'ai' || this.mode === 'sng') && opts.level) ? opts.level : 'advanced';
     this.roomNo = opts.room || '';
     // own=1 表示从「我的房间」或创建流程进入（房主）；分享/输入房间号进入视为访客
     this.isOwner = this.mode === 'friend' ? opts.own === '1' : true;
@@ -382,6 +384,13 @@ Page({
     this.blindIntervalMin = Math.max(0, Number(opts.blind) || 0);
     this.startStacks = {};     // 座位 → 起始筹码（结算盈亏用）
     this.buyInStack = {};      // 座位 → 买入额（入座时选定，开局按此发筹码）
+    // SNG 淘汰赛赛制状态（批⑤）：仅 mode==='sng' 有效，其它模式恒空。
+    // sngPlacement：seat → 名次（1=冠军，数字越大越先淘汰）；
+    // sngEliminationOrder：淘汰顺序 [seat,...]（最后一个为冠军，倒数第二为亚军）；
+    // sngNextPlace：下一个淘汰名次（初始=总人数，每淘汰一人递减至 1=冠军）。
+    this.sngPlacement = {};
+    this.sngEliminationOrder = [];
+    this.sngNextPlace = null;
     this.chatSeq = this.chatSeq || 0;
     // 氛围状态：页面级重置（连胜/频控/飞行 id 随页面实例归零）
     winStreaks = {};
@@ -1712,6 +1721,15 @@ Page({
       players.forEach(p => { if (p.id.indexOf('bot') === 0) this.botSeats[p.seat] = true; });
       this.pendingSitMap = {};
 
+      // 批⑤：SNG 赛制初始化——淘汰名次从总人数倒数（第 N 名先淘汰），涨盲默认 3 分钟
+      if (this.mode === 'sng') {
+        this.sngPlacement = {};
+        this.sngEliminationOrder = [];
+        this.sngNextPlace = players.length;
+        // SNG 天然涨盲：URL 已带 blind=3，此处兜底确保非 0
+        if (!this.blindIntervalMin) this.blindIntervalMin = 3;
+      }
+
       this.setData({ phase: 'playing' });
       let started = false;
       try {
@@ -1858,6 +1876,65 @@ Page({
     this.clearReadyClock();
     this.clearBlindTimer();   // 批④：本局结束停涨盲
 
+    // 批⑤：SNG 淘汰赛——按淘汰顺序排名（名次升序，1=冠军在前），不按净值排序。
+    // 终局可能由 _sngCheckFinalize 调入（存活者<=1），也可能由时长到点兜底。
+    if (this.mode === 'sng') {
+      this._sngCheckFinalize();   // 确保所有名次已记录（兜底补齐存活者名次）
+      const rows = game.players.map(p => ({
+        seat: p.seat,
+        name: p.name,
+        stack: p.stack,
+        buyIn: this.startStacks[p.seat] !== undefined ? this.startStacks[p.seat] : p.stack,
+        net: p.stack - (this.startStacks[p.seat] !== undefined ? this.startStacks[p.seat] : p.stack),
+        place: this.sngPlacement[p.seat] != null ? this.sngPlacement[p.seat] : 1,
+        placeText: '第 ' + (this.sngPlacement[p.seat] != null ? this.sngPlacement[p.seat] : 1) + ' 名',
+        isMe: !!p.isHuman
+      })).sort((a, b) => a.place - b.place);   // 名次升序：冠军在前
+      const me = rows.filter(r => r.isMe)[0];
+      const myPlace = me ? me.place : 1;
+      const isChampion = myPlace === 1;
+      this.setData({
+        timeUp: true,
+        clockPendingEnd: false,
+        isMyTurn: false,
+        legal: null,
+        readyPhase: false,
+        readyList: [],
+        myReady: false,
+        readyLeft: 0,
+        readyHint: '',
+        sng: true,    // 批⑤：WXML summary-row 内的 wx:for 作用域需用顶层字段判断 SNG
+        summary: {
+          title: isChampion ? 'SNG 结束 · 恭喜夺冠！' : 'SNG 结束 · 淘汰赛结算',
+          sub: '共 ' + game.handNo + ' 手 · 按淘汰顺序排名',
+          rows: rows,
+          isSng: true,    // WXML 按此切换「名次」列而非「盈亏」列
+          myPlace: myPlace,
+          myPlaceText: '第 ' + myPlace + ' 名',
+          myNet: me ? me.net : 0,
+          myNetText: me ? ((me.net >= 0 ? '+' : '') + me.net) : '0',
+          myBuyIn: me ? me.buyIn : 0,
+          myStack: me ? me.stack : 0
+        }
+      });
+      // 战绩记录
+      const meP = game.seatOf(this.mySeat);
+      if (meP) {
+        this.pendingRecord = {
+          tableId: 'sng',
+          handNo: game.handNo,
+          seat: this.mySeat,
+          hole: meP.hole.map(c => P.cardToCode(c)).join(' '),
+          board: game.board.map(c => P.cardToCode(c)).join(' '),
+          handType: isChampion ? 'SNG夺冠' : ('SNG第' + myPlace + '名'),
+          net: me ? me.net : 0,
+          won: isChampion
+        };
+        this.uploadRecord();
+      }
+      return;
+    }
+
     const rows = game.players.map(p => ({
       seat: p.seat,
       name: p.name,
@@ -1881,6 +1958,7 @@ Page({
       myReady: false,
       readyLeft: 0,
       readyHint: '',
+      sng: false,   // 批⑤：非 SNG 结算——WXML summary-row 内 wx:for 作用域判断用
       summary: {
         title: '本局结束 · 时长已到',
         sub: '共 ' + game.handNo + ' 手 · 全员盈亏结算',
@@ -2058,22 +2136,31 @@ Page({
     //「无高亮但按钮显示某个金额」或「高亮全下却只能加最小」的错觉。
     this.resetRaiseState();
 
-    // 演示：筹码不足自动补充；同步修正起始筹码，避免补充额被算成盈亏
-    game.players.forEach(p => {
-      if (p.stack < 20) {
-        const add = 1000 - p.stack;
-        p.stack = 1000;
-        if (this.startStacks[p.seat] !== undefined) this.startStacks[p.seat] += add;
-      }
-    });
+    // 演示：筹码不足自动补充；同步修正起始筹码，避免补充额被算成盈亏。
+    // 批⑤：SNG 淘汰赛不补筹——筹码归零即淘汰，靠 sng 检测记名次推进赛制。
+    if (this.mode !== 'sng') {
+      game.players.forEach(p => {
+        if (p.stack < 20) {
+          const add = 1000 - p.stack;
+          p.stack = 1000;
+          if (this.startStacks[p.seat] !== undefined) this.startStacks[p.seat] += add;
+        }
+      });
+    }
     game.players.forEach(p => { p.net = 0; });
 
     const prevDealer = game.dealerSeat;   // 供快照记录：恢复时从这里轮转到下一庄位
     const r = game.startHand();
     if (!r.ok) {
+      // 批⑤：SNG 终局——人数不足时 game.over，仍需处理夺冠收尾（只剩一人时记冠军）
+      if (this.mode === 'sng') this._sngCheckFinalize();
       wx.showToast({ title: r.error, icon: 'none' });
       return false;
     }
+    // 批⑤：SNG 淘汰检测——startHand 后引擎已把 stack<=0 玩家标 folded=true，
+    // 但「本手不参与」≠「自动淘汰」——此处检测筹码归零者记名次推进赛制。
+    // 放在 startHand 成功后：此时游戏对象字段（stack/folded）已就绪。
+    if (this.mode === 'sng') this._sngDetectEliminations();
     this.prevDealerSeat = prevDealer;
     myActText = '';
     myActCls = '';
@@ -2082,6 +2169,75 @@ Page({
 
     this.advance();
     return true;
+  },
+
+  /**
+   * SNG 淘汰检测（批⑤）：遍历玩家，对筹码归零且尚未记名次者记录淘汰名次。
+   * 引擎 startHand 已把 stack<=0 玩家设 folded=true（poker-core.js:862），
+   * 但不自动淘汰——SNG 需在此记名次推进赛制。每淘汰一人播 eliminate 音色 + toast。
+   * 检测完若存活者 <=1 调 sngFinalize 收尾夺冠。仅 mode==='sng' 调用。 */
+  _sngDetectEliminations() {
+    if (this.mode !== 'sng' || !game || !game.players) return;
+    let newEliminated = false;
+    game.players.forEach(p => {
+      if (p.stack <= 0 && this.sngPlacement[p.seat] === undefined) {
+        // 新淘汰者：记当前名次（从末位倒数），push 顺序，播音色
+        const place = this.sngNextPlace != null ? this.sngNextPlace-- : null;
+        if (place != null) {
+          this.sngPlacement[p.seat] = place;
+          this.sngEliminationOrder.push(p.seat);
+          newEliminated = true;
+          if (this.data.soundOn) sfx.play('eliminate');
+          wx.showToast({ title: p.name + ' 被淘汰（第' + place + '名）', icon: 'none' });
+        }
+      }
+    });
+    // 淘汰状态变化需穿透渲染指纹，否则座位灰显不刷新
+    if (newEliminated) {
+      this._lastRenderFp = null;
+      this.render();
+    }
+    // 存活者 <=1 → 终局夺冠
+    this._sngCheckFinalize();
+  },
+
+  /**
+   * SNG 终局检测（批⑤）：存活者（stack>0）<=1 时收尾夺冠。
+   * 夺冠者记 place=1、播 champion 音色、收割 sng_win 高光徽章、结束本局。
+   * 兜底：若冠军未被淘汰检测到（如靠赢池夺魁），在此补记。仅 mode==='sng' 调用。 */
+  _sngCheckFinalize() {
+    if (this.mode !== 'sng' || !game || !game.players) return;
+    const alive = game.players.filter(p => p.stack > 0);
+    if (alive.length > 1) return;   // 尚未终局
+    // 收尾：补齐未被检测淘汰的存活者名次（冠军=1，若还有第二名存活者=2，依此类推）
+    const survivors = alive.slice().sort((a, b) => b.stack - a.stack);
+    // 从剩余最低名次往下分配给未记录者
+    let nextPlace = this.sngNextPlace != null ? this.sngNextPlace : 1;
+    // 先给未记录的存活者分配名次（倒序：stack 最高的拿最小名次=最好）
+    const unrecorded = game.players.filter(p => this.sngPlacement[p.seat] === undefined && p.stack > 0);
+    // 按筹码降序分配剩余名次（最高筹码 = 最好名次）
+    unrecorded.sort((a, b) => b.stack - a.stack);
+    unrecorded.forEach(p => {
+      const place = Math.max(1, nextPlace);
+      this.sngPlacement[p.seat] = place;
+      if (this.sngEliminationOrder.indexOf(p.seat) < 0) this.sngEliminationOrder.push(p.seat);
+      if (place > 1 && nextPlace > 1) nextPlace--;
+    });
+    this.sngNextPlace = Math.max(1, nextPlace);
+    // 冠军 = 名次为 1 的玩家
+    const championSeat = Object.keys(this.sngPlacement)
+      .filter(s => this.sngPlacement[s] === 1)
+      .map(Number)[0];
+    if (championSeat !== undefined && this.data.soundOn) sfx.play('champion');
+    // 收割夺冠高光徽章（仅我夺冠时）
+    if (championSeat === this.mySeat && game.result) {
+      highlightStore.addHighlight(game, this.mySeat, 'sng', 'sng_win', 0);
+    }
+    // 若游戏尚未 over，由 endGame 收尾结算（按名次而非净值）
+    if (!game.over && !game.result) {
+      // 触发终局结算——endGame 内会按 sngPlacement 排名次表
+      this.endGame();
+    }
   },
 
   /**
@@ -2213,6 +2369,8 @@ Page({
         g.sb, g.bb,   // 批④：盲注级变化（涨盲）必须令指纹不同，否则跳过分支吞掉 blindLevel/blindText
         g.players.map(p => p.seat + ':' + p.stack + ':' + p.bet + ':' +
           (p.folded ? 1 : 0) + (p.allIn ? 1 : 0) + (p.sittingOut ? 1 : 0) +
+          // 批⑤：SNG 淘汰名次进指纹——淘汰后座位灰显需重绘，未入指纹会被跳过分支吞掉
+          (this.mode === 'sng' && this.sngPlacement[p.seat] !== undefined ? 'E' + this.sngPlacement[p.seat] : '') +
           (p.hole ? p.hole.join('.') : '')).join('|'),
         g.result ? 'r' + JSON.stringify(g.result.winners) + JSON.stringify(g.result.awards) : '',
         g.showdownReveal ? 'sv' + JSON.stringify(g.showdownReveal) : '',
@@ -2283,6 +2441,8 @@ Page({
         const isStanding = this.isStanding(p.seat);
         const isActive = !readyPhase && game.actionSeat === p.seat && !result;
         const isFolded = readyPhase ? false : !!p.folded;
+        // 批⑤：SNG 淘汰（筹码归零已被赛制记名次），灰显优先级高于 folded/standing
+        const isEliminated = this.mode === 'sng' && this.sngPlacement[p.seat] !== undefined && p.stack <= 0;
         /**
          * 座位卡的完整 class 字符串在这里一次性算好，WXML 只写 `class="{{item.cls}}"`。
          *
@@ -2306,6 +2466,7 @@ Page({
           isActive ? 'active' : '',
           isWinner ? 'win' : '',
           isStanding ? 'standing' : '',
+          isEliminated ? 'eliminated' : '',   // 批⑤：淘汰灰显（声明在 folded/standing 之后以覆盖 opacity）
           isWinner && this._winFxSeats && this._winFxSeats.indexOf(p.seat) >= 0 ? 'winfx' : ''
         ].filter(Boolean).join(' ');
         return {
@@ -2321,6 +2482,8 @@ Page({
           allIn: readyPhase ? false : p.allIn,
           folded: isFolded,
           standing: isStanding,
+          eliminated: isEliminated,   // 批⑤：淘汰标记，WXML 显示「淘汰」文本
+          placeText: isEliminated ? '第' + this.sngPlacement[p.seat] + '名' : '',
           active: isActive,
           isDealer: game.dealerSeat === p.seat,
           isSB: game.sbSeat === p.seat,

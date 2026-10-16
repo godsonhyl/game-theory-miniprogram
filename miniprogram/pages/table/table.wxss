@@ -237,6 +237,9 @@
 }
 .seat.folded { opacity: .38; }
 .seat.standing { opacity: .42; }
+/* 批⑤：SNG 淘汰——声明在 folded/standing 之后，灰显+去色覆盖二者；
+   淘汰玩家 stack<=0 被 folded=true，但语义是「出局」不是「弃牌」，故独立灰显。 */
+.seat.eliminated { opacity: .28; filter: grayscale(.6); }
 
 /* 座位号（WPK 式：每个座位标位号，便于好友按号入座） */
 .seat-no {
@@ -317,6 +320,16 @@
 .seat-standing {
   font-size: calc(2.4 * var(--uh)); color: #7d8f8a; flex: none; margin-left: calc(0.8 * var(--uw));
   padding: 0 calc(1 * var(--uw)); border: 1rpx solid rgba(255,255,255,.14); border-radius: 999rpx;
+}
+/* 批⑤：SNG 淘汰名次标记（座位上的「第N名」文本） */
+.seat-eliminated {
+  font-size: calc(2.2 * var(--uh)); color: #ff8a72; flex: none; margin-left: calc(0.8 * var(--uw));
+  padding: 0 calc(1 * var(--uw)); border: 1rpx solid rgba(255,138,114,.4); border-radius: 999rpx;
+}
+/* 批⑤：SNG 结算名次列文案 */
+.sr-place {
+  font-size: calc(3.2 * var(--uh)); font-weight: 800; color: var(--gold); flex: none;
+  min-width: 96rpx; text-align: right;
 }
 /* 位置标记 SB/BB（庄家 D 在头像右上角） */
 .pos-tags { display: flex; align-items: center; margin-top: calc(0.4 * var(--uh)); }

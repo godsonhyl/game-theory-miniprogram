@@ -24,6 +24,8 @@
  *   timeout 被动代弃/自动站起  下行双音（中性偏负，提示「非你主动」）
  *   chat   收到对手/AI 消息   轻短「啵」（社交反馈，我的消息不响）
  *   blind  盲注涨盲           上行三连（D5-G5-B5），提示性提示「注码变高」
+ *   eliminate SNG 淘汰        下行低频沉音（A3-F3-D3），出局感
+ *   champion SNG 夺冠         上行琶音 C5-E5-G5-C6-E6（凯旋，比 win 多一高点）
  */
 
 let ctx = null;          // 懒加载的 WebAudioContext 单例
@@ -181,6 +183,18 @@ const PRESETS = {
   blind(c, t) {
     [587, 784, 988].forEach((f, i) => {
       osc(c, t + i * 0.08, f, 0.14, 'triangle', 0.11);
+    });
+  },
+  // 批⑤：SNG 淘汰——下行低频沉音（A3→F3→D3），出局感，短促不拖沓
+  eliminate(c, t) {
+    [220, 175, 147].forEach((f, i) => {
+      osc(c, t + i * 0.12, f, 0.16, 'sine', 0.14, f * 0.7);
+    });
+  },
+  // 批⑤：SNG 夺冠——上行琶音 C5-E5-G5-C6-E6（大调凯旋，比 win 多一个高点）
+  champion(c, t) {
+    [523, 659, 784, 1046, 1318].forEach((f, i) => {
+      osc(c, t + i * 0.1, f, 0.18, 'triangle', 0.14);
     });
   },
 };

@@ -96,6 +96,7 @@
           <text class="seat-name">{{item.empty ? '空位' : item.name}}</text>
           <text class="seat-stack" wx:if="{{!item.empty && item.stack !== '' && item.stack !== undefined}}">{{item.stack}}</text>
           <text class="seat-standing" wx:if="{{item.standing}}">观战</text>
+          <text class="seat-eliminated" wx:if="{{item.eliminated}}">{{item.placeText}}</text>
         </view>
 
         <!-- 位置标记：庄家 D 在头像上，SB/BB 在名牌旁（仅游戏中） -->
@@ -388,13 +389,15 @@
       </view>
 
       <view class="summary-rows">
+        <!-- 批⑤：SNG 淘汰赛按名次（第几名）展示，不按盈亏 -->
         <view class="summary-row {{item.isMe ? 'me' : ''}}" wx:for="{{summary.rows}}" wx:key="seat">
-          <text class="sr-rank">{{index + 1}}</text>
+          <text class="sr-rank">{{item.place}}</text>
           <text class="sr-name">{{item.name}}</text>
-          <text class="sr-stack">{{item.stack}}</text>
-          <text class="sr-net {{item.net > 0 ? 'up' : (item.net < 0 ? 'down' : '')}}">
+          <text class="sr-stack" wx:if="{{!sng}}">{{item.stack}}</text>
+          <text class="sr-net {{item.net > 0 ? 'up' : (item.net < 0 ? 'down' : '')}}" wx:if="{{!sng}}">
             {{item.net > 0 ? '+' : ''}}{{item.net}}
           </text>
+          <text class="sr-place" wx:if="{{sng}}">{{item.placeText}}</text>
         </view>
       </view>
 

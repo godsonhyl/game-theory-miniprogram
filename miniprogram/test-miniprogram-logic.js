@@ -2024,6 +2024,10 @@ while (guard++ < 400) {
     const tableWxml = fs.readFileSync(path.join(__dirname, 'pages', 'table', 'table.wxml'), 'utf8');
     const sfxSrc = fs.readFileSync(path.join(__dirname, 'utils', 'sfx.js'), 'utf8');
     guardBlindTimerIntegration(tableSrc, idxSrc, idxWxml, tableWxml, sfxSrc);
+
+    // ---- SNG 淘汰赛（批⑤）静态守卫 ----
+    const tableWxss = fs.readFileSync(path.join(__dirname, 'pages', 'table', 'table.wxss'), 'utf8');
+    guardSngIntegration(tableSrc, idxSrc, idxWxml, tableWxml, tableWxss, profSrc, hlSrc, sfxSrc);
   })();
 
   /* ---------- 静态守卫函数定义区 ----------
@@ -3186,6 +3190,78 @@ while (guard++ < 400) {
     // ---- sfx.js blind 音色 ----
     ok(/blind\s*\(c,\s*t\)/.test(sfxSrc), 'sfx.js 定义 blind 音色（blind(c, t) 预设）');
     ok(/盲注涨盲/.test(sfxSrc), 'sfx.js 注释含「盲注涨盲」说明（与 table.js play 调用对齐）');
+  }
+
+  /**
+   * 批⑤ SNG 淘汰赛静态守卫：纯客户端赛制编排，不碰引擎。
+   * 覆盖：入口、模式识别、补筹守卫、赛制状态机、淘汰检测、终局结算、
+   *       座位灰显、渲染指纹含淘汰标记、夺冠徽章、音色。
+   */
+  function guardSngIntegration(tableSrc, idxSrc, idxWxml, tableWxml, tableWxss, profSrc, hlSrc, sfxSrc) {
+    // ---- 入口 ----
+    ok(/onSngMode/.test(idxSrc), 'index.js 定义 onSngMode（SNG 淘汰赛入口）');
+    ok(/mode=sng/.test(idxSrc), 'index.js onSngMode 跳转带 mode=sng');
+    ok(/blind=3/.test(idxSrc), 'index.js SNG 默认涨盲 3 分钟（blind=3）');
+    ok(/SNG 淘汰赛/.test(idxWxml), 'index.wxml 含「SNG 淘汰赛」入口卡片');
+    ok(/mode-sng/.test(idxWxml), 'index.wxml SNG 卡片带 mode-sng 类');
+    ok(/筹码归零即淘汰/.test(idxWxml), 'index.wxml SNG 卡片描述含「筹码归零即淘汰」');
+
+    // ---- table.js 模式识别 ----
+    ok(/opts\.mode\s*===\s*['"]sng['"]/.test(tableSrc), 'table.js 识别 mode=sng（onLoad）');
+    ok(/this\.mode\s*=\s*['"]sng['"]/.test(tableSrc) || /mode\s*=\s*opts\.room\s*\?\s*['"]friend['"]\s*:\s*\(.+===\s*['"]sng['"]\s*\?\s*['"]sng['"]/.test(tableSrc),
+      'table.js 设 mode 为 sng');
+
+    // ---- 补筹守卫（SNG 不补筹，筹码归零即淘汰） ----
+    ok(/this\.mode\s*!==\s*['"]sng['"]/.test(tableSrc), 'table.js 补筹逻辑有 mode!==sng 守卫');
+
+    // ---- 赛制状态机 ----
+    ok(/sngPlacement/.test(tableSrc), 'table.js 定义 sngPlacement（seat→名次）');
+    ok(/sngEliminationOrder/.test(tableSrc), 'table.js 定义 sngEliminationOrder（淘汰顺序）');
+    ok(/sngNextPlace/.test(tableSrc), 'table.js 定义 sngNextPlace（下一名次计数器）');
+    ok(/_sngDetectEliminations/.test(tableSrc), 'table.js 定义 _sngDetectEliminations（淘汰检测）');
+    ok(/_sngCheckFinalize/.test(tableSrc), 'table.js 定义 _sngCheckFinalize（终局兜底）');
+    ok(/sngNextPlace\s*=\s*players\.length|sngNextPlace\s*=\s*[\w.]+\.length/.test(tableSrc),
+      'table.js startGame 初始化 sngNextPlace 为总人数');
+
+    // ---- 终局结算 ----
+    ok(/isSng:\s*true/.test(tableSrc), 'table.js endGame SNG 分支置 isSng:true');
+    ok(/sng:\s*true/.test(tableSrc) && /sng:\s*false/.test(tableSrc),
+      'table.js setData 顶层 sng 标记（WXML wx:for 作用域判断 SNG 列）；非 SNG 分支置 sng:false');
+    ok(/myPlace/.test(tableSrc), 'table.js endGame SNG 分支算 myPlace');
+    ok(/placeText/.test(tableSrc), 'table.js endGame SNG rows 含 placeText');
+    ok(/SNG夺冠|SNG第/.test(tableSrc), 'table.js SNG 战绩 handType 文案');
+
+    // ---- 座位灰显 ----
+    ok(/isEliminated/.test(tableSrc), 'table.js 座位渲染算 isEliminated');
+    ok(/eliminated/.test(tableSrc), 'table.js 座位 cls 加 eliminated');
+    ok(/seat-eliminated/.test(tableWxml), 'table.wxml 含 seat-eliminated 节点');
+    ok(/item\.placeText/.test(tableWxml), 'table.wxml 座位显示淘汰名次（item.placeText）');
+    ok(/\.seat\.eliminated\s*\{[^}]*opacity/.test(tableWxss),
+      'table.wxss .seat.eliminated 含 opacity 灰显');
+    ok(/\.seat\.eliminated/.test(tableWxss),
+      'table.wxss 定义 .seat.eliminated（声明在 folded 之后覆盖）');
+
+    // ---- 结算面板 SNG 名次表 ----
+    ok(/\{\{!sng\}\}/.test(tableWxml), 'table.wxml summary-row 用顶层 sng 判断盈亏/名次列');
+    ok(/sr-place/.test(tableWxml), 'table.wxml 含 sr-place 名次列节点');
+    ok(/item\.place/.test(tableWxml), 'table.wxml 结算行显示 item.place（名次）');
+
+    // ---- 渲染指纹含淘汰标记 ----
+    ok(/sngPlacement\[p\.seat\]/.test(tableSrc),
+      'table.js _lastRenderFp 含 sngPlacement 派生标记（淘汰后灰显不漏帧）');
+
+    // ---- 夺冠高光徽章 ----
+    ok(/sng_win/.test(hlSrc), 'highlight-store.js summarize 含 sng_win 文案');
+    ok(/sng_win/.test(profSrc), 'profile.js DEFS/RANK 含 sng_win 徽章');
+    ok(/SNG 夺冠/.test(profSrc), 'profile.js sng_win 徽章名「SNG 夺冠」');
+    ok(/addHighlight[\s\S]*sng_win/.test(tableSrc),
+      'table.js 夺冠时调 addHighlight sng_win');
+
+    // ---- 音色 ----
+    ok(/eliminate\s*\(c,\s*t\)/.test(sfxSrc), 'sfx.js 定义 eliminate 音色');
+    ok(/champion\s*\(c,\s*t\)/.test(sfxSrc), 'sfx.js 定义 champion 音色');
+    ok(/sfx\.play\(['"]eliminate['"]\)/.test(tableSrc), 'table.js 淘汰播 eliminate 音效');
+    ok(/sfx\.play\(['"]champion['"]\)/.test(tableSrc), 'table.js 夺冠播 champion 音效');
   }
 
   /* ---------- 输出 ---------- */

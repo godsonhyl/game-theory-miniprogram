@@ -180,10 +180,11 @@ Page({
       { key: 'royal_flush', name: '皇家同花顺', icon: '👑', type: 'royal_flush' },
       { key: 'quads', name: '四条', icon: '4', type: 'quads' },
       { key: 'bluff_success', name: '诈唬成功', icon: '🎭', type: 'bluff_success' },
-      { key: 'streak5', name: '连胜 5 局', icon: '🔥', type: 'streak5' }
+      { key: 'streak5', name: '连胜 5 局', icon: '🔥', type: 'streak5' },
+      { key: 'sng_win', name: 'SNG 夺冠', icon: '🏆', type: 'sng_win' }
     ];
-    // 优先级序：取「最值得炫耀的一手」时用——皇家 > 四条 > 诈唬 > 连胜
-    const RANK = { royal_flush: 0, quads: 1, bluff_success: 2, streak5: 3 };
+    // 优先级序：取「最值得炫耀的一手」时用——皇家 > 四条 > 诈唬 > 连胜 > SNG夺冠
+    const RANK = { royal_flush: 0, quads: 1, bluff_success: 2, streak5: 3, sng_win: 4 };
     const badges = DEFS.map(d => {
       const count = list.filter(r => r.type === d.type).length;
       return { key: d.key, name: d.name, icon: d.icon, count, unlocked: count > 0 };
