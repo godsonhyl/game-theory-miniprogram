@@ -74,8 +74,7 @@
 
     <!-- 座位环：等待室与游戏中复用 -->
     <block wx:for="{{seats}}" wx:key="seat">
-      <view class="seat {{item.empty ? 'empty' : ''}} {{item.isMe ? 'self' : ''}} {{item.folded ? 'folded' : ''}} {{item.active ? 'active' : ''}} {{item.win ? 'win' : ''}} {{item.standing ? 'standing' : ''}} {{winFx && (',' + winFx + ',').indexOf(',' + item.seat + ',') >= 0 ? 'winfx' : ''}}"
-            style="left:{{item.x}}%;top:{{item.y}}%" bindtap="chooseSeat" data-seat="{{item.seat}}">
+      <view class="{{item.cls}}" style="left:{{item.x}}%;top:{{item.y}}%" bindtap="chooseSeat" data-seat="{{item.seat}}">
         <!-- 座位号（WPK 式：每个座位都标位号，便于好友按号入座） -->
         <text class="seat-no" wx:if="{{!item.empty}}">{{item.seatNo}}</text>
         <!-- 本轮下注：筹码堆 + 金额 -->

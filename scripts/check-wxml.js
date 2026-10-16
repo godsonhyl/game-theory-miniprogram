@@ -6,6 +6,9 @@
  *    （历史事故：底部 myzone 手牌漏 wx:for-item="c"，真机上两张牌渲染成空白白板）
  *    —— 插值无论出现在文本位置还是属性位置（wx:if="{{c.rank}}" 一类）都要查：
  *    历史事故若写在属性位置，旧版检查器是盲的（2026-10-15 评审 MEDIUM）。
+ * 3) 表达式引擎能力边界：WXML 的 {{}} 不是完整 JS，「三元里嵌 && / 方法调用」
+ *    这类写法开发者工具不报错、**真机上传才编译失败**
+ *    （历史事故 2026-10-16：座位 class 内联 winfx 判定 → Bad attr 'class': unexpected token ':'）。
  *
  * 预处理：先剥离 <!-- … --> 注释——注释里的标签/插值是说明文字，不是要检查的
  * 结构，混进来会造成假阳性（多边形如 {{xx.yy}} 的解释性注释会被当成漏声明）。
@@ -118,7 +121,53 @@ files.forEach(file => {
     }
   }
   checkText(src.slice(cursor), tagStack, rel, src);
+
+  /* ---------- 3) 表达式引擎能力边界（本规则来自一次真机发布失败事故） ---------- */
+  /**
+   * 历史事故（2026-10-16）：座位卡 class 写成
+   *   {{winFx && (',' + winFx + ',').indexOf(',' + item.seat + ',') >= 0 ? 'winfx' : ''}}
+   * 开发者工具「真机调试」不报错、预览也正常，**点「更新」上传时直接失败**：
+   *   Bad attr 'class' with message: unexpected token ':'
+   * 原因是 WXML 的 {{}} 不是完整 JS —— 解析器不接受「三元运算符里嵌套
+   * 逻辑运算 + 字符串拼接 + 方法调用」的组合，扫到 `? 'winfx' :` 的冒号就崩。
+   *
+   * 教训：**发布前必须能静态拦住 WXML 表达式引擎不支持的写法**，
+   * 否则这类 bug 只能靠用户真机上传才能发现。
+   */
+  checkEngineLimits(src, rel);
 });
+
+/**
+ * 规则 3 实现：黑名单扫描 WXML 表达式里引擎不支持的构造。
+ * 命中即报，并提示「搬到 JS 里预计算」。
+ */
+function checkEngineLimits(src, rel) {
+  // 提取所有 {{ … }} 表达式片段（含跨行）
+  const exprRe = /\{\{([\s\S]*?)\}\}/g;
+  let em;
+  while ((em = exprRe.exec(src))) {
+    const expr = em[1];
+    const line = src.slice(0, em.index).split('\n').length;
+    const at = rel + ':' + line + '：WXML 表达式引擎不支持';
+
+    /**
+     * 判定依据（刻意收窄，误报比漏报更烦人）：
+     *   实测 `a && b ? 'x' : ''`、`a || b ? 'x' : 'y'` 这类
+     *   **三元里嵌 && / || 的写法真机编译完全正常**（本项目线上跑着）。
+     *   真正让上传失败的是三元里**调用字符串/数组方法**——
+     *   wcc 解析到方法调用后的 `? … :` 冒号就报 unexpected token ':'。
+     * 所以只抓「方法调用 + 三元/逻辑运算」同现，不泛化到 && ||。
+     */
+    const hasCall = /\.\s*[A-Za-z_$][\w$]*\s*\(/.test(expr);
+    if (!hasCall) continue;
+
+    if (/\?/.test(expr) || /(\&\&|\|\|)/.test(expr)) {
+      failures.push(at + '「三元 / 逻辑运算里调用方法」的表达式' +
+        '（历史上正是这条让真机上传直接失败：unexpected token \':\'）\n      ' +
+        expr.trim() + '\n      → 搬到 JS 里算好，WXML 只留简单插值（如 class="{{item.cls}}"）');
+    }
+  }
+}
 
 /**
  * 属性值域内的点访问插值检查（wx:if="{{a.b}}" 等属性位置，旧版是盲区）。

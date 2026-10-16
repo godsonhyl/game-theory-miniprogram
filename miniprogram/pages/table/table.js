@@ -1873,6 +1873,7 @@ Page({
     this.clearResultModalTimer();
     this.resultModalHand = -1;   // 新一手允许重新调度结算弹窗（手数可能轮回重置）
     winStreaks = {};             // 连胜计数随新手清零（设计 §2.2：连胜徽章只活到下一手）
+    this._winFxSeats = [];
     this.setData({ spark: null, flyOut: [], flyIn: [], winFx: '', streaks: {} });
     // 「坐下加入游戏」下一手才生效：本手发牌前正式落座并入局
     if (this.pendingSit) {
@@ -2114,9 +2115,38 @@ Page({
         const readyFlag = rEntry ? !!rEntry.ready : null;
         // 对手手中暗牌：未摊牌、未弃牌、有底牌 → 显示两张小牌背（WPK 式：一眼看出谁还在手）
         const cardsBack = !readyPhase && !isMe && !p.folded && !showdown && p.hole.length === 2;
+        const isStanding = this.isStanding(p.seat);
+        const isActive = !readyPhase && game.actionSeat === p.seat && !result;
+        const isFolded = readyPhase ? false : !!p.folded;
+        /**
+         * 座位卡的完整 class 字符串在这里一次性算好，WXML 只写 `class="{{item.cls}}"`。
+         *
+         * 【为什么必须放 JS】原先第 77 行把整段逻辑内联在 WXML 里：
+         *   {{winFx && (',' + winFx + ',').indexOf(',' + item.seat + ',') >= 0 ? 'winfx' : ''}}
+         * 这在**开发者工具里看着没问题、真机上传直接编译失败**：
+         *   Bad attr 'class' with message: unexpected token ':'
+         * 原因是 WXML 的 {{}} 解析器不支持「三元里嵌套 && + 字符串拼接 + 方法调用
+         * .indexOf()」这种组合，解析到 `? 'winfx' :` 的冒号就崩了。
+         * 这类表达式引擎能力有限，**一律搬到 JS 预计算**才安全
+         * （项目里 actCls / myActCls 早就是这个思路）。
+         *
+         * 语义与原内联表达式逐条对齐：empty 空位 / self 我 / folded 弃牌 /
+         * active 行动中 / win 赢家 / standing 观战 / winfx 赢家金光。
+         */
+        const cls = [
+          'seat',
+          p.stack === undefined || p.name === '' ? 'empty' : '',   // 空位（等待室无人）
+          isMe ? 'self' : '',
+          isFolded ? 'folded' : '',
+          isActive ? 'active' : '',
+          isWinner ? 'win' : '',
+          isStanding ? 'standing' : '',
+          isWinner && this._winFxSeats && this._winFxSeats.indexOf(p.seat) >= 0 ? 'winfx' : ''
+        ].filter(Boolean).join(' ');
         return {
           seat: p.seat,
           seatNo: p.seat + 1,
+          cls: cls,
           name: name,
           initial: name.slice(0, 1),
           x: pp.x,
@@ -2124,9 +2154,9 @@ Page({
           stack: p.stack,
           bet: readyPhase ? 0 : p.bet,
           allIn: readyPhase ? false : p.allIn,
-          folded: readyPhase ? false : p.folded,
-          standing: this.isStanding(p.seat),
-          active: !readyPhase && game.actionSeat === p.seat && !result,
+          folded: isFolded,
+          standing: isStanding,
+          active: isActive,
           isDealer: game.dealerSeat === p.seat,
           isSB: game.sbSeat === p.seat,
           isBB: game.bbSeat === p.seat,
@@ -2332,7 +2362,9 @@ Page({
         if (now.result && now.cat >= BIG_HAND_MIN) {
           winners.forEach(s => this._spawnSpark(s));
         }
-        // 胜者金光脉冲座位标记（wxml 用 winFx 挂 class）
+        // 胜者金光脉冲座位标记（render 时由 cls 内联消费，故用实例字段而非 data——
+        // setData 是异步的，render 内读 this.data.winFx 会拿到上一帧的值）
+        this._winFxSeats = winners.slice();
         this.setData({ winFx: winners.join(',') });
       }
 

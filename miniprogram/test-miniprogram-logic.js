@@ -1760,8 +1760,24 @@ while (guard++ < 400) {
     // —— WXML 节点齐备 ——
     ok(wxmlSrc.indexOf('class="fly-chip fly-out"') >= 0 && wxmlSrc.indexOf('class="fly-chip fly-in"') >= 0,
       'WXML 筹码飞行层：fly-out / fly-in 两层');
-    ok(/winFx && \(',' \+ winFx \+ ','\)\.indexOf/.test(wxmlSrc),
-      'WXML 座位按 winFx 挂 winfx class（金光脉冲）');
+    // 金光脉冲 class 必须由 JS 预计算（曾内联在 WXML 里导致真机上传直接编译失败：
+    // Bad attr 'class' with message: unexpected token ':' —— WXML 表达式引擎不接受
+    // 「三元/逻辑运算里调用字符串方法」）。现在 WXML 只写 class="{{item.cls}}"，
+    // 语义校验改在 JS 侧与 check-wxml 规则 3 双重把关。
+    ok(/class="\{\{item\.cls\}\}"/.test(wxmlSrc),
+      'WXML 座位 class 由 JS 预计算（class="{{item.cls}}"）');
+    ok(!/winFx && \(',' \+ winFx/.test(wxmlSrc),
+      'WXML 已无「三元里调 .indexOf()」写法（真机上传编译失败的病根）');
+    ok(/_winFxSeats\.indexOf\(p\.seat\) >= 0 \? 'winfx'/.test(tableSrc),
+      'JS 侧用 _winFxSeats 判定 winfx（金光脉冲语义未变）');
+    // JS 预计算的 cls 必须覆盖原内联表达式的全部状态位，一个都不能漏
+    const clsBlock = (tableSrc.match(/const cls = \[[\s\S]{0,600}?\]\.filter\(Boolean\)\.join\(' '\)/) || [''])[0];
+    ok(clsBlock.length > 0, 'JS 侧存在座位 cls 预计算');
+    ['self', 'folded', 'active', 'win', 'standing', 'winfx'].forEach(k => {
+      ok(clsBlock.indexOf("'" + k + "'") >= 0, 'cls 含状态位 ' + k + '（与原内联表达式语义一致）');
+    });
+    // winFx 改为实例字段后，setData 异步不再影响本帧渲染
+    ok(/this\._winFxSeats = \[\]/.test(tableSrc), '新手/重开时清空 _winFxSeats（避免上把赢家残留金光）');
     ok(wxmlSrc.indexOf('catchtap="onAvatarTap"') >= 0, 'WXML 头像绑 onAvatarTap（点头像弹轮盘）');
     ok(wxmlSrc.indexOf('streak-badge') >= 0, 'WXML 连胜徽章节点 streak-badge');
     ok(wxmlSrc.indexOf('emote-bubble') >= 0, 'WXML 表情气泡节点 emote-bubble');
