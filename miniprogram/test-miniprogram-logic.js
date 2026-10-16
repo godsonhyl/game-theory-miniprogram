@@ -1058,6 +1058,42 @@ while (guard++ < 400) {
     }
   }
 
+  /* ---------- 回归：镜像端（好友房）跨手档位残留 —— 改为「手数驱动」重置 ---------- */
+  // 真机反馈「这个下注选择按钮一直高亮上一局的」在好友房复发。旧修复把重置只
+  // 挂在 startHand() 上，而镜像端根本不走 startHand()：enterRemote() 是
+  // loadSnapshot(房主快照) → setData → render()。续局 restoreRoom 同理。
+  // 这里直接推进 handNo 后调 render，精确复现「手数前进但没走 startHand」的路径。
+  {
+    const gm = pageCtx.requireGame();
+    // 制造脏状态：选中 100% 档 + 展开自定义面板（此时语义仍是「轮到我且可加注」）
+    pageCtx.onPresetTap({ currentTarget: { dataset: { v: 'p100' } } });
+    // ⚠️ 取值时机：onCustomTap() 会把档位一并改写成 'custom'，
+    // 先取档位再展开面板，否则取到的是 'custom' 而不是要复现的 'p100'。
+    const dirtyPreset = dataStore.raisePreset;
+    pageCtx.onCustomTap();
+    const dirtyCustom = dataStore.raiseCustom;
+    ok(dirtyPreset === 'p100' && dirtyCustom === true,
+      '前置：镜像端脏状态（档位=' + dirtyPreset + '，自定义展开=' + dirtyCustom + '）');
+
+    gm.handNo += 1;                 // 房主快照里手数前进（镜像端不调 startHand）
+    pageCtx._lastRenderFp = null;   // 强制走完整渲染，绕开指纹跳过分支
+    pageCtx.render();
+
+    ok(dataStore.raisePreset === 'min',
+      '★ 手数前进但未走 startHand → 档位高亮重置为「最小」（实际 ' +
+      dataStore.raisePreset + '，脏值 ' + dirtyPreset + '）');
+    ok(dataStore.raiseCustom === false,
+      '★ 手数前进但未走 startHand → 自定义面板强制收起（实际 ' + dataStore.raiseCustom + '）');
+    if (dataStore.isMyTurn && dataStore.legal && dataStore.legal.canRaise) {
+      ok(dataStore.raiseTo === dataStore.legal.minRaiseTo,
+        '重置帧轮到我 → 金额 = 最小加注 ' + dataStore.legal.minRaiseTo +
+        '（实际 ' + dataStore.raiseTo + '，与高亮「最小」自洽）');
+    } else {
+      ok(dataStore.raiseTo === 0,
+        '重置帧非我回合 → 金额先清零，等轮到我时再取最小额（实际 ' + dataStore.raiseTo + '）');
+    }
+  }
+
   /* ---------- 回归：预设档改为百分比 + 盲注倍数吸附 ---------- */
   {
     guardRaisePresetPct(tableSrc, wxmlSrc);
@@ -2645,6 +2681,13 @@ while (guard++ < 400) {
     // 语义守卫：raiseSubmit 必须读局部 raiseTo，不能读 this.data.raiseTo
     ok(/raiseSubmit = Math\.max\(legal\.minRaiseTo, Math\.round\(raiseTo \|\| 0\)\)/.test(tableSrc2),
       '加注按钮文案读局部 raiseTo 而非 this.data.raiseTo（与档位高亮同帧自洽）');
+    // 语义守卫：重置判据必须是「手数前进」而不只是 startHand —— 只挂 startHand 时
+    // 镜像端（enterRemote）与续局（restoreRoom）都不经过，档位高亮会跨手残留。
+    ok(/this\._raiseHandNo !== game\.handNo/.test(tableSrc2),
+      'render 以「手数前进」为判据触发档位重置（覆盖不经过 startHand 的镜像端/续局路径）');
+    // 档位高亮必须与金额同帧写入同一个 setData，否则会渲染出「高亮最小、金额旧值」的中间态
+    ok(/raisePreset: wasReset \? 'min' : this\.data\.raisePreset/.test(tableSrc2),
+      '重置帧把 raisePreset 与金额写进同一个 setData（避免高亮与金额不同步的中间态）');
   }
 
   function guardAmbienceConstants(tableSrc, wxmlSrc, wxssSrc) {

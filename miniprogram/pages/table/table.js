@@ -2358,6 +2358,15 @@ Page({
       const isMyTurn = game.actionSeat === this.mySeat && !result && !standing;
       let legal = null;
       let raiseTo = 0;
+      // 跨手重置的触发条件 = 「手数前进」，而不是「走过 startHand()」。
+      // ⚠️ 曾经只挂在 startHand() 上，结果好友房复发「一直高亮上一局的」：
+      // 镜像端根本不走 startHand()——enterRemote() 直接 loadSnapshot 房主快照
+      // 再 setData + render()，续局 restoreRoom 同理。这些路径都绕过了重置点。
+      // 以 handNo 为判据挂在 render 上，所有让牌局前进的路径都被同一处覆盖。
+      if (game && this._raiseHandNo !== game.handNo) {
+        this._raiseHandNo = game.handNo;
+        this._raiseResetPending = true;
+      }
       // 每手重置：startHand 刚置的标志（见 resetRaiseState）。setData 异步，
       // this.data.raiseTo 同帧还是上一手的值，必须用实例字段在同一同步路径上覆盖，
       // 否则会出现「档位已高亮回『最小』，金额却还是上一手 100%」的新矛盾态。
@@ -2379,8 +2388,11 @@ Page({
       const raiseMax = (isMyTurn && legal) ? legal.maxRaiseTo : 0;
       // 步进 = 小盲注：滑杆与 ± 按钮都以它为单位，金额永不为零头
       const raiseStep = isMyTurn ? this.blindStep() : 0;
-      // 非我回合 / 不可加注时收起自定义面板，避免残留数值误导
-      const raiseCustom = isMyTurn && legal && legal.canRaise ? this.data.raiseCustom : false;
+      // 非我回合 / 不可加注时收起自定义面板，避免残留数值误导。
+      // 每手首帧额外强制收起：上一手展开的面板不得跨手残留（好友房镜像端同理）。
+      const raiseCustom = wasReset
+        ? false
+        : (isMyTurn && legal && legal.canRaise ? this.data.raiseCustom : false);
       // 实际会提交的加注额（与 onRaise 钳制同口径，仅用于按钮文案）：
       // 数字输入框能填出低于下限的值，而失焦补正未必先触发；到达上限则等价全下。
       // ⚠️ 读 raiseTo（上面算好的局部量）而非 this.data.raiseTo：每手重置帧
@@ -2407,6 +2419,9 @@ Page({
         raiseMax,
         raiseStep,
         raiseCustom,
+        // 档位高亮与金额必须同帧写入同一个 setData：分两次写会出现
+        //「高亮已回『最小』但金额还是上一手」的中间态被渲染出来。
+        raisePreset: wasReset ? 'min' : this.data.raisePreset,
         raiseSubmit,
         raiseAllIn,
         isMyTurn,
