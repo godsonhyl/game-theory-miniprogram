@@ -1332,6 +1332,10 @@
       game.board = (snap.boardCodes || []).map(codeToCard).filter(c => c >= 0);
       game.street = snap.street || STREET.PREFLOP;
       game.currentBet = snap.currentBet || 0;
+      // 盲注级恢复（批④涨盲）：镜像端沿用房主广播的 sb/bb，兜底默认 10/20。
+      // 续局路径（table.js restoreRoom）也经此恢复；涨盲后 sb/bb 已翻倍，不退回默认。
+      game.bb = snap.bb || game.bb || 20;
+      game.sb = snap.sb || Math.round(game.bb / 2) || 10;
       game.minRaise = snap.minRaise || game.bb;
       game.actionSeat = loc(snap.actionSeat);
       game.dealerSeat = loc(snap.dealerSeat);
@@ -1380,6 +1384,11 @@
         pot: game.potTotal(),
         currentBet: game.currentBet,
         minRaise: game.minRaise,
+        // 盲注级（批④涨盲）：快照带上当前 sb/bb，续局与镜像端据此恢复盲注级，
+        // 不退回默认 10/20。涨盲定时器在 table.js 侧翻倍 game.sb/bb，引擎下一手
+        // postBlind 自然取新值，无需新增引擎字段。
+        sb: game.sb,
+        bb: game.bb,
         actionSeat: game.actionSeat,
         dealerSeat: game.dealerSeat,
         sbSeat: game.sbSeat,

@@ -613,6 +613,34 @@ console.log('\n【8b】庄位/小盲/大盲 + 快照镜像（跨设备好友房�
   eq(P.cardToCode(P.codeToCard('Th')), 'Th', 'codeToCard 与 cardToCode 互逆');
 }
 
+console.log('\n【8c】涨盲快照透传（批④）：snapshot 含 sb/bb，loadSnapshot 恢复');
+{
+  // 涨盲后 snapshot 必须带上当前 sb/bb，否则续局/镜像退回默认 10/20
+  const gh = P.createGame({ players: [mkPlayer(0, 1000), mkPlayer(1, 1000), mkPlayer(2, 1000)], sb: 10, bb: 20, dealerSeat: 0, seed: 'blind-up' });
+  gh.startHand();
+  // 模拟涨盲定时器翻倍两次：10/20 → 20/40 → 40/80
+  gh.sb = 40; gh.bb = 80; gh.minRaise = gh.bb;
+  const sb = gh.snapshot();
+  eq(sb.sb, 40, 'snapshot 含涨盲后的小盲 sb=40');
+  eq(sb.bb, 80, 'snapshot 含涨盲后的大盲 bb=80');
+  // loadSnapshot 恢复：镜像端/续局端必须读到 40/80，不退回默认
+  const gm = P.createGame({ players: [], sb: 10, bb: 20, dealerSeat: 0, seed: 'm-blind' });
+  gm.loadSnapshot(sb, 2);
+  eq(gm.sb, 40, 'loadSnapshot 恢复小盲 sb=40（涨盲不丢失）');
+  eq(gm.bb, 80, 'loadSnapshot 恢复大盲 bb=80（涨盲不丢失）');
+  eq(gm.minRaise, 80, 'loadSnapshot 恢复 minRaise 跟随大盲=80');
+  // 默认快照（未涨盲）兜底：sb/bb 缺失时回落默认 10/20
+  const g2 = P.createGame({ players: [mkPlayer(0, 1000), mkPlayer(1, 1000)], sb: 10, bb: 20, dealerSeat: 0, seed: 'def' });
+  g2.startHand();
+  const snap2 = g2.snapshot();
+  ok(snap2.sb === 10 && snap2.bb === 20, '默认局快照 sb/bb=10/20');
+  const g3 = P.createGame({ players: [], sb: 5, bb: 10, dealerSeat: 0, seed: 'm-def' });
+  // 清掉快照里的 sb/bb 模拟旧版快照（兼容续局）
+  const legacy = JSON.parse(JSON.stringify(snap2)); delete legacy.sb; delete legacy.bb;
+  g3.loadSnapshot(legacy, 1);
+  ok(g3.bb === 20 || g3.bb === 10, 'loadSnapshot 旧快照无 sb/bb 时兜底（不崩，bb=' + g3.bb + '）');
+}
+
 console.log('\n【9】种子复现（事件溯源前提）');
 function dealOf(seed) {
   const gg = P.createGame({

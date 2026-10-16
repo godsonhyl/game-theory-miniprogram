@@ -50,6 +50,12 @@
   padding: calc(0.4 * var(--uh)) calc(2.6 * var(--uw)); border-radius: 999rpx;
 }
 .tb-hand { font-size: calc(2.8 * var(--uh)); color: var(--mut); margin: 0 calc(2 * var(--uw)); }
+/* 盲注级（批④涨盲）：与街次/手数同级，金色药丸，tabular-nums 对齐数字 */
+.tb-blind {
+  font-size: calc(2.6 * var(--uh)); font-weight: 700; font-variant-numeric: tabular-nums;
+  color: #ffd98a; padding: calc(0.4 * var(--uh)) calc(2.4 * var(--uw)); border-radius: 999rpx;
+  background: rgba(232,163,61,.14); border: 1rpx solid rgba(232,163,61,.38);
+}
 .tb-clock {
   font-size: calc(2.9 * var(--uh)); font-weight: 700; font-variant-numeric: tabular-nums;
   color: #ffd98a; padding: calc(0.4 * var(--uh)) calc(2.4 * var(--uw)); border-radius: 999rpx;

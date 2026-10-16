@@ -99,6 +99,22 @@ ok(dataStore.phase === 'playing', 'AI 桌点开始后进入牌桌');
 
 ok(dataStore.handNo >= 1, '开局后 handNo = ' + dataStore.handNo);
 ok(dataStore.pot === 30, '开局底池 = 30（盲注 10+20），实际 ' + dataStore.pot);
+
+// ---- 批④ 涨盲定时器行为级：blindIntervalMin=0 不涨盲（默认 AI 桌），盲注级展示初始化 ----
+ok(typeof pageCtx.startBlindTimer === 'function', 'pageCtx 定义 startBlindTimer 方法');
+ok(typeof pageCtx.clearBlindTimer === 'function', 'pageCtx 定义 clearBlindTimer 方法');
+ok(typeof pageCtx.fmtBlind === 'function', 'pageCtx 定义 fmtBlind 方法');
+ok(pageCtx.blindIntervalMin === 0, 'AI 桌默认 blindIntervalMin=0（不涨盲）');
+eq(pageCtx.fmtBlind(10, 20), '10/20', 'fmtBlind(10,20) → 「10/20」');
+eq(pageCtx.fmtBlind(40, 80), '40/80', 'fmtBlind(40,80) → 「40/80」（涨盲后文案）');
+ok(dataStore.blindLevel === 20, '初始 blindLevel=20（大盲）');
+ok(dataStore.blindText === '10/20', '初始 blindText=「10/20」');
+// blindIntervalMin=0 调 startBlindTimer 应 no-op（不创建定时器）
+pageCtx.startBlindTimer();
+ok(true, 'blindIntervalMin=0 调 startBlindTimer 不抛错（no-op）');
+pageCtx.clearBlindTimer();   // 幂等清理，不抛错
+ok(true, 'clearBlindTimer 幂等不抛错（无定时器时）');
+
 const mySeatNow = dataStore.seats.filter(s => s.isMe)[0];
 ok(dataStore.seats.length >= 2, 'WPK 式布局：所有座位（含我）都在牌桌环上，实际 ' + dataStore.seats.length);
 ok(!!mySeatNow, '我的座位（自选的 3 号位）也在牌桌环上（isMe=true）');
@@ -2002,6 +2018,11 @@ while (guard++ < 400) {
     const botSrc = fs.readFileSync(path.join(__dirname, 'utils', 'bot-profiles.js'), 'utf8');
     guardBotProfilesIntegration(botSrc, tableSrc, idxSrc);
     guardAiDecideStyleExtension();   // 引擎扩展字段兜底（行为级）
+
+    // ---- 限时局涨盲（批④）静态守卫 ----
+    const tableWxml = fs.readFileSync(path.join(__dirname, 'pages', 'table', 'table.wxml'), 'utf8');
+    const sfxSrc = fs.readFileSync(path.join(__dirname, 'utils', 'sfx.js'), 'utf8');
+    guardBlindTimerIntegration(tableSrc, idxSrc, idxWxml, tableWxml, sfxSrc);
   })();
 
   /* ---------- 静态守卫函数定义区 ----------
@@ -3052,6 +3073,81 @@ while (guard++ < 400) {
       minRaiseTo: 180, maxRaiseTo: 890, canRaise: true, bb: 20, rng: P.createRng('hero-1')
     });
     ok(dHero.action === 'call', 'aiDecide heroCall=1 + 赔率不划算 → 英雄跟注，实际 ' + dHero.action);
+  }
+
+  /* 限时局涨盲（批④）集成守卫：涨盲定时器生命周期 + 三道指纹含 sb/bb + 快照透传 +
+     index 建房选项 + wxml 顶栏盲注展示 + sfx blind 音色。碰引擎双副本（snapshot/loadSnapshot
+     sb/bb 由 test-core.js 行为级断言，这里守卫 table.js 包装层）。 */
+  function guardBlindTimerIntegration(tableSrc, idxSrc, idxWxml, tableWxml, sfxSrc) {
+    // ---- table.js 涨盲定时器约束 ----
+    ok(/startBlindTimer/.test(tableSrc), 'table.js 定义 startBlindTimer');
+    ok(/clearBlindTimer/.test(tableSrc), 'table.js 定义 clearBlindTimer');
+    ok(/fmtBlind/.test(tableSrc), 'table.js 定义 fmtBlind（盲注级文案）');
+    ok(/let blindTimer/.test(tableSrc), 'table.js 模块级 blindTimer（与 clock 同级生命周期）');
+    ok(/blindIntervalMin/.test(tableSrc), 'table.js 读取 blindIntervalMin（涨盲间隔分钟）');
+    // 涨盲逻辑：翻倍 sb/bb + 穿透两道指纹
+    ok(/game\.sb\s*=\s*game\.sb\s*\*\s*2/.test(tableSrc), 'table.js 涨盲翻倍 game.sb');
+    ok(/game\.bb\s*=\s*game\.bb\s*\*\s*2/.test(tableSrc), 'table.js 涨盲翻倍 game.bb');
+    ok(/_lastPlayFp\s*=\s*null/.test(tableSrc), 'table.js 涨盲后穿透 _lastPlayFp（写库指纹）');
+    ok(/_lastRenderFp\s*=\s*null/.test(tableSrc), 'table.js 涨盲后穿透 _lastRenderFp（渲染指纹）');
+    ok(/sfx\.play\(['"]blind['"]\)/.test(tableSrc), 'table.js 涨盲播 blind 音效');
+    ok(/blindLevel/.test(tableSrc) && /blindText/.test(tableSrc),
+      'table.js setData blindLevel/blindText（盲注级展示）');
+    // 配对清理：onEnterBackground/onUnload/endGame 清，onLeaveBackground 恢复
+    ok(/onEnterBackground[\s\S]*clearBlindTimer/.test(tableSrc),
+      'table.js onEnterBackground 调 clearBlindTimer（后台暂停涨盲）');
+    ok(/onLeaveBackground[\s\S]*startBlindTimer/.test(tableSrc),
+      'table.js onLeaveBackground 调 startBlindTimer（回前台恢复涨盲）');
+    ok(/endGame[\s\S]*clearBlindTimer/.test(tableSrc),
+      'table.js endGame 调 clearBlindTimer（本局结束停涨盲）');
+    ok(/onUnload[\s\S]*clearBlindTimer/.test(tableSrc),
+      'table.js onUnload 调 clearBlindTimer（销毁页停涨盲）');
+    // 开局启动涨盲
+    ok(/startHand[\s\S]*startBlindTimer|initGame[\s\S]*startBlindTimer|startClock[\s\S]*startBlindTimer/.test(tableSrc),
+      'table.js 开局启动涨盲定时器');
+
+    // ---- 三道指纹含 sb/bb（否则跳过分支吞掉涨盲变化） ----
+    // 渲染指纹 _lastRenderFp：含 g.sb, g.bb（锚定 render 内的指纹块，避免误匹配镜像指纹）
+    const renderFpBlock = tableSrc.match(/const fp = \[[\s\S]*?if \(this\._lastRenderFp === fp\)/);
+    ok(renderFpBlock && /g\.sb/.test(renderFpBlock[0]) && /g\.bb/.test(renderFpBlock[0]),
+      'table.js _lastRenderFp 含 g.sb/g.bb（涨盲不漏帧）');
+    // 写库指纹 _lastPlayFp：含 snap.sb, snap.bb
+    const playFpMatch = tableSrc.match(/const fingerprint = \[[\s\S]*?\.join\('#'\);/);
+    ok(playFpMatch && /snap\.sb/.test(playFpMatch[0]) && /snap\.bb/.test(playFpMatch[0]),
+      'table.js _lastPlayFp 含 snap.sb/snap.bb（涨盲写库不漏）');
+    // 镜像指纹 _lastRemoteFp：含 snap.sb, snap.bb
+    const remoteFpMatch = tableSrc.match(/const fp = \[[\s\S]*?if \(this\._lastRemoteFp === fp\)/);
+    ok(remoteFpMatch && /snap\.sb/.test(remoteFpMatch[0]) && /snap\.bb/.test(remoteFpMatch[0]),
+      'table.js _lastRemoteFp 含 snap.sb/snap.bb（好友端涨盲同步不漏）');
+
+    // ---- 快照透传盲注级 ----
+    ok(/saveSnapshot[\s\S]*sb:\s*game\.sb,\s*bb:\s*game\.bb/.test(tableSrc),
+      'table.js saveSnapshot 含 sb/bb（续局沿用涨盲后盲注级）');
+    ok(/blindIntervalMin:\s*this\.blindIntervalMin/.test(tableSrc),
+      'table.js saveSnapshot 含 blindIntervalMin（续局恢复涨盲定时器）');
+
+    // ---- index.js 建房选项约束 ----
+    ok(/BLIND_PRESETS/.test(idxSrc), 'index.js 定义 BLIND_PRESETS（涨盲间隔预设）');
+    ok(/onPickBlind/.test(idxSrc), 'index.js 定义 onPickBlind（选涨盲间隔）');
+    ok(/cBlind/.test(idxSrc), 'index.js data 含 cBlind（当前涨盲间隔）');
+    ok(/onCreateRoom[\s\S]*blind/.test(idxSrc), 'index.js onCreateRoom 传 blind 参数');
+    ok(/&blind=/.test(idxSrc), 'index.js 创建房间 URL 带 blind 参数');
+
+    // ---- index.wxml 建房弹窗涨盲选项 ----
+    ok(/涨盲间隔/.test(idxWxml), 'index.wxml 含「涨盲间隔」选项区');
+    ok(/blindPresets/.test(idxWxml) && /onPickBlind/.test(idxWxml),
+      'index.wxml 绑定 blindPresets + onPickBlind');
+    ok(/dlg-note[\s\S]*cBlind/.test(idxWxml),
+      'index.wxml 创建确认文案含涨盲间隔（cBlind）');
+
+    // ---- table.wxml 顶栏盲注展示 ----
+    ok(/tb-blind/.test(tableWxml), 'table.wxml 含 tb-blind 盲注级节点');
+    ok(/blindText/.test(tableWxml), 'table.wxml 展示 blindText');
+    ok(/blindIntervalMin/.test(tableWxml), 'table.wxml 按 blindIntervalMin 控制盲注级显隐');
+
+    // ---- sfx.js blind 音色 ----
+    ok(/blind\s*\(c,\s*t\)/.test(sfxSrc), 'sfx.js 定义 blind 音色（blind(c, t) 预设）');
+    ok(/盲注涨盲/.test(sfxSrc), 'sfx.js 注释含「盲注涨盲」说明（与 table.js play 调用对齐）');
   }
 
   /* ---------- 输出 ---------- */

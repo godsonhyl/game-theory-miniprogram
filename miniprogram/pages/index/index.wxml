@@ -214,7 +214,19 @@
         </view>
       </view>
 
-      <text class="dlg-note">{{cMax}} 人桌 · {{durLabel}}</text>
+      <!-- 涨盲间隔（批④）：每 N 分钟 sb/bb 翻倍，0 = 不涨盲 -->
+      <view class="field">
+        <view class="field-head">
+          <text class="field-name">涨盲间隔</text>
+          <text class="field-hint">每 N 分钟盲注翻倍，逼迫僵局</text>
+        </view>
+        <view class="chips">
+          <view class="chip {{cBlind === item.v ? 'on' : ''}}" wx:for="{{blindPresets}}" wx:key="v"
+                data-b="{{item.v}}" bindtap="onPickBlind">{{item.t}}</view>
+        </view>
+      </view>
+
+      <text class="dlg-note">{{cMax}} 人桌 · {{durLabel}}{{cBlind ? ' · 每 ' + cBlind + ' 分涨盲' : ''}}</text>
       <text class="dlg-note-sub">倒计时结束时自动结算本局，并统计所有参与人的盈亏</text>
 
       <view class="join-btns">

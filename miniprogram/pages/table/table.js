@@ -175,6 +175,7 @@ const snapshot = require('../../utils/room-snapshot');
 let game = null;
 let timer = null;
 let clock = null;         // 游戏时长倒计时（房间设定，到点自动结束本局）
+let blindTimer = null;   // 涨盲定时器（批④：每 blindIntervalMin 分钟 sb/bb 翻倍）
 let expireTimer = null;   // 好友房超时销毁计时器
 let expireWarnTimer = null; // 好友房空闲超时提示计时器（提前 5 分钟显示倒计时）
 let readyTimer = null;    // 「准备就绪」倒计时（超时未准备自动站起）
@@ -376,6 +377,9 @@ Page({
     // 房间参数：限定人数与游戏时长（创建房间时设定）
     this.maxSeats = Math.min(9, Math.max(2, Number(opts.max) || 6));
     this.durationMin = Math.max(0, Number(opts.dur) || 0);
+    // 涨盲间隔（批④）：建房时设定，0 = 不涨盲（保持现行为）。单位分钟。
+    // 每隔 blindIntervalMin 分钟 sb/bb 翻倍，逼迫僵局推进。
+    this.blindIntervalMin = Math.max(0, Number(opts.blind) || 0);
     this.startStacks = {};     // 座位 → 起始筹码（结算盈亏用）
     this.buyInStack = {};      // 座位 → 买入额（入座时选定，开局按此发筹码）
     this.chatSeq = this.chatSeq || 0;
@@ -393,6 +397,10 @@ Page({
       durationMin: this.durationMin,
       remainSec: this.durationMin * 60,
       remainText: this.durationMin ? this.fmtRemain(this.durationMin * 60) : '',
+      // 涨盲级展示（批④）：初始 10/20，涨盲后由 startBlindTimer 更新
+      blindLevel: 20,
+      blindText: this.fmtBlind(10, 20),
+      blindIntervalMin: this.blindIntervalMin,
       timeUp: false,
       clockPendingEnd: false,
       summary: null,
@@ -479,6 +487,8 @@ Page({
     if (aiTimer) { clearTimeout(aiTimer); aiTimer = null; }
     if (timer) { clearInterval(timer); timer = null; }
     this.stopSfxPump();
+    // 涨盲定时器（批④）：后台暂停，回前台由 onLeaveBackground 恢复
+    this.clearBlindTimer();
     // 限时局：记下剩余秒数，回前台从断点继续（后台时间不计入牌局时长）
     if (clock) {
       this.bgRemainSec = Number(this.data.remainSec) || 0;
@@ -501,6 +511,8 @@ Page({
       this.bgRemainSec = undefined;
       if (resume > 0 && !this.data.timeUp) this.startClock(resume);
     }
+    // 涨盲定时器（批④）：回前台恢复（按当前盲注级重启倒计时，不补后台漏掉的翻倍）
+    if (this.blindIntervalMin && game && !game.result) this.startBlindTimer();
     // 回到页面的下一拍补一次全量刷新（好友端可能错过后台期间的房主广播）
     if (this.syncLive && this.roomNo) this.pollOnce();
     this.render();
@@ -1218,7 +1230,8 @@ Page({
     // 就绪/结算这类「牌桌外」状态变化仍照写（forcePublish 会绕过本检查）。
     const fingerprint = [
       snap.handNo, snap.street, snap.currentBet, snap.pot,
-      snap.actionSeat, snap.boardCodes.join(','),
+      snap.actionSeat, snap.sb, snap.bb,   // 批④：盲注级随房主涨盲变化，写库必须反映
+      snap.boardCodes.join(','),
       (snap.players || []).map(p => p.seat + ':' + p.stack + ':' + p.bet + ':' +
         (p.folded ? 1 : 0) + (p.allIn ? 1 : 0) + (p.sittingOut ? 1 : 0) +
         (p.hole ? p.hole.join('.') : '')).join('|'),
@@ -1342,6 +1355,7 @@ Page({
     // 牌桌外字段（就绪名单/结算/计时/表情/快捷语）变化照常更新——指纹覆盖它们，不会被吞。
     const fp = [
       snap.handNo, snap.street, snap.currentBet, snap.pot, snap.actionSeat,
+      snap.sb, snap.bb,   // 批④：房主涨盲后快照 sb/bb 变化，镜像端盲注展示需重绘
       snap.boardCodes.join(','),
       (snap.players || []).map(p => p.seat + ':' + p.stack + ':' + p.bet + ':' +
         (p.folded ? 1 : 0) + (p.allIn ? 1 : 0) + (p.sittingOut ? 1 : 0)).join('|'),
@@ -1355,6 +1369,9 @@ Page({
     ].join('#');
     if (this._lastRemoteFp === fp) return;
     this._lastRemoteFp = fp;
+    // 批④：房主涨盲后快照 sb/bb 已变，镜像端盲注级展示跟随更新（兜底 10/20）
+    patch.blindLevel = snap.bb || 20;
+    patch.blindText = this.fmtBlind(snap.sb || Math.round((snap.bb || 20) / 2) || 10, snap.bb || 20);
     this.setData(patch);
     this.render();
     // 镜像端不驱动引擎：若轮到我，只起本地计时环做视觉反馈
@@ -1373,6 +1390,9 @@ Page({
       remainSec: this.data.remainSec,  // 倒计时剩余时间，续局接着倒数
       standing: this.myStanding,   // 续局时保留「已站起观战」状态
       pendingSit: this.pendingSit, // 续局时保留「已坐下、下一手入局」状态
+      // 盲注级（批④涨盲）：续局沿用当前 sb/bb，涨盲后不退回默认 10/20
+      sb: game.sb, bb: game.bb,
+      blindIntervalMin: this.blindIntervalMin,   // 续局恢复涨盲定时器（URL 不带 blind 时兜底）
       seats: game.players.map(p => ({
         seat: p.seat, name: p.name, stack: p.stack, isMe: !!p.isHuman, style: p.style
       }))
@@ -1711,10 +1731,50 @@ Page({
         return;
       }
       this.startClock();   // 开始游戏才启动时长倒计时
+      this.startBlindTimer();   // 批④：开局启动涨盲倒计时（blindIntervalMin=0 时 no-op）
       this.publishPlay();  // 立即广播，让好友进入镜像
     } finally {
       this._starting = false;
     }
+  },
+
+  /**
+   * 涨盲定时器（批④）：每 blindIntervalMin 分钟 sb/bb 翻倍，逼迫僵局推进。
+   * blindIntervalMin=0（默认）不涨盲，保持现行为。翻倍后穿透两道脏检查指纹
+   * （_lastPlayFp / _lastRenderFp 置 null），setData blindLevel/blindText，
+   * 播 blind 音色 + toast 提示。房主端权威，好友端经 writePlayState 透传的
+   * 快照 sb/bb 在 enterRemote 恢复（500ms 延迟可接受，盲注非实时操作）。
+   */
+  startBlindTimer() {
+    this.clearBlindTimer();
+    if (!this.blindIntervalMin || !game) return;
+    const ms = this.blindIntervalMin * 60 * 1000;
+    blindTimer = setInterval(() => {
+      if (!game || game.result) return;
+      // 翻倍 sb/bb（引擎下一手 postBlind 自然取新值，不新增引擎字段）
+      game.sb = game.sb * 2;
+      game.bb = game.bb * 2;
+      game.minRaise = game.bb;   // minRaise 跟随大盲
+      // 穿透两道指纹：盲注级变化必须进 setData 与写库，否则跳过分支吞掉
+      this._lastPlayFp = null;
+      this._lastRenderFp = null;
+      this.setData({
+        blindLevel: game.bb,
+        blindText: this.fmtBlind(game.sb, game.bb)
+      });
+      if (this.data.soundOn) sfx.play('blind');
+      wx.showToast({ title: '盲注涨至 ' + this.fmtBlind(game.sb, game.bb), icon: 'none' });
+      // 房主端：随下一帧 writePlayState 透传广播给好友（不加专门广播）
+    }, ms);
+  },
+
+  clearBlindTimer() {
+    if (blindTimer) { clearInterval(blindTimer); blindTimer = null; }
+  },
+
+  /** 盲注级文案：sb/bb →「10/20」 */
+  fmtBlind(sb, bb) {
+    return Math.round(sb) + '/' + Math.round(bb);
   },
 
   /**
@@ -1796,6 +1856,7 @@ Page({
     if (timer) { clearInterval(timer); timer = null; }
     if (aiTimer) { clearTimeout(aiTimer); aiTimer = null; }
     this.clearReadyClock();
+    this.clearBlindTimer();   // 批④：本局结束停涨盲
 
     const rows = game.players.map(p => ({
       seat: p.seat,
@@ -1893,6 +1954,7 @@ Page({
     if (timer) clearInterval(timer);
     if (aiTimer) clearTimeout(aiTimer);
     this.clearClock();
+    this.clearBlindTimer();   // 批④：销毁页停涨盲
     this.clearExpire();
     this.clearExpireWarn();
     this.clearReadyClock();
@@ -1921,10 +1983,15 @@ Page({
         ? { aggro: 0.5, tight: 0.5 }
         : botProfiles.styleFor(Math.max(0, i - 1), applyLevel)
     }));
+    // 盲注级（批④涨盲）：新建牌局默认 10/20；续局沿用快照里的 sb/bb
+    // （涨盲定时器翻倍过的不退回默认）。createGame 后再覆写，保证引擎内部
+    // minRaise/bb 一致。
+    const initSb = (snap && snap.sb) ? snap.sb : 10;
+    const initBb = (snap && snap.bb) ? snap.bb : 20;
     game = P.createGame({
       players: ps,
-      sb: 10,
-      bb: 20,
+      sb: initSb,
+      bb: initBb,
       dealerSeat: ps[ps.length - 1].seat,
       seed: 'mp-' + Date.now()
     });
@@ -1932,7 +1999,16 @@ Page({
       // 续局：回退到上一手庄位与手数，startHand 轮转后即重发快照记录的那一手
       if (snap.dealerSeat !== undefined && snap.dealerSeat !== null) game.dealerSeat = snap.dealerSeat;
       game.handNo = Math.max(0, (snap.handNo || 1) - 1);
+      // 涨盲续局：恢复盲注级（createGame 已按 initSb/initBb 建好，此处兜底防漂移）
+      if (snap.bb) { game.bb = snap.bb; game.sb = snap.sb || Math.round(snap.bb / 2) || 10; }
     }
+    // 记录涨盲间隔与初始盲注，供 startBlindTimer 翻倍与展示（批④）
+    this.blindIntervalMin = (snap && snap.blindIntervalMin) ? snap.blindIntervalMin
+      : Math.max(0, Number(this.blindIntervalMin) || 0);
+    this.setData({
+      blindLevel: initBb,
+      blindText: this.fmtBlind(initSb, initBb)
+    });
     // 起始筹码：新建牌局记录当前值，续局沿用快照里的原始起始值（盈亏口径一致）
     if (snap && snap.startStacks) {
       this.startStacks = snap.startStacks;
@@ -2134,6 +2210,7 @@ Page({
         g.handNo, g.street, g.potTotal(), g.currentBet, g.actionSeat,
         (g.board || []).join(','),
         g.dealerSeat, g.sbSeat, g.bbSeat,
+        g.sb, g.bb,   // 批④：盲注级变化（涨盲）必须令指纹不同，否则跳过分支吞掉 blindLevel/blindText
         g.players.map(p => p.seat + ':' + p.stack + ':' + p.bet + ':' +
           (p.folded ? 1 : 0) + (p.allIn ? 1 : 0) + (p.sittingOut ? 1 : 0) +
           (p.hole ? p.hole.join('.') : '')).join('|'),

@@ -22,6 +22,19 @@ const DUR_PRESETS = [
   { v: 60, t: '1 小时' },
   { v: 120, t: '2 小时' }
 ];
+/**
+ * 涨盲间隔（分钟）：每 N 分钟 sb/bb 翻倍，逼迫僵局推进。
+ * 0 = 不涨盲（保持现行为）。10 分钟为一档，0/10/15/20/30 可选。
+ * 仅好友房生效；AI 对战用不到（AI 不存筹码僵局）。
+ */
+const BLIND_PRESETS = [
+  { v: 0, t: '不涨盲' },
+  { v: 10, t: '10 分' },
+  { v: 15, t: '15 分' },
+  { v: 20, t: '20 分' },
+  { v: 30, t: '30 分' }
+];
+const BLIND_DEF = 0;
 
 Page({
   data: {
@@ -45,6 +58,8 @@ Page({
     durLabel: '30 分钟', // 时长展示文案（WXML 不能调方法，故随 cDur 一起维护）
     maxPresets: MAX_PRESETS,
     durPresets: DUR_PRESETS,
+    cBlind: BLIND_DEF,      // 涨盲间隔（分钟）：0 = 不涨盲
+    blindPresets: BLIND_PRESETS,
     setShow: false,     // 设置弹窗（参考主流 App 的 Table Appearance）
     cardsShow: false,   // 房卡弹窗（免费获取途径）
     claim: { dailyReady: true, dailyCount: 2, handCards: 0, handsPerCard: 10, handsToNext: 10 },
@@ -159,10 +174,17 @@ Page({
     else this.setUnlimited();
   },
 
-  /** 确认创建：带上人数与时长 */
+  /** 预设涨盲间隔（0 / 10 / 15 / 20 / 30 分） */
+  onPickBlind(e) {
+    const v = Number(e.currentTarget.dataset.b);
+    if (isNaN(v)) return;
+    this.setData({ cBlind: Math.max(0, v) });
+  },
+
+  /** 确认创建：带上人数、时长与涨盲间隔 */
   onCreateConfirm() {
     this.setData({ createShow: false });
-    this.onCreateRoom(this.data.cMax, this.data.cDur);
+    this.onCreateRoom(this.data.cMax, this.data.cDur, this.data.cBlind);
   },
 
   /** 时长（分钟）→ 展示文案（90 → 「1 小时 30 分钟」） */
@@ -257,11 +279,12 @@ Page({
    * 超长会导致弹窗静默失败（除非监听 fail 回调，否则界面毫无反应）。
    * 「复制房间号」5 个字曾导致建房成功但无任何弹窗、房卡被白白消耗。
    */
-  async onCreateRoom(maxPlayers, durationMin) {
+  async onCreateRoom(maxPlayers, durationMin, blindIntervalMin) {
     if (this.creatingRoom) return;   // 防连点：一次点击只建一个房
     this.creatingRoom = true;
     const max = maxPlayers || 6;
     const dur = durationMin || 0;
+    const blind = Math.max(0, Number(blindIntervalMin) || 0);   // 批④：涨盲间隔
     wx.showLoading({ title: '创建房间中…', mask: true });
     try {
       // 0. 余额预检（不足时给出获取途径，而不是死路一条）
@@ -297,14 +320,14 @@ Page({
       wx.hideLoading();
 
       const roomUrl = '/pages/table/table?room=' + room.room_no + '&own=1' +
-        '&max=' + max + '&dur=' + dur;
+        '&max=' + max + '&dur=' + dur + '&blind=' + blind;
       // 创建成功：用自定义弹窗（wx.showModal 只有两个按钮，放不下「分享」），
       // 直接给「邀请好友（原生分享）/ 复制房号 / 进入房间」三个出口，少一次跳转。
       this.setData({
         createdShow: true,
         createdRoomNo: room.room_no,
         createdRoomUrl: roomUrl,
-        createdDesc: max + ' 人桌 · ' + this.durText(dur)
+        createdDesc: max + ' 人桌 · ' + this.durText(dur) + (blind ? ' · 每 ' + blind + ' 分涨盲' : '')
       });
     } catch (err) {
       wx.hideLoading();

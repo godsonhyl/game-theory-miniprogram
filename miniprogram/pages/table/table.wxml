@@ -10,6 +10,8 @@
     <view class="tb-r">
       <text class="tb-street" wx:if="{{phase === 'playing'}}">{{streetCn}}</text>
       <text class="tb-hand" wx:if="{{phase === 'playing'}}">{{handNo}} 手</text>
+      <!-- 盲注级（批④涨盲）：初始 10/20，涨盲后实时更新；好友端经快照同步 -->
+      <text class="tb-blind" wx:if="{{phase === 'playing' && blindIntervalMin > 0}}">{{blindText}}</text>
       <!-- 时长到点但本手仍在打：倒计时定格 00:00，改为「本手后结束」提示，
            避免玩家以为卡死/断线（用户反馈：不能玩到一半直接 game over） -->
       <text class="tb-clock {{clockPendingEnd ? 'pending' : (remainSec <= 60 ? 'urgent' : '')}}"
