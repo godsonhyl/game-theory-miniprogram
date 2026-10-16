@@ -61,10 +61,24 @@
     <view class="sec-head"><view class="sec-ico ic ic-spade"></view><text class="sec-title">打法风格</text></view>
     <view class="style-card">
       <view class="style-row">
-        <text class="style-k">风格倾向</text>
+        <text class="style-k">胜率倾向</text>
         <text class="style-v">{{style}}</text>
       </view>
-      <!-- 「常用打法 / 最常底牌」：引擎不产出这类聚合数据，占位字段永远为空，已移除 -->
+      <!-- 风格画像（第三期）：吃本地复盘缓存的行为统计。样本不足时不硬算 -->
+      <view class="style-insufficient" wx:if="{{!styleAnalysis || styleAnalysis.insufficient}}">
+        样本不足（{{styleAnalysis.sample || 0}}/{{vpipMin}}局），多打几局再看风格画像
+      </view>
+      <block wx:else>
+        <view class="style-row"><text class="style-k">打法象限</text>
+          <text class="style-v {{styleAnalysis.quadrantTag}}">{{styleAnalysis.quadrant}}</text></view>
+        <view class="style-row"><text class="style-k">翻前入池</text>
+          <text class="style-v">{{styleAnalysis.vpipPct}}</text></view>
+        <view class="style-row"><text class="style-k">翻后激进度</text>
+          <text class="style-v">{{styleAnalysis.aggText}}</text></view>
+        <view class="style-row"><text class="style-k">摊牌胜率</text>
+          <text class="style-v">{{styleAnalysis.sdWinPct}}</text></view>
+        <view class="style-obs" wx:for="{{styleAnalysis.observations}}" wx:key="*this">· {{item}}</view>
+      </block>
     </view>
   </view>
 

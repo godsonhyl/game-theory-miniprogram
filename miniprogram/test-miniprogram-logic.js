@@ -2230,6 +2230,134 @@ while (guard++ < 400) {
     }
   })();
 
+  /* ============================================================
+   * 个人风格分析：style-analyzer.js VPIP/AGG/摊牌胜率 + 我的页嵌入（设计 2026-10-16 §3）
+   * 纯函数单测（构造 mock list，不依赖 replay-store）+ profile.js/wxml 接入静态守卫
+   * ========================================================== */
+  (function styleSuite() {
+    const sa = require(path.join(__dirname, 'utils', 'style-analyzer.js'));
+
+    // 构造 mock 复盘记录工厂：actions = [['preflop','raise'],...]，opts 覆盖 result 等
+    function mkRec(actions, opts) {
+      const o = opts || {};
+      return Object.assign({
+        mySeat: 0,
+        events: actions.map(a => ({ type: 'action', seat: 0, street: a[0], action: a[1] })),
+        result: { type: 'fold', winners: [1], awards: [{ seat: 1, amount: 100 }], evals: {} }
+      }, o);
+    }
+    const foldOnly = () => mkRec([['preflop', 'fold']]);
+    const preflopRaise = () => mkRec([['preflop', 'raise']]);
+    const preflopCall = () => mkRec([['preflop', 'call']]);
+    const postRaise = () => mkRec([['preflop', 'call'], ['flop', 'raise'], ['turn', 'raise']]);
+    const postCall = () => mkRec([['preflop', 'call'], ['flop', 'check'], ['turn', 'call']]);
+    const showdownWin = (w) => mkRec([['preflop', 'call'], ['flop', 'check']],
+      { result: { type: 'showdown', winners: w ? [0] : [1], awards: [{ seat: w ? 0 : 1, amount: 50 }], evals: { 0: { name: '两对' } } } });
+
+    // ---- 样本不足 ----
+    eq(sa.VPipMin, 10, 'VPipMin 样本下限 = 10');
+    const insuf9 = sa.analyze(Array.from({ length: 9 }, foldOnly));
+    ok(insuf9.insufficient === true && insuf9.sample === 9,
+      '样本不足（9 局）→ insufficient=true、sample=9，不硬算');
+
+    // ---- 紧凶：2 局翻前 raise + 翻后 raise，8 局翻前 fold ----
+    const tag = Array.from({ length: 10 }, (_, i) => i < 2
+      ? postRaise()
+      : foldOnly());
+    const tagRes = sa.analyze(tag);
+    ok(tagRes.insufficient !== true, '10 局样本足够，返回完整画像');
+    ok(tagRes.vpip === 0.2 && tagRes.vpipPct === '20%',
+      '紧凶 VPIP=20%（2/10 局自愿进池），实际 ' + tagRes.vpipPct);
+    ok(tagRes.agg > 1 && tagRes.quadrant === '紧凶' && tagRes.quadrantTag === 'tight-aggressive',
+      '紧凶象限：VPIP<28% + AGG≥1 → tight-aggressive，实际 ' + tagRes.quadrant + ' agg=' + tagRes.aggText);
+    ok(/翻后很主动|频繁加注/.test(tagRes.observations.join('')),
+      '紧凶观察含「翻后主动/频繁加注」');
+
+    // ---- 松弱：10 局翻前 call + 翻后 check/call ----
+    const lp = Array.from({ length: 10 }, postCall);
+    const lpRes = sa.analyze(lp);
+    ok(lpRes.vpip === 1 && lpRes.vpipPct === '100%',
+      '松弱 VPIP=100%（局局翻前 call），实际 ' + lpRes.vpipPct);
+    ok(lpRes.agg < 1 && lpRes.quadrant === '松弱' && lpRes.quadrantTag === 'loose-passive',
+      '松弱象限：VPIP≥28% + AGG<1 → loose-passive，实际 ' + lpRes.quadrant);
+    ok(/翻前入池很积极|手牌范围宽/.test(lpRes.observations.join('')),
+      '松弱观察含「翻前入池积极/范围宽」');
+
+    // ---- 紧弱：全翻前 fold（VPIP=0）----
+    const tw = Array.from({ length: 10 }, foldOnly);
+    const twRes = sa.analyze(tw);
+    ok(twRes.vpip === 0 && twRes.quadrant === '紧弱' && twRes.quadrantTag === 'tight-passive',
+      '紧弱象限：VPIP=0 + 无翻后攻击 → tight-passive');
+    ok(/翻前很挑剔|只打好牌/.test(twRes.observations.join('')),
+      '紧弱观察含「翻前挑剔/只打好牌」');
+
+    // ---- 松凶：翻前 raise + 翻后 raise/allin 频繁 ----
+    const lag = Array.from({ length: 10 }, (_, i) => mkRec(
+      [['preflop', 'raise'], ['flop', 'allin'], ['turn', 'raise']]));
+    const lagRes = sa.analyze(lag);
+    ok(lagRes.quadrant === '松凶' && lagRes.quadrantTag === 'loose-aggressive',
+      '松凶象限：VPIP=100% + AGG 高 → loose-aggressive');
+
+    // ---- 摊牌胜率：3 局摊牌 2 胜 ----
+    const sdList = [showdownWin(true), showdownWin(true), showdownWin(false)];
+    // 凑够 10 局：7 局非摊牌 + 上面 3 局摊牌
+    const sd10 = Array.from({ length: 7 }, postCall).concat(sdList);
+    const sdRes = sa.analyze(sd10);
+    ok(sdRes.sdRate === 3 && sdRes.sdWin === 2 / 3 && sdRes.sdWinPct === '67%',
+      '摊牌胜率：3 局摊牌 2 胜 → sdWinPct=67%，实际 ' + sdRes.sdWinPct);
+
+    // ---- 无摊牌样本 ----
+    const noSd = Array.from({ length: 10 }, foldOnly);
+    const noSdRes = sa.analyze(noSd);
+    ok(noSdRes.sdRate === 0 && noSdRes.sdWinPct === '—',
+      '无摊牌局：sdWinPct 显示「—」（不硬算百分比）');
+    ok(/没有摊牌样本/.test(noSdRes.observations.join('')),
+      '无摊牌时观察含「没有摊牌样本」');
+
+    // ---- observations 约束：≤3 条且非空 ----
+    const big = sa.analyze(Array.from({ length: 50 }, postCall));
+    ok(big.observations.length <= 3 && big.observations.every(s => typeof s === 'string' && s.length > 0),
+      '观察条数 ≤3 且每条非空字符串，实际 ' + big.observations.length);
+
+    // ---- 空数组 / 非数组容错 ----
+    ok(sa.analyze([]).insufficient === true, '空数组 → 样本不足');
+    ok(sa.analyze(null).insufficient === true, 'null 入参容错 → 样本不足');
+
+    // ---- AGG 边界：全 raise 无 call → 高 AGG 不除零 ----
+    const allRaise = Array.from({ length: 10 }, postRaise);
+    const arRes = sa.analyze(allRaise);
+    ok(isFinite(arRes.agg) && arRes.agg > 0, 'AGG 全 raise 无跟注不除零（分母 max(call,1)=1）');
+
+    // ---- profile.js 接入静态守卫 ----
+    const profSrc = fs.readFileSync(path.join(__dirname, 'pages', 'profile', 'profile.js'), 'utf8');
+    ok(/require\(['"].+replay-store['"]\)/.test(profSrc), 'profile.js 引入 replay-store');
+    ok(/require\(['"].+style-analyzer['"]\)/.test(profSrc), 'profile.js 引入 style-analyzer');
+    ok(/styleAnalyzer\.analyze\(replayStore\.listAll\(\)\)/.test(profSrc),
+      'profile.js 调用 styleAnalyzer.analyze(replayStore.listAll())');
+    ok(/styleAnalysis/.test(profSrc), 'profile.js 维护 styleAnalysis 状态字段');
+    // 旧 style（云端胜率代理）保留，与新行为画像分区不删
+    ok(/激进型|保守型|稳健型/.test(profSrc), 'profile.js 保留旧 style（胜率倾向），与新 styleAnalysis 分区显示');
+
+    // ---- profile.wxml 静态守卫 ----
+    const profWxml = fs.readFileSync(path.join(__dirname, 'pages', 'profile', 'profile.wxml'), 'utf8');
+    ok(/styleAnalysis\.insufficient/.test(profWxml), '我的页 wxml 含样本不足分支');
+    ok(/styleAnalysis\.quadrant/.test(profWxml), '我的页 wxml 插值打法象限');
+    ok(/styleAnalysis\.observations/.test(profWxml) && /wx:for/.test(profWxml),
+      '我的页 wxml 用 wx:for 渲染观察列表');
+    // wxml 用 {{styleAnalysis.quadrantTag}} 插值类名；配色定义在 wxss（tag 选择器）
+    ok(/styleAnalysis\.quadrantTag/.test(profWxml),
+      '我的页 wxml 用 quadrantTag 插值类名（象限配色）');
+    const profWxss = fs.readFileSync(path.join(__dirname, 'pages', 'profile', 'profile.wxss'), 'utf8');
+    ok(/tight-aggressive/.test(profWxss) && /loose-passive/.test(profWxss),
+      '我的页 wxss 定义四象限配色（tight-aggressive/loose-passive 等）');
+
+    // ---- 合规/边界静态守卫 ----
+    const saSrc = fs.readFileSync(path.join(__dirname, 'utils', 'style-analyzer.js'), 'utf8');
+    ok(!/wx\.request|require\(['"]https?/.test(saSrc), 'style-analyzer 不含网络调用（纯本地）');
+    ok(/不接 LLM|样本不足|不硬算|描述性|不评判/.test(saSrc),
+      'style-analyzer 头注释声明边界（不接 LLM / 样本不足不硬算 / 描述性不评判）');
+  })();
+
   /* ---------- 输出 ---------- */
   console.log('\n' + '='.repeat(52));
   if (failures.length === 0) {
