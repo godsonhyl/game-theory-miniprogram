@@ -59,8 +59,13 @@ const auth = {
             const { data, error } = await cloud.auth.signInWithWechat(code, appid);
 
             if (error) {
+              // 带上运行时的 appid：服务端是按「应用 ↔ 小程序 appid」授权校验的，
+              // 「小程序未授权给 WorkBuddy」这类报错必须知道是哪个 appid 没被授权，
+              // 否则换过应用后无从定位（2026-10-17 真机事故）。
               console.error('[auth] 微信登录失败', JSON.stringify({
                 stage: 'wechat-login-handler',
+                appid,
+                code: error.code || error.status || '',
                 message: error.message || '登录失败'
               }));
               reject(new Error(error.message || '微信登录失败'));

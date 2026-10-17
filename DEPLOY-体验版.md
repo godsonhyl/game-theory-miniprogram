@@ -14,6 +14,22 @@
 | 云环境配置 | ✅ `endpoint: mp-api.app.workbuddy.host`；应用 ID **不要在此写死**，以 `miniprogram/utils/cloud.js` 的 `publishableKey`（`wbpk_<appId>_…`）为准。2026-10-17 已切换过一次应用（`2qkKI2ZGSh13zUKRFfD8Cm` → `qcAtDwEIzbnS2Bjm1i0ylw`），换应用后必须回到**新**应用上重跑一遍迁移与 rpc 核对，npm test 查不出来 |
 | 页面声明 | ✅ 3 页，单主包无分包 |
 
+## 一之二、换云端应用：必做的四件事 ⚠️
+
+换 `cloud.js` 的 `publishableKey`（= 换应用）**不是改一行配置就完事**，它等于换一个空数据库 +
+换一套平台授权。2026-10-17 真机踩过：改完 key 后所有登录报
+**「登录未完成 / 小程序未授权给 WorkBuddy」**（服务端 `/v1/login-wechat` 返回，不是本地文案）。
+
+| # | 必做 | 说明 |
+|---|---|---|
+| 1 | **在哪个设备建的应用，就在哪个设备授权** | 应用只注册在创建它的工作区。本机 `cloud_service inspect` 列出的是 `2qkKI2ZGSh13zUKRFfD8Cm` 与 `tW8FJoIcEfNHOzCRKUX7sV`，**新应用 `qcAtDwEIzbnS2Bjm1i0ylw` 不在其中** → 本机 `activate/reuse` 直接 `reuse_not_found`，管不了它，授权只能回原设备做 |
+| 2 | 重跑数据库迁移与 rpc 核对 | 新库是空的。`migrations/*.sql` 要重跑，再用 `scripts/check-cloud-migration.js --sql` 的 SQL 验一遍。npm test **查不出这个**（测试 mock 掉 cloud 层） |
+| 3 | 等平台下发新应用的隐私清单 | `.wbapp_<appId>.privacy.json` 按应用下发且被 gitignore 排除，短期内缺失属正常，测试只告警不判失败 |
+| 4 | 真机登录自测一次 | 数据库全绿 ≠ 能登录。授权缺失只在真机第一次登录时暴露 |
+
+排查登录类报错时，先看 `miniprogram/utils/auth.js` 的日志：失败时会打出
+`appid` + `code` + `message`，能直接看出是**哪个 appid 没被授权**。
+
 ## 二、上传前预检（已全部通过）
 
 ```
