@@ -591,6 +591,32 @@ console.log('\n【8b】庄位/小盲/大盲 + 快照镜像（跨设备好友房�
   eq(gs.bbSeat, 3, '稀疏座位大盲 = 按钮左二');
 }
 {
+  // 翻后行动顺序（回归守卫）：翻牌后首个应行动者 = 按钮左一（SB），
+  // 不是 BB。nextStreet() 已正确设置 actionSeat，但 advance() 旧版从 k=1
+  // 起算会跳过它、误取其下家——曾导致「BB 替 SB 翻后先动」「HU 庄家替 BB
+  // 翻后先动」。此处静态走完翻前下注轮，断言翻后首动者。
+  // 3 人桌：dealer=1, sb=2, bb=0 → 翻后首动者 = SB = 座位2
+  const g = P.createGame({ players: [mkPlayer(0, 1000), mkPlayer(1, 1000), mkPlayer(2, 1000)], sb: 10, bb: 20, dealerSeat: 0, seed: 'postflop3' });
+  g.startHand();
+  eq(g.sbSeat, 2, '3 人桌 SB = 座位2（按钮左一）');
+  // UTG 翻前 limp、SB 跟、BB 过牌（option）→ 翻牌
+  g.act(g.actionSeat, 'call', 0);
+  g.act(g.actionSeat, 'call', 0);
+  g.act(g.actionSeat, 'check', 0);
+  eq(g.street, 'flop', '已进入翻牌街');
+  eq(g.actionSeat, 2, '翻牌后首动者 = SB（按钮左一，座位2），非 BB');
+  // 两人局（heads-up）：dealer=SB, bb=另一人 → 翻后首动者 = BB
+  // （HU 节奏：SB 翻前先动、BB 翻后先动、庄家最后动）
+  const g2 = P.createGame({ players: [mkPlayer(0, 1000), mkPlayer(1, 1000)], sb: 10, bb: 20, dealerSeat: 1, seed: 'postflop2' });
+  g2.startHand();
+  eq(g2.dealerSeat, 0, 'HU 按钮轮转后落在座位0（=SB）');
+  eq(g2.bbSeat, 1, 'HU BB = 座位1');
+  g2.act(g2.actionSeat, 'call', 0);   // SB 跟
+  g2.act(g2.actionSeat, 'check', 0);  // BB option 过牌
+  eq(g2.street, 'flop', 'HU 已进入翻牌街');
+  eq(g2.actionSeat, 1, 'HU 翻牌后首动者 = BB（座位1），非庄家');
+}
+{
   // loadSnapshot：好友端镜像 + 「我 = 本地 0 号位」重映射
   const src = P.createGame({
     players: [mkPlayer(0, 1000, true), mkPlayer(2, 1000), mkPlayer(5, 1000, true)],

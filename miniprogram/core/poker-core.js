@@ -1066,7 +1066,12 @@
       const seats = game.inHandPlayers().map(p => p.seat).sort((a, b) => a - b);
       const startIdx = seats.indexOf(game.actionSeat);
       let next = -1;
-      for (let k = 1; k <= seats.length; k++) {
+      // ⚠️ k 从 0 起算（不是 1）：nextStreet() 会把 actionSeat 设为「本街首个应行动者」，
+      // 此时该玩家尚未行动（actedBet=null !== currentBet=0），必须从 k=0 命中他本人。
+      // 若从 k=1 起算则跳过他、误取其下家，导致翻后行动顺序错位（BB 替 SB 先动、
+      // HU 庄家替 BB 先动）。act() 后行动者 actedBet===currentBet，k=0 命中自己即跳过，
+      // 自然落到 k=1 的原逻辑——两种情形由同一判据天然区分，无需额外分支。
+      for (let k = 0; k <= seats.length; k++) {
         const seat = seats[(startIdx + k + seats.length) % seats.length];
         const p = game.seatOf(seat);
         if (p.folded || p.allIn) continue;
