@@ -17,14 +17,12 @@ const { createDiagnosticWx } = require('./workbuddy-cloud-diagnostics');
 // ↓↓↓ 云服务开通后由平台下发，请勿手工修改或提交到公开仓库 ↓↓↓
 const PUBLIC_CONFIG = {
   endpoint: 'https://mp-api.app.workbuddy.host',
-  // ⚠️ 2026-10-17 临时回退到 wbapp_2qkKI2ZGSh13zUKRFfD8Cm（旧应用，已授权且有
-  // 历史数据：档案 7 / 战绩 908 / 房间 54 / 座位 79 / 流水 8）。
-  // 原因：远端 5c41c45 切到 wbapp_qcAtDwEIzbnS2Bjm1i0ylw，但该应用**只注册在
-  // 创建它的那台设备的工作区**，本机 cloud_service 查不到（activate/reuse →
-  // reuse_not_found），本机管不到它；真机登录报「小程序未授权给 WorkBuddy」
-  // （服务端 /v1/login-wechat 返回，非本地文案），授权须回原设备做。
-  // 新应用 5 表全 0 行，切回旧应用零数据损失。
-  // 待授权完成后可切回新应用，届时须在新应用上重跑 migrations 与 rpc 核对。
+  // 当前应用 wbapp_2qkKI2ZGSh13zUKRFfD8Cm（已授权，历史数据：档案 7 / 战绩 908 /
+  // 房间 54 / 座位 79 / 流水 8）。
+  // 2026-10-17 曾短暂切到另一个新建应用，因其未完成小程序授权导致真机登录失败，
+  // 已回退并废弃该应用（5 表全 0 行，无数据损失）。
+  // 教训：换应用 = 换空库 + 需重新授权，且应用只注册在创建它的那台设备，
+  // 详见 DEPLOY-体验版.md「一之二、换云端应用」。
   publishableKey: 'wbpk_2qkKI2ZGSh13zUKRFfD8Cm_72rqo2gDsN0YTv64Kn69YK7miDGvZLFT'
 };
 // ↑↑↑ ↑↑↑

@@ -46,8 +46,8 @@ appJson.pages.forEach(p => {
 ok(allFiles, '所有页面四件套齐全');
 
 /* ---- 隐私清单 ---- */
-// ⚠️ 应用 ID 不能写死：云端应用会被整体替换（2026-10-17 远端把公钥从
-// wbapp_2qkKI2ZGSh13zUKRFfD8Cm 换成 wbapp_qcAtDwEIzbnS2Bjm1i0ylw）。写死时
+// ⚠️ 应用 ID 不能写死：云端应用会被整体替换（2026-10-17 远端就把公钥换过一次，
+// 换到的新应用尚未授权，真机登录报「小程序未授权给 WorkBuddy」）。写死时
 // 这条断言会一直去校验「已经不用的那个应用」的清单并永远通过——典型的测试盲区：
 // 客户端早就换了应用，测试还在绿。改为从 cloud.js 的 publishableKey 反解应用 ID。
 const cloudSrc = read('utils/cloud.js');
