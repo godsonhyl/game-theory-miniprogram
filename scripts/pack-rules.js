@@ -51,8 +51,12 @@ module.exports = {
   },
 
   /** upload.js 用：miniprogram-ci 的 ignores（glob 风格，相对 projectPath）
-   *  ⚠️ miniprogram_npm 绝不能进这个列表——它是「构建 npm」编译产物，云 SDK 运行时
-   *  靠它解析，排除会导致体验版 require 失败白屏（历史事故，勿再犯）。 */
+   *  ⚠️ 云 SDK 产物绝不能被排除。早期它以 npm 依赖形式存在（微信「构建 npm」生成
+   *  miniprogram_npm/），排除该目录会令体验版 require 失败白屏（历史事故）。
+   *  2026-10-17 起改为内联在 miniprogram/utils/vendor/workbuddy-cloud-sdk.js——
+   *  彻底去掉「构建 npm」环节，换机器 clone 后无需 npm install 即可上传。
+   *  风险点随之从「别排除 miniprogram_npm 目录」变成「别排除 utils/vendor 这个文件」；
+   *  本清单不含二者（EXCLUDE_FOLDERS 只有 node_modules/dist），改动时务必守住。 */
   ciIgnores() {
     return this.EXCLUDE_FILES
       .concat(this.EXCLUDE_PREFIX.map(p => p + '*.js'))   // test-*.js
