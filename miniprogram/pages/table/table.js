@@ -404,7 +404,8 @@ Page({
     this.pendingJoinMap = {};  // 好友中途加入：房间座位 → { name, stack }，下一手插入
     this.pendingMove = null;   // 游戏中换座：{ from, to }，下一手发牌前落位
     this.pendingJoin = null;   // 中途加入：{ seat, stack, name, isHuman, style }
-    this.pendingBotSeat = null;// AI 桌：空位补电脑玩家的目标座位
+    this.pendingBotSeat = null;// AI/SNG 桌：空位补电脑玩家的目标座位
+    this.pendingKickBots = {};// 进行中踢 bot：seat → true，下一手移出 game.players
     this.leftPlayers = [];     // 中途离场者战绩留档（结算单仍统计他们）
     this.pollTimer = null;
     this.hbTimer = null;
@@ -1191,6 +1192,29 @@ Page({
         this.startStacks[seat] = DEFAULT_BUY_IN;
       }
     }
+    // ④ 进行中踢 bot：把目标 bot 移出 game.players 并留档 leftPlayers。
+    // 与补 bot 对称——只在下一手 startHand 前落位，不打断当前手。
+    // 移除前先存 leftPlayers：结算单仍统计该 bot 的带入/盈亏，账面不缺口。
+    // 不踢真人（pendingKickBots 只在 kickBot 里对 bot 座位置位）；不移除庄位引用，
+    // startHand 会按 game.players 现算按钮轮转，残留 dealerSeat 落在已空座位上
+    // 时引擎有兜底（poker-core.js startHand 找不到按钮位会回退 seats[0]）。
+    if (this.pendingKickBots && game) {
+      Object.keys(this.pendingKickBots).forEach(s => {
+        const seat = Number(s);
+        const p = game.seatOf(seat);
+        if (!p) return;
+        const buyIn = this.startStacks[seat] !== undefined ? this.startStacks[seat] : DEFAULT_BUY_IN;
+        this.leftPlayers.push({
+          seat, name: p.name || '玩家', isHuman: false,
+          buyIn, stack: p.stack, left: true
+        });
+        delete this.startStacks[seat];
+        delete this.botSeats[seat];
+        delete this.standingMap[seat];
+        game.players = game.players.filter(x => x.seat !== seat);
+      });
+      this.pendingKickBots = {};
+    }
   },
 
   /**
@@ -1848,10 +1872,26 @@ Page({
     this.publishWait();   // 广播机器人布局，好友端同步可见
   },
 
-  /** 房主请出某个电脑玩家（腾出空位） */
+  /** 房主请出某个电脑玩家（腾出空位）。
+   *  等待室：直接清 waitSeats 占位 + 广播。
+   *  进行中（好友房房主、非镜像）：走 pendingKickBots 下一手移出，与补 bot
+   *  对称。不立即踢——当前手可能正轮到该 bot 行动，中途抽走会冻结牌局；
+   *  下一手 startHand 前落位，引擎按剩余 players 重算按钮轮转，安全。 */
   kickBot(e) {
+    if (!this.isOwner) return;
+    const seat = Number(e.currentTarget.dataset.seat);
+    if (isNaN(seat)) return;
+    // 进行中：好友房房主走 pendingKickBots 下一手移出（镜像端 isOwner 恒 false，被拦）
+    if (this.data.phase === 'playing' && this.mode === 'friend' && !this.remoteMode && game) {
+      const p = game.seatOf(seat);
+      if (!p || !this.botSeats[seat]) {
+        wx.showToast({ title: '只能请出电脑玩家', icon: 'none' }); return;
+      }
+      this.pendingKickBots[seat] = true;
+      wx.showToast({ title: '下一手请出该电脑玩家', icon: 'none' });
+      return;
+    }
     if (this.data.phase !== 'waiting') return;
-    const seat = e.currentTarget.dataset.seat;
     const seats = this.data.waitSeats.slice();
     const t = seats.find(s => s.seat === seat);
     if (!t || !t.isBot) return;
@@ -2008,6 +2048,7 @@ Page({
       this.pendingMove = null;
       this.pendingJoin = null;
       this.pendingBotSeat = null;
+      this.pendingKickBots = {};
       this.leftPlayers = [];     // 新一局：中途离场者的战绩留档从零开始
 
       // 批⑤：SNG 赛制初始化——淘汰名次从总人数倒数（第 N 名先淘汰），涨盲默认 3 分钟

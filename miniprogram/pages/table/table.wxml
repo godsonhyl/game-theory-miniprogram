@@ -145,8 +145,8 @@
 
         <!-- 等待室：空座位上的「坐下」按钮 -->
         <view class="sit-btn" wx:if="{{item.empty}}">{{item.sitText}}</view>
-        <!-- 房主可请出电脑玩家（仅等待室） -->
-        <text class="wtag kick" wx:elif="{{item.isBot && isOwner && phase === 'waiting'}}" catchtap="kickBot" data-seat="{{item.seat}}">请出</text>
+        <!-- 房主可请出电脑玩家：等待室直接踢；进行中仅好友房房主走 pendingKickBots 下一手移出 -->
+        <text class="wtag kick" wx:elif="{{item.isBot && isOwner && (phase === 'waiting' || (phase === 'playing' && mode === 'friend'))}}" catchtap="kickBot" data-seat="{{item.seat}}">请出</text>
         <text class="wtag owner" wx:elif="{{mode === 'friend' && (item.isOwner || (item.isMe && isOwner))}}">房主</text>
       </view>
     </block>

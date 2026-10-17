@@ -3433,6 +3433,32 @@ while (guard++ < 400) {
     ok(/bindtap="addBot"[\s\S]{0,200}?添加电脑玩家/.test(tableWxml) ||
        /添加电脑玩家[\s\S]{0,60}?bindtap="addBot"/.test(tableWxml),
       'table.wxml 进行中「添加电脑玩家」按钮绑 addBot');
+
+    // ---- 好友房进行中踢 bot（与补 bot 对称，复用「请出」标签入口）----
+    // 病根：kickBot 原 `if (phase !== 'waiting') return` 守卫 → 进行中点「请出」
+    // 直接 return，房主无法中途清退多余电脑玩家。改为进行中走 pendingKickBots
+    // → 下一手 applyPendingSeats ④ 移出 game.players 并留档 leftPlayers，账面不缺口。
+    // 复用既有「请出」标签（wxml:149），仅放宽 phase/mode 门控，不新增按钮。
+    ok(/kickBot\([^)]*\)\s*\{[\s\S]{0,300}?!this\.isOwner\)\s*return/.test(tableSrc),
+      'table.js kickBot 仅房主守卫（镜像端 isOwner 恒 false，被拦）');
+    ok(/kickBot[\s\S]{0,600}?phase === 'playing' && this\.mode === 'friend' && !this\.remoteMode/.test(tableSrc),
+      'table.js kickBot 进行中分支守卫 friend 房主非镜像（放开 phase 守卫给好友房中途踢 bot）');
+    ok(/kickBot[\s\S]{0,1000}?pendingKickBots\[seat\]\s*=\s*true/.test(tableSrc),
+      'table.js kickBot 进行中走 pendingKickBots[seat]（下一手 applyPendingSeats ④ 移出）');
+    ok(/kickBot[\s\S]{0,600}?只能请出电脑玩家/.test(tableSrc),
+      'table.js kickBot 进行中只请 bot（非 bot 或不在座时 toast 拦截，不踢真人）');
+    ok(/pendingKickBots\s*=\s*\{\}/.test(tableSrc),
+      'table.js 实例字段 pendingKickBots 初始化（onLoad/startGame 重置）');
+    // applyPendingSeats ④：移出 game.players 并留档 leftPlayers
+    ok(/pendingKickBots[\s\S]{0,400}?leftPlayers\.push/.test(tableSrc),
+      'table.js applyPendingSeats ④ 踢 bot 前先 push leftPlayers（结算单账面不缺口）');
+    ok(/pendingKickBots[\s\S]{0,500}?game\.players\s*=\s*game\.players\.filter/.test(tableSrc),
+      'table.js applyPendingSeats ④ 把 bot 从 game.players 过滤移出');
+    // WXML：「请出」标签门控放宽到 playing（好友房），复用同一入口不新增按钮
+    ok(/isBot && isOwner && \(phase === 'waiting' \|\| \(phase === 'playing' && mode === 'friend'\)\)/.test(tableWxml),
+      'table.wxml 「请出」标签门控含 playing+friend（复用既有入口踢 bot，不新增按钮）');
+    ok((tableWxml.match(/catchtap="kickBot"/g) || []).length === 1,
+      'table.wxml kickBot 仅一个绑定点（复用「请出」标签，未新增重复入口）');
   }
 
   /**
@@ -3737,6 +3763,76 @@ while (guard++ < 400) {
     pageCtx.addBot();
     ok(pageCtx.pendingBotSeat === null || pageCtx.pendingBotSeat === undefined,
       '★ 镜像端 addBot 不置 pendingBotSeat（不跑引擎，避免空插不广播）');
+    pageCtx.remoteMode = false;
+  }
+
+  /* ---------- 好友房进行中踢 bot（与补 bot 对称，用户「加进行中踢 bot」）----------
+   * 病根：kickBot 原 `if (phase !== 'waiting') return` 守卫 → 牌局进行中
+   * 房主点「请出」直接被拦，无法中途清退多余电脑玩家。
+   * 修复：进行中（friend 房主、非镜像）走 pendingKickBots[seat]，下一手
+   * applyPendingSeats ④ 把 bot 从 game.players 过滤移出，先 push leftPlayers
+   * 留档（结算单账面不缺口），与补 bot 完全对称。复用既有「请出」标签入口，
+   * 仅放宽 phase/mode 门控，不新增按钮。
+   */
+  {
+    // 前置：建一个好友房，等待室加 2 个 bot，开局进 playing
+    pageCtx.onLoad({ room: '777999', own: '1' });   // 好友房房主
+    ok(pageCtx.mode === 'friend', '好友房踢 bot 前置：mode=friend');
+    pageCtx.addBot();
+    pageCtx.addBot();
+    const seated0 = (dataStore.waitSeats || []).filter(s => s.occupied).length;
+    ok(seated0 === 3, '等待室加 2 bot 占座（房主+2bot=3），实际 ' + seated0);
+    pageCtx.startGame();
+    ok(dataStore.phase === 'playing', '好友房踢 bot 前置：已开局（phase=playing）');
+    const game = pageCtx.requireGame();
+    ok(!!game, '好友房踢 bot 前置：module 级 game 已建');
+    const botSeats = (game.players || []).filter(p => !p.isHuman).map(p => p.seat);
+    ok(botSeats.length >= 2, '在座 bot ≥2（待踢目标），实际 ' + botSeats.length);
+    const before = (game.players || []).length;
+    const leftBefore = (pageCtx.leftPlayers || []).length;
+    const kickSeat = botSeats[0];
+    const kickStack = game.seatOf(kickSeat).stack;
+
+    // 进行中点「请出」该 bot
+    pageCtx.kickBot({ currentTarget: { dataset: { seat: kickSeat } } });
+    ok(pageCtx.pendingKickBots && pageCtx.pendingKickBots[kickSeat] === true,
+      '★ 进行中 kickBot 置 pendingKickBots[seat]=true（下一手移出），实际 ' +
+      JSON.stringify(pageCtx.pendingKickBots || {}));
+
+    // 误踢真人：对「我」座位点「请出」应被拦（只请 bot）
+    const mySeat = pageCtx.mySeat;
+    pageCtx.kickBot({ currentTarget: { dataset: { seat: mySeat } } });
+    ok(!pageCtx.pendingKickBots[mySeat],
+      '★ kickBot 进行中只请 bot（对真人座位点「请出」不置位，不踢真人）');
+
+    // 触发下一手落位：手动调 applyPendingSeats（startHand 路径里的落位函数）
+    pageCtx.applyPendingSeats();
+    const after = (pageCtx.requireGame() && pageCtx.requireGame().players || []).length;
+    ok(after === before - 1,
+      '★ applyPendingSeats 后 bot 移出（players -1，' + before + '→' + after + '）');
+    ok(Object.keys(pageCtx.pendingKickBots || {}).length === 0,
+      '落位后 pendingKickBots 清空（不重复移出）');
+    ok(!pageCtx.botSeats[kickSeat],
+      '踢出后 botSeats[kick] 已清（不再为它跳过心跳/超时）');
+    // leftPlayers 留档 +1：结算单仍统计该 bot 的带入/盈亏，账面不缺口
+    const leftAfter = (pageCtx.leftPlayers || []).length;
+    ok(leftAfter === leftBefore + 1,
+      '★ 踢出 bot 先留档 leftPlayers（+1，' + leftBefore + '→' + leftAfter + '，结算单账面不缺口）');
+    const leftEntry = (pageCtx.leftPlayers || []).find(x => x.seat === kickSeat);
+    ok(!!leftEntry && leftEntry.isHuman === false && leftEntry.left === true,
+      '留档条目正确（seat=' + kickSeat + ', isHuman=false, left=true）');
+    ok(leftEntry && leftEntry.stack === kickStack,
+      '留档 stack 取自移出前余额（' + kickStack + '，账面与引擎一致）');
+
+    // 镜像端守卫：remoteMode 时 isOwner 恒 false，kickBot 直接 return，不置 pendingKickBots
+    pageCtx.remoteMode = true;
+    const wasOwner = pageCtx.isOwner;
+    pageCtx.isOwner = false;   // 镜像端好友非房主
+    pageCtx.pendingKickBots = {};
+    pageCtx.kickBot({ currentTarget: { dataset: { seat: kickSeat } } });
+    ok(Object.keys(pageCtx.pendingKickBots || {}).length === 0,
+      '★ 镜像端 kickBot 不置 pendingKickBots（isOwner=false 直接 return，不替房主踢）');
+    pageCtx.isOwner = wasOwner;
     pageCtx.remoteMode = false;
   }
 
