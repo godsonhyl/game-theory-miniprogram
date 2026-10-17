@@ -4565,6 +4565,10 @@ Page({
           // 传全后 aiDecide 的夹取永远落在引擎合法区间内
           canRaise: legal.canRaise,
           bb: game.bb,
+          // 翻后蒙特卡洛的 rng 种子必须可复现（玩家审视 2026-10-17）：aiDecide 内部
+          // 翻后 quickEquity 用本 rng 发牌，种子含 handNo+seat+第 n 次决策 → 同局
+          // 回放时 AI 分叉路径逐位还原。翻后每次决策递增 aiStep，避免同手同座位
+          // 两街决策种子相同（次序敏感：rng 消耗在 aiDecide 内部，和翻前抽牌流隔离）。
           rng: P.createRng('mp-' + game.handNo + '-' + seat + '-' + (aiStep++))
         });
         // 回填本帧 reason 供下一帧反应时间抖动判诈唬/强牌

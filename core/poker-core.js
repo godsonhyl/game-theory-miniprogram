@@ -689,9 +689,24 @@
     }
 
     // ---- 翻牌后：蒙特卡洛胜率 + 赔率决策 ----
-    const equity = quickEquity(hole, board, Math.max(1, numActive - 1), 420, createRng()).equity;
+    // rng 口径（玩家审视 2026-10-17）：翻后蒙特卡洛优先用 ctx.rng（调用方注入，
+    // 种子可复现——同 seed 同动作序列 → 同决策，事件溯源回放时 AI 分叉路径可
+    // 逐位还原）；未注入时退回 createRng()（随机种子），与旧实现兼容。
+    const mcRng = ctx.rng || createRng();
+    const equity = quickEquity(hole, board, Math.max(1, numActive - 1), 420, mcRng).equity;
     const potOdds = toCall > 0 ? toCall / (pot + toCall) : 0;
     const draw = detectDraws(hole, board);
+
+    // 下注尺度因子（玩家审视 2026-10-17）：对手本次下注相对底池的越大，同样的
+    // 胜率越不值跟——「用尺度讲故事」从此对 AI 有效（旧实现无论我下多重的注，
+    // 它的 call/fold 线都纹丝不动）。betRatio = toCall / pot（pot 是我决策时点
+    // 的池面）：pot 大小注 betRatio≈0.5、池级 ≈1、两倍超池 ≈2。把这条因子叠加到
+    // 「跟注所需胜率」上：重注要求更高胜率才跟（阈值收紧 0~0.12），小注放宽
+    // 0~0.04。加注线（价值加注 0.66）不吃因子——加注本就是对重注的反抗，
+    // 强牌不该因为对手下得重就不加注。
+    const betRatio = pot > 0 ? toCall / pot : 0;
+    // 0（池级以下）→0；1（池级）→+0.03；2（两倍超池）→+0.09；线形收敛上限 0.12
+    const sizeAdj = Math.max(-0.04, Math.min(0.12, (betRatio - 0.5) * 0.06));
 
     if (toCall === 0) {
       if (equity > 0.72 || (draw.outs >= 8 && equity > 0.42)) {
@@ -709,7 +724,7 @@
     if (equity > 0.66) {
       return raiseDecision(currentBet * (1.7 + aggressive * 0.6), '价值加注');
     }
-    if (equity > potOdds + 0.06) {
+    if (equity > potOdds + 0.06 + sizeAdj) {
       // 半诈唬：bluffFreq 覆盖默认 aggressive*0.28 系数
       if (rndFloat() < (bluffFreq !== null ? bluffFreq : aggressive * 0.28) && equity > 0.45) {
         return raiseDecision(currentBet * 2.1, '半诈唬加注');

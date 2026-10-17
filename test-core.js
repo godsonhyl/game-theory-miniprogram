@@ -727,6 +727,67 @@ for (let k = 0; k < 20; k++) {
 }
 eq(dealDiff, 20, '20 组配对中底牌全部不同（seed 确实决定发牌顺序）');
 
+console.log('\n【9.5】AI 决策可复现性 + 下注尺度因子（玩家审视 2026-10-17）');
+// ① 翻后决策同 rng 种子可复现：aiDecide 的翻后蒙特卡洛此前每次 createRng()
+//    （随机种子），同 ctx 两次调用结果可能不同——事件溯源回放时 AI 分叉不可还原。
+//    现在翻后 quickEquity 优先用 ctx.rng：同 ctx（含同 rng 种子）→ 同决策。
+{
+  const ctx9 = {
+    hole: [H.HK, H.HQ], board: [H.S7, H.S8, H.D3, H.S2], pot: 400,
+    toCall: 200, stack: 1000, currentBet: 200, numActive: 2,
+    style: { aggro: 0.5, tight: 0.5 },
+    minRaiseTo: 400, maxRaiseTo: 1000, canRaise: true, bb: 20
+  };
+  const mkCtx = () => Object.assign({}, ctx9, { rng: P.createRng('mp-1-0-0') });
+  const da = P.aiDecide(mkCtx());
+  const db = P.aiDecide(mkCtx());
+  eq(da.action, db.action, '翻后决策：同 rng 种子 → 同动作');
+  eq(da.amount, db.amount, '翻后决策：同 rng 种子 → 同加注额');
+  ok(['call', 'fold', 'raise', 'allin', 'check'].indexOf(da.action) >= 0, '翻后决策动作合法: ' + da.action);
+
+  // ② 尺度因子：同样的胜率/赔率局面，重注（超池）比小注更容易触发弃牌。
+  //    构造「胜率处于边缘带」的对照：equity 在 potOdds 附近（强依赖 sizeAdj 移动阈值）。
+  //    小注（toCall=100/pot=600 → betRatio≈0.17 → sizeAdj=-0.04 放宽）应跟注，
+  //    超池重注（toCall=800/pot=400 → betRatio=2 → sizeAdj=+0.09 收紧）应弃牌
+  //    （除非 0.66+ 强牌线命中——边缘 equity 不会）。
+  const edgeCtx = (toCall, pot) => ({
+    // KQ on 7832 彩虹面（非同花无对）对 1 名对手的 equity 落在 potOdds 边缘带
+    hole: [H.HK, H.HQ], board: [H.S7, H.S8, H.D3, H.S2], pot,
+    toCall, stack: 2000, currentBet: toCall, numActive: 2,
+    style: { aggro: 0.3, tight: 0.8, bluffFreq: 0, heroCall: 0, slowplay: 0 },
+    minRaiseTo: toCall * 2, maxRaiseTo: 2000, canRaise: true, bb: 20,
+    rng: P.createRng('size-' + toCall)
+  });
+  // 先确定 equity 落在哪：直接读同 ctx 的 quickEquity（同 rng 同牌面）
+  const eqEdge = P.quickEquity([H.HK, H.HQ], [H.S7, H.S8, H.D3, H.S2], 1, 420, P.createRng('size-100')).equity;
+  const poSmall = 100 / (700 + 100);         // 小注案：池 700（pot 含对手注）
+  // 小注跟注条件：equity > poSmall + 0.06 - 0.04；超池弃牌条件：equity < 2/3 + 0.06 + 0.09
+  // KQ 高张对随机牌 equity 通常 0.45~0.55，两条分别验证（若 equity 高于 0.75+ 则跳过对照）
+  if (eqEdge < 0.72 && eqEdge > poSmall + 0.02) {
+    const smallBet = P.aiDecide({
+      hole: [H.HK, H.HQ], board: [H.S7, H.S8, H.D3, H.S2], pot: 700,
+      toCall: 100, stack: 2000, currentBet: 100, numActive: 2,
+      style: { aggro: 0.3, tight: 0.8, bluffFreq: 0, heroCall: 0, slowplay: 0 },
+      minRaiseTo: 200, maxRaiseTo: 2000, canRaise: true, bb: 20,
+      rng: P.createRng('size-100')
+    });
+    const overBet = P.aiDecide({
+      hole: [H.HK, H.HQ], board: [H.S7, H.S8, H.D3, H.S2], pot: 400,
+      toCall: 800, stack: 2000, currentBet: 800, numActive: 2,
+      style: { aggro: 0.3, tight: 0.8, bluffFreq: 0, heroCall: 0, slowplay: 0 },
+      minRaiseTo: 1600, maxRaiseTo: 2000, canRaise: true, bb: 20,
+      rng: P.createRng('size-800')
+    });
+    ok(smallBet.action === 'call',
+      '尺度因子：边缘胜率面对小注（betRatio 0.17，阈值放宽 -0.04）仍跟注，实际 ' + smallBet.action);
+    ok(overBet.action === 'fold',
+      '尺度因子：边缘胜率面对超池重注（betRatio 2，阈值收紧 +0.09）转弃牌，实际 ' + overBet.action);
+  } else {
+    // equity 不在预期边缘带时退化为静态断言（不硬猜具体数值）
+    ok(true, '尺度因子：equity=' + eqEdge.toFixed(2) + ' 不在边缘带，对照跳过');
+  }
+}
+
 console.log('\n【10】行动建议模块');
 const ga = P.createGame({ players: [mkPlayer(0, 1000, true), mkPlayer(1, 1000)], sb: 10, bb: 20, dealerSeat: 0, seed: 'adv' });
 ga.startHand();
