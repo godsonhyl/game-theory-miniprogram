@@ -387,10 +387,23 @@
         </view>
       </view>
 
+      <!-- 全员列头：带入 / 剩余 / 盈亏 三列与数据行同宽对齐 -->
+      <view class="summary-head">
+        <text class="sh-rank"></text>
+        <text class="sh-name">玩家</text>
+        <text class="sh-num">带入</text>
+        <text class="sh-num">剩余</text>
+        <text class="sh-net">盈亏</text>
+      </view>
       <view class="summary-rows">
         <view class="summary-row {{item.isMe ? 'me' : ''}}" wx:for="{{summary.rows}}" wx:key="seat">
           <text class="sr-rank">{{index + 1}}</text>
-          <text class="sr-name">{{item.name}}</text>
+          <view class="sr-namewrap">
+            <text class="sr-name">{{item.name}}</text>
+            <!-- 中途离场（站起/掉线）：人不出单，标记可查 -->
+            <text class="sr-left" wx:if="{{item.left}}">中途离场</text>
+          </view>
+          <text class="sr-buyin">{{item.buyIn}}</text>
           <text class="sr-stack">{{item.stack}}</text>
           <text class="sr-net {{item.net > 0 ? 'up' : (item.net < 0 ? 'down' : '')}}">
             {{item.net > 0 ? '+' : ''}}{{item.net}}
@@ -398,9 +411,24 @@
         </view>
       </view>
 
+      <!-- 全员合计对账行：所有人带入/剩余/盈亏总和（零和局合计盈亏 ≈ 0，
+           对不上即有记账缺口）。与顶部「我的」三件套区分开。 -->
       <view class="summary-my">
-        <text class="sm-label">合计盈亏</text>
-        <text class="sm-val {{summary.myNet > 0 ? 'up' : (summary.myNet < 0 ? 'down' : '')}}">{{summary.myNetText}}</text>
+        <text class="sm-label">全员合计 · {{summary.rows.length}} 人</text>
+        <view class="sm-totals">
+          <view class="sm-t">
+            <text class="sm-cap">带入</text>
+            <text class="sm-val">{{summary.total.buyIn}}</text>
+          </view>
+          <view class="sm-t">
+            <text class="sm-cap">剩余</text>
+            <text class="sm-val">{{summary.total.stack}}</text>
+          </view>
+          <view class="sm-t">
+            <text class="sm-cap">盈亏</text>
+            <text class="sm-val {{summary.total.net > 0 ? 'up' : (summary.total.net < 0 ? 'down' : '')}}">{{summary.total.netText}}</text>
+          </view>
+        </view>
       </view>
 
       <view class="summary-btns">

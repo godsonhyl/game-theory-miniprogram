@@ -765,8 +765,23 @@
 }
 .summary-row.me { background: rgba(232,163,61,.14); border: 1rpx solid rgba(232,163,61,.36); }
 .sr-rank { width: calc(5.6 * var(--uh)); font-size: calc(2.9 * var(--uh)); color: var(--mut); font-weight: 700; flex: none; }
+.sr-namewrap { flex: 1; display: flex; align-items: center; overflow: hidden; margin-right: calc(1 * var(--uw)); }
 .sr-name { flex: 1; font-size: calc(3.2 * var(--uh)); color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.sr-stack { font-size: calc(2.9 * var(--uh)); color: var(--mut); margin: 0 calc(2.2 * var(--uw)); flex: none; }
+/* 中途离场标记：人不出单（统计覆盖所有人），但一眼可辨谁没打到底 */
+.sr-left {
+  flex: none; font-size: calc(2.2 * var(--uh)); color: var(--mut);
+  background: rgba(255,255,255,.08); border-radius: calc(0.8 * var(--uh));
+  padding: calc(0.2 * var(--uh)) calc(1 * var(--uw)); margin-left: calc(1 * var(--uw));
+}
+/* 带入 / 剩余 两列：与列头 .sh-num 同宽右对齐，盈亏列 .sr-net 收尾 */
+.sr-buyin { width: calc(7.6 * var(--uh)); text-align: right; font-size: calc(2.9 * var(--uh)); color: var(--mut); flex: none; margin: 0 calc(1.4 * var(--uw)); }
+.sr-stack { width: calc(7.6 * var(--uh)); text-align: right; font-size: calc(2.9 * var(--uh)); color: var(--mut); flex: none; margin: 0 calc(1.4 * var(--uw)); }
+/* 结算单列头：与数据行逐列对齐（排名留空 / 玩家 / 带入 / 剩余 / 盈亏） */
+.summary-head { display: flex; align-items: center; padding: calc(1.6 * var(--uh)) calc(1.6 * var(--uw)) 0; flex: none; }
+.sh-rank { width: calc(5.6 * var(--uh)); flex: none; }
+.sh-name { flex: 1; font-size: calc(2.6 * var(--uh)); color: var(--mut); margin-right: calc(1 * var(--uw)); }
+.sh-num { width: calc(7.6 * var(--uh)); text-align: right; font-size: calc(2.6 * var(--uh)); color: var(--mut); flex: none; margin: 0 calc(1.4 * var(--uw)); }
+.sh-net { min-width: 96rpx; text-align: right; font-size: calc(2.6 * var(--uh)); color: var(--mut); flex: none; }
 /* 单手结算弹窗：牌型/状态列（摊牌=牌型名，弃牌=「弃牌」） */
 .sr-hand {
   font-size: calc(2.8 * var(--uh)); color: var(--mut); flex: none;

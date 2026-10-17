@@ -2476,8 +2476,8 @@ while (guard++ < 400) {
       'enterReadyPhase 是「打完这手再总结束」的收口点');
     ok(/myBuyIn: me \? me\.buyIn : 0/.test(tableSrc) && /myStack: me \? me\.stack : 0/.test(tableSrc),
       'endGame 的 summary 输出 myBuyIn / myStack');
-    ok(/buyIn: this\.startStacks\[p\.seat\] !== undefined/.test(tableSrc),
-      '结算单每行带 buyIn（带入筹码）');
+    ok(/buyIn:\s*this\.startStacks\[p\.seat\] !== undefined|const buyIn\s*=\s*this\.startStacks\[p\.seat\] !== undefined/.test(tableSrc),
+      '结算单每行带 buyIn（带入筹码，口径取自 startStacks）');
     ok(/sum-bank/.test(wxmlSrc) && /带入/.test(wxmlSrc) && /剩余/.test(wxmlSrc),
       '结算单与实时面板共用「带入/剩余/盈亏」三件套组件');
     ok(/bindtap="onMenuBank"/.test(wxmlSrc) && /onMenuBank\(\)\s*\{[\s\S]{0,200}?bankShow: true/.test(tableSrc),

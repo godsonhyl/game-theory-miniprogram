@@ -13,7 +13,7 @@ const { createDiagnosticWx } = require('./workbuddy-cloud-diagnostics');
 // ↓↓↓ 云服务开通后由平台下发，请勿手工修改或提交到公开仓库 ↓↓↓
 const PUBLIC_CONFIG = {
   endpoint: 'https://mp-api.app.workbuddy.host',
-  publishableKey: 'wbpk_2qkKI2ZGSh13zUKRFfD8Cm_72rqo2gDsN0YTv64Kn69YK7miDGvZLFT'
+  publishableKey: 'wbpk_qcAtDwEIzbnS2Bjm1i0ylw_b5AmIjzcKc5jQPnyHJfwpfV4dGG11IPP'
 };
 // ↑↑↑ ↑↑↑
 
