@@ -515,25 +515,18 @@
         </view>
       </view>
 
-      <!-- 按钮区收敛（2026-10-17 用户反馈：一排查看类按钮乱）。
-           主行只留两颗：高光时刻（二级面板收纳复盘/看全桌牌/分享/亮一手）+ 主操作。
-           「看全桌牌」「亮一手」是即时开关/动作，点完关面板回到牌桌。 -->
+      <!-- 查看类功能平铺一行（2026-10-17 用户反馈：高光时刻不要二级弹层）。
+           四颗胶囊小钮即时执行：复盘跳转自己的页、全桌牌在弹窗内原地切换
+           （resultGodView 重建 rows）、分享起自己的弹层、亮一手写 reveal 后重渲染。 -->
+      <view class="hl-row">
+        <button class="hl-chip" wx:if="{{!remoteMode}}" bindtap="onReplayTap">复盘这手牌</button>
+        <button class="hl-chip" bindtap="onToggleGodView">{{resultGodView ? '收起全桌牌' : '看全桌牌'}}</button>
+        <button class="hl-chip" bindtap="onShareCardShow">分享高光</button>
+        <button class="hl-chip" wx:if="{{canDisclose}}" bindtap="onShowMyCards">亮一手</button>
+      </view>
       <view class="summary-btns">
-        <button class="btn-ghost sbtn hl-entry" bindtap="onHlPanelOpen">高光时刻 ›</button>
         <button class="btn-primary sbtn" bindtap="onResultNext">{{remoteMode || readyPhase ? '知道了' : '下一手'}}</button>
       </view>
-    </view>
-  </view>
-
-  <!-- 高光时刻面板：结算弹窗查看/分享类功能的二级收口（2026-10-17）。
-       点任一项先关面板再执行原动作——看全桌牌要回到牌桌看，复盘/分享有自己的弹层。 -->
-  <view class="help-mask" wx:if="{{hlPanelShow}}" bindtap="onHlPanelClose">
-    <view class="help-dialog hl-panel" catchtap="onBlockTap">
-      <text class="help-title">高光时刻</text>
-      <button class="hl-item" wx:if="{{!remoteMode}}" bindtap="onPanelReplay">复盘这手牌 ›</button>
-      <button class="hl-item" bindtap="onPanelGodView">{{resultGodView ? '隐藏全桌牌' : '看全桌牌 ›'}}</button>
-      <button class="hl-item" bindtap="onPanelShare">分享高光 ›</button>
-      <button class="hl-item" bindtap="onPanelDisclose" wx:if="{{canDisclose}}">亮一手 ›</button>
     </view>
   </view>
 

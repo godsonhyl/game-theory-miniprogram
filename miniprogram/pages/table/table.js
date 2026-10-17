@@ -411,7 +411,6 @@ Page({
     // 批⑦：高光分享卡片弹层（非 canvas 预览弹层）——独立 modal toggle，不进三道指纹
     shareCardShow: false,
     shareCardData: null,    // { handName, summary, myHole, board, mode }
-    hlPanelShow: false,     // 高光时刻面板（结算弹窗查看/分享类功能的二级收口）
     helpRows: [
       { name: '翻牌前', desc: '每人两张底牌，大小盲先行下注' },
       { name: '翻牌', desc: '发出 3 张公共牌，开始第二轮下注' },
@@ -4570,8 +4569,7 @@ Page({
     const replayDate = (latestReplay && game && latestReplay.handNo === game.handNo)
       ? latestReplay.date : 0;
     // 上帝视角（P1-5）默认关：muck 礼仪——每手新开结算弹窗都回到「只看摊牌」
-    // 高光面板同复位：每手新开弹窗不残留上一手的面板展开态
-    this.setData({ resultModal: this.data.result, resultGodView: false, replayDate, hlPanelShow: false });
+    this.setData({ resultModal: this.data.result, resultGodView: false, replayDate });
     this.clearResultModalTimer();
     this.resultModalTimer = setTimeout(() => {
       this.resultModalTimer = null;
@@ -4595,8 +4593,6 @@ Page({
   closeResultModal(proceed) {
     this.clearResultTimer();
     this.clearResultModalTimer();
-    // 高光面板随弹窗收起（面板挂在结算弹窗生命周期内，跨手不得残留）
-    if (this.data.hlPanelShow) this.setData({ hlPanelShow: false });
     // 亮牌入口随弹窗收起复位（下一手 showResultModal 会按新局面重算）
     // G3：replayDate 一并清掉——跨手不得残留上一手的复盘跳转目标
     if (this.data.canDisclose) this.setData({ resultModal: null, canDisclose: false, replayDate: 0 });
@@ -4694,39 +4690,10 @@ Page({
     if (this.data.shareCardShow) this.setData({ shareCardShow: false });
   },
 
-  // ---------- 高光时刻面板（结算弹窗查看/分享类功能的二级收口，2026-10-17） ----------
-  // 用户反馈结算弹窗一排按钮乱 → 收敛为「高光时刻 ›」+ 主操作两颗，
-  // 查看类功能进面板。点任一项先关面板再执行：看全桌牌要回到牌桌看，
-  // 复盘/分享有自己的弹层（层级高于本面板，关掉避免遮挡歧义）。
-
-  onHlPanelOpen() {
-    if (this.data.soundOn) sfx.play('click');
-    this.setData({ hlPanelShow: true });
-  },
-
-  onHlPanelClose() {
-    if (this.data.hlPanelShow) this.setData({ hlPanelShow: false });
-  },
-
-  onPanelReplay() {
-    this.setData({ hlPanelShow: false });
-    this.onReplayTap();
-  },
-
-  onPanelGodView() {
-    this.setData({ hlPanelShow: false });
-    this.onToggleGodView();
-  },
-
-  onPanelShare() {
-    this.setData({ hlPanelShow: false });
-    this.onShareCardShow();
-  },
-
-  onPanelDisclose() {
-    this.setData({ hlPanelShow: false });
-    this.onShowMyCards();
-  },
+  // ---------- 结算弹窗查看类入口（hl-* 面板收口复盘） ----------
+  // 2026-10-17 用户反馈反转：高光时刻不做二级面板，四颗胶囊直接平铺在弹窗按钮区
+  // 上方（复盘/全桌牌/分享/亮一手），点击直接执行——各入口自带门控：
+  // onReplayTap 无缓存时 toast、onToggleGodView 要求弹窗开着、亮一手由 canDisclose 门控。
 
   // ---------- 就绪阶段：所有人准备就绪后才发下一手 ----------
 

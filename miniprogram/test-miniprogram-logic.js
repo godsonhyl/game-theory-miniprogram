@@ -2778,8 +2778,9 @@ while (guard++ < 400) {
       'onShowMyCards 房主端 forcePublish（写库指纹穿透，亮牌随下一帧广播）');
     ok(/if \(this\.data\.canDisclose\) this\.setData\(\{ resultModal: null, canDisclose: false, replayDate: 0 \}\);/.test(tableSrc),
       'closeResultModal 关弹窗时复位 canDisclose + replayDate（防下一手残显按钮/残留跳错局）');
-    ok(/bindtap="onPanelDisclose" wx:if="\{\{canDisclose\}\}"/.test(wxmlSrc),
-      'WXML 有「亮一手」入口且由 canDisclose 门控（高光时刻面板内，2026-10-17 收口）');
+    ok(/bindtap="onShowMyCards" wx:if="\{\{canDisclose\}\}"/.test(wxmlSrc) ||
+       /wx:if="\{\{canDisclose\}\}" bindtap="onShowMyCards"/.test(wxmlSrc),
+      'WXML 有「亮一手」入口且由 canDisclose 门控（结算弹窗平铺胶囊行，2026-10-17 二次收口）');
   }
 
   function guardTimerUrgent(tableSrc, wxmlSrc, wxssSrc) {
