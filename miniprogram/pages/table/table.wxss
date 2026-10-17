@@ -615,15 +615,7 @@
 }
 .ab-call { background: linear-gradient(160deg, #35b27b, #1d7a52); }
 .ab-raise { background: linear-gradient(160deg, #f4d78a, #d9a441 60%, #b8791f); color: #1a1a1a; }
-/* 好友房进行中补 bot：行动条上方的小条，居中一个低饱和按钮（不抢主行动条焦点） */
-.add-bot-bar { justify-content: center; margin-top: calc(0.6 * var(--uh)); margin-bottom: calc(-0.4 * var(--uh)); }
-.ab-addbot {
-  flex: 0 0 auto; padding: 0 calc(3 * var(--uw));
-  line-height: calc(7 * var(--uh)); font-size: calc(3.6 * var(--uh)); font-weight: 600;
-  color: rgba(255,255,255,.82); background: rgba(255,255,255,.08);
-  border: 1rpx solid rgba(255,255,255,.18); border-radius: calc(2 * var(--uh));
-}
-.ab-addbot:active { transform: scale(.97); }
+/* add-bot-bar / ab-addbot 已随对局内「添加电脑玩家」入口移除（加 bot 只在等待室） */
 
 /* ---------- 聊天浮层（默认折叠） ---------- */
 .chat-pop {

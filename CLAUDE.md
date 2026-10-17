@@ -22,7 +22,7 @@ npm run upload                  # miniprogram-ci 命令行上传体验版（需 
 npm run preview                 # 仅生成预览包，不上传
 ```
 
-测试全部是自研断言脚本（无 jest/mocha），直接 `node xxx.js` 运行，失败项会打印 label。跑单个测试：`node miniprogram/test-room-sync.js` 或对应 npm script。`npm test` = 9 套件全跑（引擎 test-core / 牌桌页 test-miniprogram-logic / 牌面 test-cards / 云规范 test-cloud-integration / 首页 test-index-logic / 跨设备同步 test-room-sync / SDK test-sdk-load / WXML check-wxml / 打包规则 check-pack-rules），改动后必须过。断言数是硬口径——改动后新增/删除断言要在 commit message 里说明。
+测试全部是自研断言脚本（无 jest/mocha），直接 `node xxx.js` 运行，失败项会打印 label。跑单个测试：`node miniprogram/test-room-sync.js` 或对应 npm script。`npm test` = 11 个脚本全跑，分两类：**行为/格式校验**（引擎 test-core / 牌桌页 test-miniprogram-logic / 牌面 test-cards / 云规范 test-cloud-integration / 首页 test-index-logic / 跨设备同步 test-room-sync / SDK test-sdk-load / JS 语法 check-js-syntax / WXML check-wxml / 打包规则 check-pack-rules）与**云端迁移护栏 check-cloud-migration**（见下）。改动后必须过。断言数是硬口径——改动后新增/删除断言要在 commit message 里说明。
 
 ## 双树结构（易踩坑）
 
@@ -36,7 +36,7 @@ npm run preview                 # 仅生成预览包，不上传
 
 ### 引擎（core/poker-core.js）
 
-纯逻辑德州扑克引擎（UMD 包装，CommonJS + 全局双导出），零 DOM/网络依赖，~1300 行。要点：
+纯逻辑德州扑克引擎（UMD 包装，CommonJS + 全局双导出），零 DOM/网络依赖，~1450 行。要点：
 
 - 牌编码 `0..51`：`rank = id >> 2, suit = id & 3`；金额一律整数筹码。
 - 随机源可注入 seed（xorshift128+），同 seed 同动作序列 → 同结果（事件溯源回放的基础，`game.events` 记录全量）。
@@ -44,7 +44,7 @@ npm run preview                 # 仅生成预览包，不上传
 - `RANK_NAMES`（机读码，定长单字符）与 `RANK_DISPLAY`（UI 显示，T→10）职责严格分离，不可合并——`codeToCard` 等编解码依赖定长。
 - 客户端定位：引擎仅做预渲染与 UI 反馈；现有实现为演示态，权威逻辑跑在「房主端」，上线底线是迁服务端。
 
-### 牌桌页权威/镜像模型（pages/table/table.js，~2900 行，核心页面）
+### 牌桌页权威/镜像模型（pages/table/table.js，~5000 行，核心页面）
 
 - **AI 对战 / 好友房房主端**：引擎跑在本机（权威端）。
 - **好友房好友端（remoteMode）**：不跑引擎，把房主广播的快照镜像成本地 game 对象，按「我 = 本地 0 号位」重映射座位，复用同一套渲染与操作逻辑；动作经 room-sync 上行，房主消化后随下一帧广播。
@@ -76,6 +76,7 @@ npm run preview                 # 仅生成预览包，不上传
 
 - 表：`poker_profiles` / `poker_records`（RLS 按用户隔离）、`poker_rooms`（按房号公开读）、`poker_room_seats`（同步座位）。
 - 登录链路：`wx.login` → `signInWithWechat(code, appid)`，客户端不接触 AppSecret。
+- **写操作 rpc 迁移护栏**：`migrations/` 存服务端函数 SQL；`scripts/check-cloud-migration.js` 静态校验 auth.js 调用的每个 rpc 名都能在 migrations/ 找到 CREATE FUNCTION（防改名失联），`--sql` 打印可粘到云端验证函数真实存在的 SQL（npm test mock 掉 cloud 层，rpc 缺失测不出来——commit ce1516a 的历史事故）。凡是让客户端新增/改调云端 rpc 的改动，必须同步落 migrations/ 并在云端执行。
 - 安全红线：endpoint/publishableKey 是仅有的可放前端的配置；**禁止手写 `wx.request` 访问 `/.cloud/**`**（绕过凭证注入）；insert 不得携带 `owner_id`（服务端 `auth.uid()` 决定）。`test:cloud` 会校验这些规范及隐私声明与实际调用精确一致。
 - 房卡扣减走乐观锁；上线需换服务端事务 + 幂等。
 

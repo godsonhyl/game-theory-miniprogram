@@ -3560,13 +3560,12 @@ while (guard++ < 400) {
       'table.js addBot 仅房主守卫仍在（镜像端好友点按钮被拦）');
     // WXML：对局内**不再**有「添加电脑玩家」入口（2026-10-17 用户反馈反转：
     // 开局后凑人只走真人路径——好友经邀请/房间号进来点空位坐下；加 bot 只在等待室）。
-    // actbar 区（含 myTimerUrgent 行动条起）到页面结束不得出现 addBot 绑定。
     ok(!/actbar add-bot-bar/.test(tableWxml) && !/ab-addbot/.test(tableWxml),
       'table.wxml 对局内已移除「添加电脑玩家」入口（add-bot-bar / ab-addbot 不得出现）');
     // 等待室的入口仍在（唯一合法的加 bot 入口）
     ok(/bindtap="addBot"[\s\S]{0,200}?添加电脑玩家/.test(tableWxml) ||
        /添加电脑玩家[\s\S]{0,60}?bindtap="addBot"/.test(tableWxml),
-      'table.wxml 进行中「添加电脑玩家」按钮绑 addBot');
+      'table.wxml 等待室「添加电脑玩家」按钮绑 addBot（唯一加 bot 入口）');
 
     // ---- 好友房进行中踢 bot（与补 bot 对称，复用「请出」标签入口）----
     // 病根：kickBot 原 `if (phase !== 'waiting') return` 守卫 → 进行中点「请出」

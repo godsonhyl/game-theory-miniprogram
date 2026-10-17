@@ -4798,11 +4798,6 @@ Page({
         this.autoReadyTimer = null;
         if (this.data.readyPhase && !this.data.myReady) this.onReadyTap();
       }, READY_AUTO_SEC * 1000);
-      // 「继续 ▶」快进：亮牌展示期点继续 → 进就绪后立刻替我点就绪
-      if (this.autoReadyNext) {
-        this.autoReadyNext = false;
-        this.onReadyTap();
-      }
     }
   },
 
