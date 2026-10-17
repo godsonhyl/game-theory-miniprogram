@@ -11,7 +11,7 @@
 | `project.config.json` | ✅ `appid: touristappid`、`miniprogramRoot: miniprogram/`、`libVersion: 3.5.5` |
 | `packOptions.ignore` | ✅ 已排除测试文件 / package*.json / node_modules / dist |
 | 云 SDK | ✅ 构建产物内联在 `miniprogram/utils/vendor/workbuddy-cloud-sdk.js`（2026-10-17 起，无需「构建 npm」/npm install） |
-| 云环境配置 | ✅ `endpoint: mp-api.app.workbuddy.host`；应用 ID **不要在此写死**，以 `miniprogram/utils/cloud.js` 的 `publishableKey`（`wbpk_<appId>_…`）为准。2026-10-17 已切换过一次应用（`2qkKI2ZGSh13zUKRFfD8Cm` → `qcAtDwEIzbnS2Bjm1i0ylw`），换应用后必须回到**新**应用上重跑一遍迁移与 rpc 核对，npm test 查不出来 |
+| 云环境配置 | ✅ `endpoint: mp-api.app.workbuddy.host`；应用 ID **不要在此写死**，以 `miniprogram/utils/cloud.js` 的 `publishableKey`（`wbpk_<appId>_…`）为准。2026-10-17 曾短暂切到另一个新建应用（未授权导致登录失败，已回退废弃），换应用后必须回到**新**应用上重跑一遍迁移与 rpc 核对，npm test 查不出来 |
 | 页面声明 | ✅ 3 页，单主包无分包 |
 
 ## 一之二、换云端应用：必做的四件事 ⚠️
@@ -22,7 +22,7 @@
 
 | # | 必做 | 说明 |
 |---|---|---|
-| 1 | **在哪个设备建的应用，就在哪个设备授权** | 应用只注册在创建它的工作区。本机 `cloud_service inspect` 列出的是 `2qkKI2ZGSh13zUKRFfD8Cm` 与 `tW8FJoIcEfNHOzCRKUX7sV`，**新应用 `qcAtDwEIzbnS2Bjm1i0ylw` 不在其中** → 本机 `activate/reuse` 直接 `reuse_not_found`，管不了它，授权只能回原设备做 |
+| 1 | **在哪个设备建的应用，就在哪个设备授权** | 应用只注册在创建它的工作区。本机 `cloud_service inspect` 列出的是 `2qkKI2ZGSh13zUKRFfD8Cm` 与 `tW8FJoIcEfNHOzCRKUX7sV`，2026-10-17 那个新建应用**不在其中** → 本机 `activate/reuse` 直接 `reuse_not_found`，管不了它，授权只能回原设备做 |
 | 2 | 重跑数据库迁移与 rpc 核对 | 新库是空的。`migrations/*.sql` 要重跑，再用 `scripts/check-cloud-migration.js --sql` 的 SQL 验一遍。npm test **查不出这个**（测试 mock 掉 cloud 层） |
 | 3 | 等平台下发新应用的隐私清单 | `.wbapp_<appId>.privacy.json` 按应用下发且被 gitignore 排除，短期内缺失属正常，测试只告警不判失败 |
 | 4 | 真机登录自测一次 | 数据库全绿 ≠ 能登录。授权缺失只在真机第一次登录时暴露 |
