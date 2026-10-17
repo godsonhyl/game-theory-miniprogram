@@ -295,7 +295,7 @@ Page({
     resultModal: null,    // 单手结算弹窗（每人净盈亏）：亮牌展示后弹出
     canDisclose: false,   // 非摊牌赢池「亮一手」入口（仅 fold 结算的获胜者·权威端）
     resultGodView: false, // 已退役：「看全桌牌」开关（2026-10-17 撤销，防旧快照/缓存引用残留时读到 undefined）
-    replayDate: 0,        // G3：结算弹窗弃牌行跳复盘的 replay-store date（0=不可用）
+    replayDate: 0,        // 已退役：G3 弃牌行复盘跳转 date（行内入口 2026-10-17 撤销，留 0 防旧缓存引用）
 
     // 等待室（好友房）：创建房间后为空房间，好友坐下、房主点开始才发牌
     phase: 'playing',     // 'waiting'（空房间）| 'playing'（牌桌）；initGame/等待室会显式设定
@@ -4497,13 +4497,10 @@ Page({
         });
       }
     }
-    // G3：replay-store 最新条对得上本手（handNo 匹配）→ 塞上 replayDate 供弃牌行
-    // 「复盘看牌」点击导航；对不上（快照缓存挤掉/本局未收割）置 0，WXML 隐藏入口。
-    const latestReplay = replayStore.latest();
-    const replayDate = (latestReplay && game && latestReplay.handNo === game.handNo)
-      ? latestReplay.date : 0;
+    // G3 已随行内「复盘看牌」撤销（2026-10-17）退役：replayDate 不再供任何 WXML
+    // 入口消费，结算弹窗打开不再预取 replay-store。复盘统一走胶囊 onReplayTap。
     // 上帝视角已退役（2026-10-17 撤销入口）：弹窗只显示摊牌亮牌（muck 礼仪）
-    this.setData({ resultModal: this.buildResult(game.result), replayDate });
+    this.setData({ resultModal: this.buildResult(game.result) });
     this.clearResultModalTimer();
     this.resultModalTimer = setTimeout(() => {
       this.resultModalTimer = null;
@@ -4528,28 +4525,14 @@ Page({
     this.clearResultTimer();
     this.clearResultModalTimer();
     // 亮牌入口随弹窗收起复位（下一手 showResultModal 会按新局面重算）
-    // G3：replayDate 一并清掉——跨手不得残留上一手的复盘跳转目标
-    if (this.data.canDisclose) this.setData({ resultModal: null, canDisclose: false, replayDate: 0 });
-    else if (this.data.resultModal) this.setData({ resultModal: null, replayDate: 0 });
+    if (this.data.canDisclose) this.setData({ resultModal: null, canDisclose: false });
+    else if (this.data.resultModal) this.setData({ resultModal: null });
     if (proceed && !this.remoteMode && !this.data.readyPhase) this.enterReadyPhase();
   },
 
-  /**
-   * G3（2026-10-17）：结算弹窗弃牌行跳转同手复盘。
-   * 用户痛点最直接——「我弃了，对手到底什么牌」。数据在 replayStore 的
-   * 本手收割记录里；justNow=true 时双条件确认（handNo 匹配 且 与结算时间差小）
-   * 防「上一局结算弹窗已点开但还没关、新局已打完」的错位跳错局。
-   */
-  onRowReplayTap(e) {
-    const date = Number((e && e.currentTarget && e.currentTarget.dataset) ? e.currentTarget.dataset.date : 0);
-    if (!date) return;
-    const rec = replayStore.findByDate(date);
-    if (!rec || rec.handNo !== (game ? game.handNo : -1)) {
-      wx.showToast({ title: '本手复盘未缓存', icon: 'none' });
-      return;
-    }
-    wx.navigateTo({ url: '/pages/replay/replay?date=' + date });
-  },
+  // G3 弃牌行「复盘看牌」小链接已撤销（2026-10-17 用户反馈：摊牌行最后一列
+  // 的查看复盘与底部「复盘这手牌」胶囊重复）——onRowReplayTap 随入口删除，
+  // 复盘跳转统一走 onReplayTap（replayStore.latest 同手校验 + 无缓存 toast）。
 
   /** 「查看结算」入口（结算摘要条 / 就绪条上的按钮）：手动打开结算弹窗 */
   onShowResult() {

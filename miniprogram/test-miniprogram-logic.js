@@ -2779,8 +2779,8 @@ while (guard++ < 400) {
       'onShowMyCards 穿透渲染指纹（reveal 派生 seats[].hole/结算行，否则跳过分支吞掉亮牌）');
     ok(/onShowMyCards\(\)\s*\{[\s\S]{0,1000}?forcePublish\(\)/.test(tableSrc),
       'onShowMyCards 房主端 forcePublish（写库指纹穿透，亮牌随下一帧广播）');
-    ok(/if \(this\.data\.canDisclose\) this\.setData\(\{ resultModal: null, canDisclose: false, replayDate: 0 \}\);/.test(tableSrc),
-      'closeResultModal 关弹窗时复位 canDisclose + replayDate（防下一手残显按钮/残留跳错局）');
+    ok(/if \(this\.data\.canDisclose\) this\.setData\(\{ resultModal: null, canDisclose: false \}\);/.test(tableSrc),
+      'closeResultModal 关弹窗时复位 canDisclose（防下一手残显亮牌按钮；replayDate 已随 G3 行内入口退役不再清理）');
     ok(/bindtap="onShowMyCards" wx:if="\{\{canDisclose\}\}"/.test(wxmlSrc) ||
        /wx:if="\{\{canDisclose\}\}" bindtap="onShowMyCards"/.test(wxmlSrc),
       'WXML 有「亮一手」入口且由 canDisclose 门控（结算弹窗平铺胶囊行，2026-10-17 二次收口）');

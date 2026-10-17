@@ -506,17 +506,15 @@
           <text class="sr-net {{item.net > 0 ? 'up' : (item.net < 0 ? 'down' : '')}}">
             {{item.net > 0 ? '+' + item.net : (item.net < 0 ? item.net : '±0')}}
           </text>
-          <!-- G3：弃牌行短文本区在回放日期就位时附「复盘看牌」链接——
-               用户痛点最直接：「我弃了，对手到底是什么牌」。镜像端（remoteMode）/
-               摊牌行 不显示（前者无 replay 缓存，后者摊牌本就看得到）。 -->
-          <button class="slink" wx:if="{{!remoteMode && replayDate > 0 && !item.win && item.short === '弃牌'}}"
-                  bindtap="onRowReplayTap" data-date="{{replayDate}}">复盘看牌 ›</button>
         </view>
       </view>
 
       <!-- 查看类功能平铺一行（2026-10-17 用户反馈：不要二级弹层，且「看全桌牌」
            与摊牌行的牌面信息重复——撤销该入口）。胶囊即时执行：复盘跳转
-           自己的页、分享起自己的弹层、亮一手写 reveal 后重渲染。 -->
+           自己的页、分享起自己的弹层、亮一手写 reveal 后重渲染。
+           行内「复盘看牌 »」小链接（G3）已随 Capsule 复盘入口收口撤销——
+           底部胶囊已覆盖同手复盘，行内再挂一列「复盘查看」视觉重复（2026-10-17
+           用户反馈：摊牌行最后一列的查看复盘入口与下方胶囊重复）。 -->
       <view class="hl-row">
         <button class="hl-chip" wx:if="{{!remoteMode}}" bindtap="onReplayTap">复盘这手牌</button>
         <button class="hl-chip" bindtap="onShareCardShow">分享高光</button>
