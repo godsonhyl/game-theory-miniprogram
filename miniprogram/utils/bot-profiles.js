@@ -198,6 +198,22 @@ function tellHints(profile) {
   return hints;
 }
 
+/**
+ * 把 AI 角色的 style 折成两字打法标签（P1-7，HUD 徽章）。
+ * 真实牌友嘴里「紧凶/松弱/中稳」是最直觉的两字分类——比 PROFILES 里的
+ * trait（「沉默紧凶」「冷静陷阱」文学化描述）更适合塞进座位徽章。
+ * 这里不存在「正确」阈值，只有一致性：阈值用 0.6/0.4，同 style-analyzer
+ * 折「松/紧」玩家的口径（VPIP_LOOSE≈0.32 / VPIP_TIGHT≈0.20 的同比尺度）。
+ * @param {object} style {aggro, tight}（0..1）——通常是 styleFor 返回值
+ * @returns {string} 两字标签：紧凶/松紧/中稳/松弱/紧弱 等；style 缺失兜底空串
+ */
+function styleTagOf(style) {
+  if (!style || typeof style.aggro !== 'number' || typeof style.tight !== 'number') return '';
+  const tight = style.tight >= 0.6 ? '紧' : (style.tight <= 0.4 ? '松' : '中');
+  const aggro = style.aggro >= 0.6 ? '凶' : (style.aggro <= 0.4 ? '弱' : '稳');
+  return tight + aggro;
+}
+
 module.exports = {
   PROFILES,
   LEVEL_MOD,
@@ -205,5 +221,6 @@ module.exports = {
   profileFor,
   sceneOf,
   pickTalk,
-  tellHints
+  tellHints,
+  styleTagOf
 };

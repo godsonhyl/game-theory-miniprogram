@@ -581,6 +581,9 @@
 .mystk { flex: none; display: flex; flex-direction: column; align-items: flex-end; }
 .ms-v { font-size: calc(4.4 * var(--uh)); font-weight: 800; color: var(--gold); line-height: 1.1; }
 .ms-l { font-size: calc(2.4 * var(--uh)); color: var(--mut); }
+/* P1-7：底部我的筹码区下的 VPIP 小字——字号略小 + 色减淡，挤在「筹码」标注下
+   一句微读牌数据，不抢主信息层级 */
+.ms-vpip { font-size: calc(2.1 * var(--uh)); color: var(--mut); opacity: .85; margin-top: calc(0.3 * var(--uh)); }
 
 /* 行动条：三个大按钮 + 拉大间距（微扑克：防误触）。
  * 高度收紧：11.5uh 足够指尖点击，同时保证在 19.5:9 扁屏上也不把底部顶出视口。 */
@@ -961,6 +964,8 @@
 .hc-s { font-size: calc(2.4 * var(--uh)); margin-top: calc(0.2 * var(--uh)); }
 /* 参与最佳成手 5 张的底牌：金边高亮，一眼看出「为什么他赢」 */
 .hc.hi { border-color: var(--gold); box-shadow: 0 0 0 calc(0.5 * var(--uh)) rgba(232,163,61,.55); }
+/* 上帝视角盖牌：弱化透明——「降级展示」，与 hi 金边形成强对比 */
+.hc.degraded { opacity: 0.55; }
 .hc.s-diamond, .hc.s-heart { color: #d0342c; }
 /* 四色牌模式（根节点 .four-color）：♠黑 / ♣绿 / ♦蓝 / ♥红 */
 .four-color .hc.s-club { color: #1f9d55; }
@@ -1131,6 +1136,11 @@
 /* 就绪阶段座位徽章：已准备 = 金色实底，准备中 = 暗底灰字 */
 .badge.ready { background: var(--gold); color: #1d2b25; }
 .badge.prewait { background: rgba(255, 255, 255, .08); color: rgba(255, 255, 255, .55); }
+/* P1-7：bot 风格标签——不抢状态徽章焦点，底色淡体现「风格提示 & 非状态」 */
+.badge.style {
+  background: rgba(255, 255, 255, .13); color: rgba(255, 255, 255, .78);
+  border: 1rpx solid rgba(255, 255, 255, .22);
+}
 .seat-win {
   position: absolute; top: calc(-3.2 * var(--uh)); left: 50%;
   font-size: calc(2.7 * var(--uh)); color: var(--gold); font-weight: 700; white-space: nowrap;

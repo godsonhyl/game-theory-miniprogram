@@ -116,6 +116,9 @@
           <text class="badge prewait" wx:elif="{{item.ready === false}}">准备中</text>
           <text class="badge allin" wx:if="{{item.allIn}}">ALL-IN</text>
           <text class="badge fold" wx:elif="{{item.folded}}">弃牌</text>
+          <!-- P1-7：bot 两字风格标签（紧凶/松弱/中稳…）。空 state 也渲染（即
+               与已有 badge 不独占）——真人不显示，调 botProfiles.styleTagOf 折算。 -->
+          <text class="badge style" wx:if="{{item.styleTag}}">{{item.styleTag}}</text>
         </view>
 
         <!-- 摊牌后：赢家座位直接飘出赢得的筹码 -->
@@ -303,6 +306,9 @@
           </view>
           <text class="ms-v">{{myStack}}</text>
           <text class="ms-l">筹码</text>
+          <!-- P1-7：滚动 VPIP 小字（仅 AI 局进指纹）。样本不足显示「--」——
+               VPIP 1~2 手方差太大，数据不足时宁空不误导。 -->
+          <text class="ms-vpip" wx:if="{{mode === 'ai'}}">VPIP {{myVpipPct}}%</text>
         </view>
       </view>
 
@@ -477,9 +483,10 @@
           <text class="sr-name">{{item.icon}}{{item.name}}</text>
           <!-- 摊牌手牌：亮牌者的两张底牌（迷你牌面）。
                弃牌者不亮牌 → item.cards 为空，占位宽度靠 .sr-cards 固定住，列不错位。
-               金边 = 该牌参与了最佳成手 5 张，一眼看出赢在哪。 -->
+               金边 = 该牌参与了最佳成手 5 张，一眼看出赢在哪。
+               上帝视角（看全桌牌）开启时：盖牌降级构建为弱化版（无金边、加 degraded 斜体）。 -->
           <view class="sr-cards">
-            <view class="hc {{c.cls}} {{c.hi ? 'hi' : ''}}" wx:for="{{item.cards}}" wx:for-item="c" wx:key="idx">
+            <view class="hc {{c.cls}} {{c.hi ? 'hi' : ''}} {{c.degraded ? 'degraded' : ''}}" wx:for="{{item.cards}}" wx:for-item="c" wx:key="idx">
               <text class="hc-r">{{c.rank}}</text>
               <text class="hc-s">{{c.suit}}</text>
             </view>
@@ -495,6 +502,9 @@
         <button class="btn-ghost sbtn" bindtap="onReplayTap" wx:if="{{!remoteMode}}">复盘</button>
         <!-- 非摊牌赢池自愿亮牌（muck 礼仪之外的选择权，仅 fold 结算获胜者可见） -->
         <button class="btn-ghost sbtn" bindtap="onShowMyCards" wx:if="{{canDisclose}}">亮一手</button>
+        <!-- 上帝视角（P1-5）：真实牌桌「你可以要求看」，默认关（muck 礼仪）。
+             镜像端无未摊牌玩家 hole 不显示。 -->
+        <button class="btn-ghost sbtn" bindtap="onToggleGodView" wx:if="{{!remoteMode}}">{{resultGodView ? '隐藏全桌牌' : '看全桌牌'}}</button>
         <!-- 批⑦：高光分享入口（有高光存档时显示） -->
         <button class="btn-ghost sbtn" bindtap="onShareCardShow">分享高光</button>
         <button class="btn-primary sbtn" bindtap="onResultNext">{{remoteMode || readyPhase ? '知道了' : '下一手'}}</button>

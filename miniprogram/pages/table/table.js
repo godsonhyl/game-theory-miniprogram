@@ -2687,8 +2687,12 @@ Page({
     // 放在 startHand 成功后：此时游戏对象字段（stack/folded）已就绪。
     if (this.mode === 'sng') this._sngDetectEliminations();
     // 批⑨：startHand 边界——上手机人类若行动过，计入已统计手数并重置本手标记。
-    // 仅 expert：小样本（<3 手）不注入 tight，避免噪音主导。SNG 终局 r.ok=false 分支已在上方 return，不计数。
-    if (this.mode === 'ai' && this.level === 'expert' && this._humanActedThisHand) {
+    // P1-7（2026-10-17）：守卫从『仅 expert』放宽到『所有 AI 局』——统计不改决策，
+    // 把 VPIP 收进 HUD（myzone 小字显示）对 rookie/advanced 玩家同样是成长的指导。
+    // 仅 expert：**决策层的** _adjustTightByVpip 仍要求 level==='expert' 与 ≥3 手样本
+    // （见 scheduleAI 处守卫），避免新手被自家 1~2 手噪音引导的错反制。
+    // SNG 终局 r.ok=false 分支已在上方 return，不计数。
+    if (this.mode === 'ai' && this._humanActedThisHand) {
       this._humanVpipHands++;
       this._humanActedThisHand = false;
     }
@@ -2949,7 +2953,10 @@ Page({
         // P0-1：AI 桌输光/练习模式开关——派生 myAIBusted/aiUnlimitedTip 由二者驱动，
         // 不进指纹则设置切换或筹码归零瞬间的 mytip 切换会被跳过分支吞掉
         (this.mode === 'ai' && this.aiUnlimited) ? 'u' : '',
-        (this.mode === 'ai' && !this.aiUnlimited && mePre && mePre.stack <= 0) ? 'b' : ''
+        (this.mode === 'ai' && !this.aiUnlimited && mePre && mePre.stack <= 0) ? 'b' : '',
+        // P1-7：我的 VPIP 显示随每手边界更新（手数变 → 百分比变）。仅 AI 局
+        // 入指纹——好友/匹配对局计算会泄露对手读人细节到 HUD（社交禁忌）。
+        (this.mode === 'ai' ? 'v' + this._humanVpipHands + ':' + this._humanVpipCount : '')
       ].join('#');
       if (this._lastRenderFp === fp) {
         this._renderTail();
@@ -3079,6 +3086,13 @@ Page({
           // 等待室走 buildWaitSeats 自带 isBot，进行中座位对象此前未带，
           // 会导致 wxml:149 的 `item.isBot` 判空，「请出」在牌局中根本不显示。
           isBot: !!this.botSeats[p.seat],
+          // P1-7 HUD 徽章：bot 风格折两字（紧凶/松弱/中稳），随座位对象每帧重建，
+          // 同 isBot 不进指纹（isBot/p.style 在牌桌生命周期内不变，座位对象整体
+          // 换出才是换人格触发重算；引擎 aiDecide 本身不改 style，故静态）。
+          // 真人（isMe/好友）不显示——风格建在别人画像上是 muck 礼仪之外的越权。
+          styleTag: (!!this.botSeats[p.seat] && p.style)
+            ? botProfiles.styleTagOf(p.style)
+            : '',
           ready: readyPhase ? readyFlag : null,
           // 对手底牌：平时不展示（德扑常识），仅摊牌时亮出；我在底部 myzone 单独展示
           cardsBack,
@@ -3113,6 +3127,14 @@ Page({
       // 被跳过分支吞掉；只在对应分支显示，不会并存——后写即终值。
       const myAIBusted = this.mode === 'ai' && !this.aiUnlimited && !!meP && meP.stack <= 0;
       const aiUnlimitedTip = this.mode === 'ai' && this.aiUnlimited && (readyPhase || !!result) && !myAIBusted;
+
+      // P1-7 HUD：我的 VPIP 小字。AI 桌都显示（守卫已放宽——统计与反制同口径，
+      // 反制仍是 expert 专属）。样本<5 手显示「--」（VPIP 1~2 手的方差没意义，
+      // 反而误导）。字符串派生自纯实例字段：_humanVpipHands/_humanVpipCount
+      // 在第 startHand 边界累加、doAct 时累可自愿入池计数。指纹段见下。
+      const myVpipPct = (this.mode === 'ai' && this._humanVpipHands >= 5)
+        ? String(Math.round(this._humanVpipCount / this._humanVpipHands * 100))
+        : '--';
 
       // 操作区（站起观战时不参与行动）
       const isMyTurn = game.actionSeat === this.mySeat && !result && !standing;
@@ -3221,7 +3243,9 @@ Page({
         resultModal: result ? this.data.resultModal : null,
         // P0-1：AI 桌输光/练习模式提示（已入指纹，见上）
         myAIBusted: myAIBusted,
-        aiUnlimitedTip: aiUnlimitedTip
+        aiUnlimitedTip: aiUnlimitedTip,
+        // P1-7：底部我的筹码区下的 VPIP 小字（已入指纹，见上）
+        myVpipPct: (this.mode === 'ai') ? myVpipPct : ''
       });
       // 主 setData 成功 → 现在置位指纹。异常帧（走下面 catch）不更新 _lastRenderFp，
       // 下一帧同势 render 会重试，降级态不致卡死。
@@ -4295,9 +4319,10 @@ Page({
       wx.showToast({ title: res.error, icon: 'none' });
       return;
     }
-    // 批⑨：AI 读人反制——翻前自愿入池计数（仅 expert）。
+    // 批⑨：AI 读人反制——翻前自愿入池计数。P1-7（2026-10-17）放宽守卫到所有 AI 局
+    // （HUD 徽章需统计 VPIP —— 与反制决策同口径同分母）。ai_rookie/advanced 仅统计不反制。
     // 口径同 style-analyzer：blind/check 不计，call/raise/allin 计入自愿入池。
-    if (this.mode === 'ai' && this.level === 'expert' && streetBefore === P.STREET.PREFLOP) {
+    if (this.mode === 'ai' && streetBefore === P.STREET.PREFLOP) {
       if (action === 'call' || action === 'raise' || action === 'allin') this._humanVpipCount++;
       this._humanActedThisHand = true;
     }
@@ -4388,7 +4413,8 @@ Page({
         });
       }
     }
-    this.setData({ resultModal: this.data.result });
+    // 上帝视角（P1-5）默认关：muck 礼仪——每手新开结算弹窗都回到「只看摊牌」
+    this.setData({ resultModal: this.data.result, resultGodView: false });
     this.clearResultModalTimer();
     this.resultModalTimer = setTimeout(() => {
       this.resultModalTimer = null;
@@ -4948,5 +4974,22 @@ Page({
     this.pushChat(this.mySeat, this.meLabel(false), '亮出底牌 ' +
       me.hole.map(c => P.cardToStr(c)).join(' ') + '（' + e.name + '）');
     this.render();
+  },
+
+  /**
+   * 结算弹窗「看全桌牌」开关（P1-5，玩家审视 2026-10-17）：
+   * 真实牌桌你可以要求看——数据本就在权威端 p.hole 里，只是默认按 muck 礼仪不亮。
+   * 开关只触发局部 setData 重建弹窗 rows，不走全局渲染指纹（弹窗开时 render 已停、
+   * 弹窗 rows 不在 _lastRenderFp 主路径）。镜像端直接隐藏按钮——好友快照不含
+   * 未摊牌玩家 hole，本地无数据可降级。
+   */
+  onToggleGodView() {
+    if (this.remoteMode) return;
+    if (!game || !game.result || !this.data.resultModal) return;
+    const next = !this.data.resultGodView;
+    this.setData({
+      resultGodView: next,
+      resultModal: this.buildResult(game.result, { revealAll: next })
+    });
   }
 });
