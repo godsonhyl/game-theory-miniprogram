@@ -21,8 +21,10 @@ const botProfiles = require('../../utils/bot-profiles'); // AI 角色档案：5 
 const styleAnalyzer = require('../../utils/style-analyzer'); // 风格分析：analyzeOpponent 给对手画像页用（批⑥）
 
 /**
- * 单次行动倒计时（秒）：计时环按此值计算进度。
- * 远端好友的行动超时更长（SYNC.ACTION_TIMEOUT_SEC），由房主端代弃牌防卡死。
+ * 单次行动倒计时（秒）：计时环按此值计算进度，且在远端模式下与
+ * SYNC.ACTION_TIMEOUT_SEC 同口径——好友房里本地环走到 0 的时刻即房主 30s 代弃
+ * 生效的时刻，UI 与权威端不再「说两个数」（好友本地环走完却还要干等 10s）。
+ * 单机模式（AI/SNG）保持 20s 快节奏不变。
  */
 const TICK_MAX = 20;
 
@@ -283,7 +285,7 @@ Page({
     buyInValue: DEFAULT_BUY_IN,
     buyInOptions: BUY_IN_OPTIONS.map(v => ({ v: v, t: String(v) })),
 
-    // 行动计时环
+    // 行动计时环（render 里随模式刷新：remote 30s / 单机 20s，供 wxml 与测试读）
     timerMax: 20,
 
     // 我的区域（微扑克式：手牌与操作集中在屏幕下半区）
@@ -2807,6 +2809,8 @@ Page({
       // _renderTail（结算调度 + 广播），防漏调度。forcePublish 不动本指纹，靠
       // handNo/street 等实质字段变化自然令指纹不同。
       const g = game;
+      // 超时口径按模式取（remote 30s / 单机 20s）：timerPct/timerUrgent 均 from tickMax
+      const tickMax = this.timerMax();
       const fp = [
         g.handNo, g.street, g.potTotal(), g.currentBet, g.actionSeat,
         (g.board || []).join(','),
@@ -2962,7 +2966,7 @@ Page({
           // 摊牌后赢家座位直接飘出赢得的筹码数（WPK 式结算反馈）
           winGain: isWinner ? result.awards.filter(a => a.seat === p.seat).reduce((s, a) => s + a.amount, 0) : 0,
           timer: !readyPhase && game.actionSeat === p.seat ? tick : '',
-          timerPct: !readyPhase && game.actionSeat === p.seat ? Math.round(tick / TICK_MAX * 100) : 0,
+          timerPct: !readyPhase && game.actionSeat === p.seat ? Math.round(tick / tickMax * 100) : 0,
           // 最后 5s 计时环转红脉冲（仅当前行动座位，与我回合 actbar.urgent 同阈值）
           timerUrgent: !readyPhase && game.actionSeat === p.seat && tick <= 5 && tick > 0,
           actText: !readyPhase && p.seat === this.mySeat ? myActText : '',
@@ -3068,7 +3072,7 @@ Page({
         myFolded: meP ? !!meP.folded : false,
         myActive: game.actionSeat === this.mySeat && !result,
         myTimer: game.actionSeat === this.mySeat ? tick : '',
-        myTimerPct: game.actionSeat === this.mySeat ? Math.round(tick / TICK_MAX * 100) : 0,
+        myTimerPct: game.actionSeat === this.mySeat ? Math.round(tick / tickMax * 100) : 0,
         // 轮到我最后 5s：行动条整体紧迫脉冲（与座位计时环 timerUrgent 同阈值）
         myTimerUrgent: game.actionSeat === this.mySeat && !result && tick <= 5 && tick > 0,
         myDealer: game.dealerSeat === this.mySeat,
@@ -3078,6 +3082,9 @@ Page({
         myActCls: myActCls,
         currentPlayerName: curPlayer ? curPlayer.name : '',
         result: result ? this.buildResult(result) : null,
+        // 超时上限随模式入 setData（remote 30s / 单机 20s）——timerPct 的分母，
+        // 也让 wxml/测试可读；数值由 this.timerMax() 派生，不进指纹（模式不变即常量）
+        timerMax: tickMax,
         // 结算清空时同步收起弹窗（新一手/回等待室），有结算时保留现状
         resultModal: result ? this.data.resultModal : null
       });
@@ -4602,16 +4609,27 @@ Page({
 
   // ---------- 计时器 ----------
   /**
-   * 行动计时环（20s）。tick 是「本回合残值」的全局单值（TICK_MAX 起倒数）：
+   * 行动计时环。tick 是「本回合残值」的全局单值（tickMax 起倒数）：
    *   - 轮到我 → 残值写到 myTimer/myTimerPct（myzone 专属字段，每秒 setData）；
    *   - 轮到对手 → 残值只进整帧 render 的 seats[].timer；本回调**不**写对手
    *     字段——曾经每秒把我的残值 setData 给对手计时环（评审 2026-10-15
    *     MEDIUM），导致「对手环用我的剩余秒数跳」；对手环等下一帧 render 刷新，
    *     牺牲的流畅度换正确性（对手到点由房主 30s 代弃兜底，不依赖本地环）。
+   *
+   * tickMax 按模式取值（超时口径统一，评审玩家反馈）：
+   *   - 单机（AI/SNG）：TICK_MAX=20s 快节奏不变；
+   *   - 好友房：roomSync.SYNC.ACTION_TIMEOUT_SEC=30s——本地环走到 0 的时刻必须
+   *     就是房主代弃生效的时刻，否则好友端「环走完了还在干等」且 UI 与权威端
+   *     说两个数（20s 环 vs 30s 代弃曾是双常量错位）。单机不受影响。
    */
+  timerMax() {
+    return this.remoteMode ? roomSync.SYNC.ACTION_TIMEOUT_SEC : TICK_MAX;
+  },
+
   startTimer() {
     if (timer) clearInterval(timer);
-    tick = TICK_MAX;
+    const tickMax = this.timerMax();
+    tick = tickMax;
     this.sfxWarnedTick = 0;   // 倒计时警告已播到的 tick 值（0=未播），防每秒重复
     timer = setInterval(() => {
       tick--;
@@ -4619,7 +4637,7 @@ Page({
         // 我已移出 seats 数组（渲染在底部 myzone），计时写到我的专属字段
         this.setData({
           myTimer: tick,
-          myTimerPct: Math.max(0, Math.round(tick / TICK_MAX * 100)),
+          myTimerPct: Math.max(0, Math.round(tick / tickMax * 100)),
           // 最后 5s：行动条紧迫脉冲（与座位计时环 timerUrgent、5s/3s 警告音同阈值）
           myTimerUrgent: tick <= 5 && tick > 0
         });
@@ -4636,7 +4654,7 @@ Page({
         if (actIdx >= 0) {
           this.setData({
             ['seats[' + actIdx + '].timer']: tick,
-            ['seats[' + actIdx + '].timerPct']: Math.max(0, Math.round(tick / TICK_MAX * 100)),
+            ['seats[' + actIdx + '].timerPct']: Math.max(0, Math.round(tick / tickMax * 100)),
             ['seats[' + actIdx + '].timerUrgent']: tick <= 5 && tick > 0
           });
         }

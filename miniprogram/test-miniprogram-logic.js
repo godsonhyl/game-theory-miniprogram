@@ -1278,6 +1278,7 @@ while (guard++ < 400) {
   /* ---------- 对手计时环不显示我的残值（评审 MEDIUM UI 细节回归）---------- */
   {
     guardTimerNoResidue(tableSrc);
+    guardTimerMaxUnified(tableSrc);
   }
 
   /* ---------- 行动计时最后 5s 视觉强化（红+脉冲，与警告音同阈值）---------- */
@@ -2651,6 +2652,19 @@ while (guard++ < 400) {
       '对手回合按行动座位局部 setData seats[actIdx].timer（消除跳秒）');
     ok(/timer: !readyPhase && game\.actionSeat === p\.seat \? tick : ''/.test(tableSrc),
       '对手环只在行动座位显示 tick（非行动座位为空串，环隐藏）');
+  }
+
+  /* 超时口径统一（玩家审视 2026-10-17）：remote 模式本地计时环与房主 30s 代弃同源。
+   * 此前本地环 20s 走完后好友端还要干等 10s 才被代弃——UI 与权威端说两个数。 */
+  function guardTimerMaxUnified(tableSrc) {
+    ok(/timerMax\(\)\s*\{\s*return this\.remoteMode \? roomSync\.SYNC\.ACTION_TIMEOUT_SEC : TICK_MAX;?\s*\}/.test(tableSrc),
+      'timerMax() 按模式取超时上限：remote 走 ACTION_TIMEOUT_SEC、单机走 TICK_MAX（同源不分叉）');
+    const stBody = (tableSrc.match(/startTimer\(\)\s*\{[\s\S]*?1000\);\r?\n  \}/) || [''])[0];
+    ok(/const tickMax = this\.timerMax\(\)/.test(stBody),
+      'startTimer 初值取 timerMax()（remote 30s / 单机 20s）');
+    ok(!/tick = TICK_MAX;/.test(tableSrc),
+      '不再有硬编码 tick = TICK_MAX（口径由 timerMax() 单点供给）');
+    ok(/tick \/ tickMax \* 100/.test(stBody), '计时环百分比按 tickMax 归一（remote 环走满 30s）');
   }
 
   function guardTimerUrgent(tableSrc, wxmlSrc, wxssSrc) {
