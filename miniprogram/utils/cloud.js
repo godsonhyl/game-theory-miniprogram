@@ -17,14 +17,15 @@ const { createDiagnosticWx } = require('./workbuddy-cloud-diagnostics');
 // ↓↓↓ 云服务开通后由平台下发，请勿手工修改或提交到公开仓库 ↓↓↓
 const PUBLIC_CONFIG = {
   endpoint: 'https://mp-api.app.workbuddy.host',
-  // ⚠️ 2026-10-17：应用为 wbapp_qcAtDwEIzbnS2Bjm1i0ylw（远端 5c41c45 切换）。
-  // 该应用由另一台设备创建，**只注册在那台设备的工作区**，本机会话里查不到
-  // （cloud_service inspect 只列出 2qkKI2ZGSh13zUKRFfD8Cm / tW8FJoIcEfNHOzCRKUX7sV），
-  // 因此本机既无法管理它，也拿不到它下发的隐私清单。
-  // 真机登录报「小程序未授权给 WorkBuddy」（服务端 /v1/login-wechat 返回，
-  // 非本地文案）→ 授权绑定在平台侧完成，**必须在创建它的那台设备上做**。
-  // 切换应用 = 换库 + 需重新授权，见 DEPLOY-体验版.md「换云端应用」。
-  publishableKey: 'wbpk_qcAtDwEIzbnS2Bjm1i0ylw_b5AmIjzcKc5jQPnyHJfwpfV4dGG11IPP'
+  // ⚠️ 2026-10-17 临时回退到 wbapp_2qkKI2ZGSh13zUKRFfD8Cm（旧应用，已授权且有
+  // 历史数据：档案 7 / 战绩 908 / 房间 54 / 座位 79 / 流水 8）。
+  // 原因：远端 5c41c45 切到 wbapp_qcAtDwEIzbnS2Bjm1i0ylw，但该应用**只注册在
+  // 创建它的那台设备的工作区**，本机 cloud_service 查不到（activate/reuse →
+  // reuse_not_found），本机管不到它；真机登录报「小程序未授权给 WorkBuddy」
+  // （服务端 /v1/login-wechat 返回，非本地文案），授权须回原设备做。
+  // 新应用 5 表全 0 行，切回旧应用零数据损失。
+  // 待授权完成后可切回新应用，届时须在新应用上重跑 migrations 与 rpc 核对。
+  publishableKey: 'wbpk_2qkKI2ZGSh13zUKRFfD8Cm_72rqo2gDsN0YTv64Kn69YK7miDGvZLFT'
 };
 // ↑↑↑ ↑↑↑
 
