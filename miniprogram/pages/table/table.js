@@ -2949,6 +2949,10 @@ Page({
           isSB: game.sbSeat === p.seat,
           isBB: game.bbSeat === p.seat,
           isMe,
+          // 批：进行中「请出」标签复用此座位对象，isBot 必须带——
+          // 等待室走 buildWaitSeats 自带 isBot，进行中座位对象此前未带，
+          // 会导致 wxml:149 的 `item.isBot` 判空，「请出」在牌局中根本不显示。
+          isBot: !!this.botSeats[p.seat],
           ready: readyPhase ? readyFlag : null,
           // 对手底牌：平时不展示（德扑常识），仅摊牌时亮出；我在底部 myzone 单独展示
           cardsBack,

@@ -3454,6 +3454,11 @@ while (guard++ < 400) {
       'table.js applyPendingSeats ④ 踢 bot 前先 push leftPlayers（结算单账面不缺口）');
     ok(/pendingKickBots[\s\S]{0,500}?game\.players\s*=\s*game\.players\.filter/.test(tableSrc),
       'table.js applyPendingSeats ④ 把 bot 从 game.players 过滤移出');
+    // 进行中座位对象必须带 isBot——等待室走 buildWaitSeats 自带 isBot，
+    // 进行中座位对象此前未带，会导致 wxml:149 的 item.isBot 判空、
+    // 「请出」标签在牌局中根本不显示（补 bot 能加、踢 bot 入口却看不见）。
+    ok(/isBot:\s*!!this\.botSeats\[p\.seat\]/.test(tableSrc),
+      'table.js 进行中座位对象带 isBot（来自 botSeats，否则「请出」标签牌局中不显示）');
     // WXML：「请出」标签门控放宽到 playing（好友房），复用同一入口不新增按钮
     ok(/isBot && isOwner && \(phase === 'waiting' \|\| \(phase === 'playing' && mode === 'friend'\)\)/.test(tableWxml),
       'table.wxml 「请出」标签门控含 playing+friend（复用既有入口踢 bot，不新增按钮）');
@@ -3788,6 +3793,20 @@ while (guard++ < 400) {
     ok(!!game, '好友房踢 bot 前置：module 级 game 已建');
     const botSeats = (game.players || []).filter(p => !p.isHuman).map(p => p.seat);
     ok(botSeats.length >= 2, '在座 bot ≥2（待踢目标），实际 ' + botSeats.length);
+
+    // 进行中座位对象必须带 isBot——否则 wxml:149 的 item.isBot 判空、
+    // 「请出」标签牌局中根本不显示（补 bot 能加、踢 bot 入口却看不见）。
+    // 触发一次 render 取 seats 数据，校验 bot 座位 isBot=true、真人 isBot=false。
+    pageCtx.render();
+    const seatRows = (dataStore.seats || []).filter(s => s.seat === botSeats[0]);
+    ok(seatRows.length >= 1 && seatRows[0].isBot === true,
+      '★ 进行中 render 后 bot 座位 isBot=true（「请出」标签据此显示），实际 ' +
+      JSON.stringify((seatRows[0] || {}).isBot));
+    const myRow = (dataStore.seats || []).filter(s => s.seat === pageCtx.mySeat);
+    ok(myRow.length >= 1 && myRow[0].isBot === false,
+      '进行中 render 后真人座位 isBot=false（不会被误挂「请出」），实际 ' +
+      JSON.stringify((myRow[0] || {}).isBot));
+
     const before = (game.players || []).length;
     const leftBefore = (pageCtx.leftPlayers || []).length;
     const kickSeat = botSeats[0];
