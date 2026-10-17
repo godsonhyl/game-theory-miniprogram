@@ -3979,13 +3979,23 @@ Page({
     // 击中了公共牌的哪几张」。数据即 game.board 机读 id，过 cardData 克隆（防 hi
     // 残留污染缓存）。翻前弃牌局 board 为空 → 该行 board 为空数组，WXML 不渲染条；
     // 摊牌失败方/弃牌者 bestIds 为空 → 公共牌全亮但无高亮（muck 玩家无依据可标）。
+    // G4（2026-10-17）：公共牌按街分桶——翻牌 0-2 / 转牌 3 / 河牌 4。新手对折起来
+    // 的 5 张常分不清「转牌发的是哪一张」（而读牌故事恰恰靠讲街次）。桶标签只在
+    // 确有该街时加入（翻前无人看牌 board 为空 → 三桶均空 → WXML 整段不渲染）。
     const boardIds = (game.board || []);
+    const streetLabels = ['翻牌', '转牌', '河牌'];
+    // 每街的切片区间（闭区间末端）：flop=[0,3) turn=[3,4) river=[4,5)
+    const streetRanges = [[0, 3], [3, 4], [4, 5]];
     rows.forEach(r => {
-      r.board = boardIds.map((id, i) => {
+      const all = boardIds.map((id, i) => {
         const d = this.cardData(id, i + 100);   // idx +100 避开与底牌 hc 段同 key 撞缓存
-        d.hi = r.bestIds.has(id);
-        return d;
+        d.hi = r.bestIds.has(id); return d;
       });
+      r.board = all;
+      r.boardBuckets = streetRanges.map((rg, si) => ({
+        label: streetLabels[si],
+        cards: all.slice(rg[0], rg[1])
+      })).filter(b => b.cards.length > 0);
     });
 
     // 我的座位可能因云端行滞后/他端换座而不在引擎里（seatOf 取不到），

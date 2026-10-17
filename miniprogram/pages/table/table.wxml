@@ -494,12 +494,16 @@
             </view>
             <text class="sr-hand">{{item.short}}</text>
           </view>
-          <!-- 公共牌条：本手 5 张全亮（翻前三张 / 转牌 / 河牌），金边 = 该玩家
-               击中的公共牌（参与其最佳成手 5 张）。翻前走人 board 为空不渲染。 -->
+          <!-- 公共牌条（G4 街分桶）：本手 5 张按街分组——翻牌 3 张/转牌 1 张/河牌 1 张，
+               每街前置小标签。金边 = 该玩家击中的公共牌（参与其最佳成手 5 张）。
+               翻前走人 board 为空 → buckets 全空 → 整段不渲染。 -->
           <view class="sr-board" wx:if="{{item.board.length}}">
-            <view class="hc bc {{c.cls}} {{c.hi ? 'hi' : ''}}" wx:for="{{item.board}}" wx:for-item="c" wx:key="idx">
-              <text class="hc-r">{{c.rank}}</text>
-              <text class="hc-s">{{c.suit}}</text>
+            <view class="sr-bucket" wx:for="{{item.boardBuckets}}" wx:for-item="b" wx:key="label">
+              <text class="sr-bl">{{b.label}}</text>
+              <view class="hc bc {{c.cls}} {{c.hi ? 'hi' : ''}}" wx:for="{{b.cards}}" wx:for-item="c" wx:key="idx">
+                <text class="hc-r">{{c.rank}}</text>
+                <text class="hc-s">{{c.suit}}</text>
+              </view>
             </view>
           </view>
           <text class="sr-net {{item.net > 0 ? 'up' : (item.net < 0 ? 'down' : '')}}">

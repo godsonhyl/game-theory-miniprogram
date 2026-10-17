@@ -2290,6 +2290,14 @@ while (guard++ < 400) {
       'buildResult 给每行派生 bestIds（参与最佳成手 5 张的 id 集，供公共牌行高亮）');
     ok(wxmlSrc.indexOf('item.board') >= 0,
       'WXML 用 item.board 渲染公共牌条（每行随底牌块同行展示）');
+    // G4（2026-10-17）：公共牌条按街分桶——翻牌/转牌/河牌三段带前置标签
+    ok(tableSrc.indexOf('boardBuckets') >= 0 && tableSrc.indexOf("['翻牌', '转牌', '河牌']") >= 0,
+      'buildResult 派生 boardBuckets（三段街分桶，标签翻牌/转牌/河牌）');
+    ok(wxmlSrc.indexOf('sr-bucket') >= 0 && wxmlSrc.indexOf('sr-bl') >= 0 &&
+      wxmlSrc.indexOf('item.boardBuckets') >= 0,
+      'WXML 用街分桶渲染公共牌条（sr-bucket/sr-bl + item.boardBuckets）');
+    ok(wxssSrc.indexOf('.sr-bucket') >= 0 && wxssSrc.indexOf('.sr-bl') >= 0,
+      'WXSS 街分桶样式齐备（.sr-bucket/.sr-bl）');
     ok(wxmlSrc.indexOf('wx:elif="{{result}}"') >= 0,
       '结算摘要条与就绪条互斥切换（亮牌期不出现逐人盈亏胶囊）');
   }

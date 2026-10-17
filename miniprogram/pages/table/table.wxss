@@ -967,10 +967,20 @@
 .hc-s { font-size: calc(2.4 * var(--uh)); margin-top: calc(0.2 * var(--uh)); }
 /* 参与最佳成手 5 张的底牌：金边高亮，一眼看出「为什么他赢」 */
 .hc.hi { border-color: var(--gold); box-shadow: 0 0 0 calc(0.5 * var(--uh)) rgba(232,163,61,.55); }
-/* G2 公共牌条：尺寸同 .hc 但视觉层级靠底色区分——公共牌条用暖灰调（提示「这是
-   台面，不是他的底牌」），hi 金边与底牌同口径保持「参与成手 = 高亮」的全局一致性 */
+/* G2/G4 公共牌条（街分桶）：尺寸同 .hc 但视觉层级靠底色区分——公共牌条用暖灰调
+   （提示「这是台面，不是他的底牌」），hi 金边与底牌同口径保持「参与成手 = 高亮」
+   的全局一致性。桶内 3 段之间空开（桶标签「翻牌/转牌/河牌」前置），读牌者一眼
+   区分每张牌是哪一街发出来的——新手常把 5 张搅成一锅。 */
 .sr-board { flex: 1; display: flex; align-items: center; justify-content: flex-start;
-  gap: calc(0.6 * var(--uw)); margin: 0 calc(1.2 * var(--uw)); min-width: 0; overflow: hidden; }
+  gap: calc(1.2 * var(--uw)); margin: 0 calc(1.2 * var(--uw)); min-width: 0; overflow: hidden; }
+.sr-bucket { display: flex; align-items: center; gap: calc(0.5 * var(--uw)); flex: none; }
+.sr-bl {
+  font-size: calc(2.0 * var(--uh)); color: var(--mut); opacity: .85;
+  letter-spacing: calc(0.06 * var(--uh)); flex: none;
+  /* 与 hc 居中对齐——hc 高度 ~5uh，sr-bl 单行 ~2uh，自然垂直居中 */
+  padding: calc(0.4 * var(--uh)) calc(0.6 * var(--uw));
+  background: rgba(255,255,255,.05); border-radius: calc(0.4 * var(--uh));
+}
 .sr-board .hc.bc { background: linear-gradient(160deg, #f5f0e2, #dcd4be); }
 /* 上帝视角盖牌：弱化透明——「降级展示」，与 hi 金边形成强对比 */
 .hc.degraded { opacity: 0.55; }
