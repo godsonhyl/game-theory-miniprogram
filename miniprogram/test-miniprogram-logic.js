@@ -662,16 +662,40 @@ while (guard++ < 400) {
     ok(dataStore.pot === 30, '新一手底池重置为 30，实际 ' + dataStore.pot);
   }
 
-  /* ---------- 微扑克式分区：折叠面板 ---------- */
-  ok(dataStore.chatOpen === false && dataStore.menuOpen === false, '聊天与菜单默认折叠（不抢占主视觉）');
-  ok(Array.isArray(dataStore.raisePresets) && dataStore.raisePresets.length === 7,
-    '加注档位 7 档（最小 / 33% / 50% / 67% / 100% / 全下 / 自定义）');
+  /* ---------- 加注档位按街切换（资深玩家评审 2026-10-17：档位说错了扑克的语言）----------
+   * 翻前 BB 语言 6 档（最小 / 2.5BB / 3BB / 4BB / 全下 / 自定义）、
+   * 翻后池比例语言 7 档（最小 / 33% / 50% / 67% / 100% / 全下 / 自定义）。
+   * render 按 game.street 重建，切街自然切换。 */
+  ok(Array.isArray(dataStore.raisePresets) && dataStore.raisePresets.length === 6,
+    '翻前加注档位 6 档（最小 / 2.5BB / 3BB / 4BB / 全下 / 自定义）');
   ok(Array.isArray(dataStore.raisePresets) &&
-    dataStore.raisePresets[6].k === 'custom' && dataStore.raisePresets[6].t === '自定义',
-    '第 7 档为「自定义」入口（展开盲注步进的金额面板）');
+    dataStore.raisePresets[5].k === 'custom' && dataStore.raisePresets[5].t === '自定义',
+    '翻前末档为「自定义」入口（展开盲注步进的金额面板）');
   ok(Array.isArray(dataStore.raisePresets) &&
-    dataStore.raisePresets.slice(1, 5).map(x => x.k).join(',') === 'p33,p50,p67,p100',
-    '中间四档为百分比 sizing（33/50/67/100%），可横向比较');
+    dataStore.raisePresets.slice(1, 4).map(x => x.k).join(',') === 'bb25,bb30,bb40' &&
+    dataStore.raisePresets.slice(1, 4).map(x => x.t).join(',') === '2.5BB,3BB,4BB',
+    '翻前中间三档为 BB 倍数语言（open sizing 的行话是 bb 而非池比例）');
+  {
+    // 换 game 会打断模块级单例——改用「数据可信、函数直接调」：
+    // presetsForStreet / presetTarget 都是非游戏状态依赖，拿页面闭包直接断言。
+    eq(pageCtx.presetsForStreet(P.STREET.FLOP).map(x => x.k).join(','),
+      'min,p33,p50,p67,p100,allin,custom',
+      '翻后档位表：7 档池比例（33/50/67/100%），custom 末位');
+    eq(pageCtx.presetsForStreet(P.STREET.PREFLOP).map(x => x.k).join(','),
+      'min,bb25,bb30,bb40,allin,custom',
+      '翻前档位表：6 档 BB 语言，custom 末位');
+    // presetTarget：BB 档 = bb × 倍数。手动塞 legal 进 dataStore（与真实交互同口径），
+    // 测完置回 null（render 按当前 true game 重建，不残留）。
+    const t3bb = minRaise => {
+      pageCtx.setData({ legal: { minRaiseTo: minRaise, maxRaiseTo: 1000, canRaise: true } });
+      return pageCtx.presetTarget('bb30');
+    };
+    ok(pageCtx.requireGame().bb === 20 && t3bb(40) === 60,
+      '3BB 档 = 3×20bb=60（高于 minRaise=40 不被钳小），实际 ' + t3bb(40));
+    ok(t3bb(100) === 100,
+      '当前注已抬过 3BB（minRaise=100）→ 3BB 档钳到 100（等价「最小」档）');
+    pageCtx.setData({ legal: null });
+  }
   pageCtx.toggleChat();
   ok(dataStore.chatOpen === true && dataStore.menuOpen === false, '点 💬 展开聊天并收起菜单');
   pageCtx.toggleMenu();
@@ -744,8 +768,10 @@ while (guard++ < 400) {
    * AI/SNG 桌每手必须手动点「准备就绪」是连续对局的纯摩擦。宽限 = READY_AUTO_SEC
    * 后自动替我代点一次就绪（onReadyTap 同一路径），30s 真超时站起口径不动。
    * 行为级：宽限期到 → 我被代点就绪；手点在前 → 定时器幂等不重复代点。 */
-  ok(/const READY_AUTO_SEC = 8;/.test(tableSrcReady.replace(/\r/g, '')),
-    '单机自动续局宽限常量 READY_AUTO_SEC=8s');
+  // 手感调优（2026-10-17）：8s → 3s。单机两手间隔（结算 3s + 代点 8s 一度合计 13s）
+  // 是节奏拖沓首因；3s 代点 + 就绪条「继续 ▶」手动快进双保险。
+  ok(/const READY_AUTO_SEC = 3;/.test(tableSrcReady.replace(/\r/g, '')),
+    '单机自动续局宽限常量 READY_AUTO_SEC=3s（2026-10-17 由 8s 调优为 3s，配「继续 ▶」快进）');
   ok(/if \(this\.mode !== 'friend' && this\.seatedOf\(this\.mySeat\)\)/.test(tableSrcReady),
     '自动续局宽限只挂单机在座（好友房多人节奏由各真人自己掌控）');
   ok(/this\.autoReadyTimer = setTimeout/.test(tableSrcReady) &&
@@ -2221,7 +2247,8 @@ while (guard++ < 400) {
   }
 
   function guardResultShowPhase(tableSrc, wxmlSrc, wxssSrc) {
-    ok(/RESULT_SHOW_MS = 5000/.test(tableSrc), '结算展示时长常量 RESULT_SHOW_MS = 5000ms');
+    ok(/RESULT_SHOW_MS = 3000/.test(tableSrc),
+      '结算展示时长常量 RESULT_SHOW_MS = 3000ms（2026-10-17 由 5s 调优为 3s，配「继续 ▶」快进）');
     ok(tableSrc.indexOf('this.resultShowMs || RESULT_SHOW_MS') >= 0,
       '一手结束后延迟进入就绪阶段（结算展示可被测试覆盖缩短）');
     ok(tableSrc.indexOf("p.folded ? '弃牌'") >= 0,
@@ -2784,8 +2811,10 @@ while (guard++ < 400) {
     ok(/_renderTail\(\)/.test(tableSrc), 'render 尾部调度抽出 _renderTail（指纹跳过时仍执行）');
     ok(/tick,/.test(tableSrc) && /myActText,/.test(tableSrc),
       '渲染指纹含 tick 与 myActText（计时环与动作气泡变化可触发重绘）');
-    ok(/resultModal: result \? this\.data\.resultModal : null[\s\S]{0,120}this\._lastRenderFp = fp/.test(tableSrc),
-      '指纹置位在主 setData 之后（异常帧不缓存指纹，下帧自动重试）');
+    // 距离上限放宽到 400：resultModal 与指纹置位之间允许插入新的 setData 字段
+    // （如 P0-1 的 myAIBusted/aiUnlimitedTip），只要「先 setData、后置位」的顺序不破。
+    ok(/resultModal: result \? this\.data\.resultModal : null[\s\S]{0,400}this\._lastRenderFp = fp/.test(tableSrc),
+      '指纹置位在主 setData 之后（异常帧不缓存指纹，下帧自动重试；允许其间插入新字段）');
     ok(!/if \(this\._lastRenderFp === fp\)[\s\S]{0,40}this\._lastRenderFp = fp/.test(tableSrc),
       '指纹赋值不在「命中跳过」之后紧跟（避免 body 抛错前就置位）');
   }

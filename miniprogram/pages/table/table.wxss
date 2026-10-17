@@ -881,6 +881,9 @@
 }
 .set-row:last-of-type { border-bottom: none; }
 .set-name { font-size: calc(3 * var(--uh)); color: var(--ink); }
+/* P0-1：AI「无限练习」行的副标题——与主名同栏叠放，字号/色阶走次级信息规格 */
+.set-col { display: flex; flex-direction: column; }
+.set-sub { font-size: calc(2 * var(--uh)); color: var(--mut); margin-top: calc(0.3 * var(--uh)); }
 /* 开关（与首页设置弹窗一致的视觉口径） */
 .switch {
   width: calc(7.2 * var(--uh)); height: calc(4.2 * var(--uh)); border-radius: 999rpx;
@@ -902,6 +905,8 @@
 }
 .summary-title { font-size: calc(4.2 * var(--uh)); font-weight: 700; color: var(--gold); text-align: center; }
 .summary-sub { font-size: calc(2.9 * var(--uh)); color: var(--mut); text-align: center; margin-top: calc(0.7 * var(--uh)); }
+/* P1-6：打法画像一行——同 summary-sub 色调但更淡，避免与主信息抢焦点 */
+.summary-style { font-size: calc(2.6 * var(--uh)); color: var(--mut); opacity: 0.75; text-align: center; margin-top: calc(0.5 * var(--uh)); }
 .summary-rows { margin-top: calc(2 * var(--uh)); overflow-y: auto; min-height: 0; flex: 1; }
 .summary-row {
   display: flex; align-items: center; box-sizing: border-box;

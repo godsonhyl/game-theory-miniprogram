@@ -4,7 +4,8 @@
  * 参考主流德州扑克 App 的「Table Appearance / 设置」：
  *   - fourColor：四色牌（黑桃黑 / 梅花绿 / 方块蓝 / 红桃红），提升读牌清晰度；
  *   - sound：操作音效 + 震动反馈；
- *   - animation：牌桌动画（发牌 / 下注 / 光效）开关。
+ *   - animation：牌桌动画（发牌 / 下注 / 光效）开关；
+ *   - aiUnlimited：AI 桌无限练习（false = 真枪实弹，输光即本桌结束；true = 旧行为每手自动补满）。
  *
  * 设置仅存本地（wx storage），不进云端。
  */
@@ -13,7 +14,7 @@ const KEY = 'poker_settings';
  * 默认值。vibrate 为后加项：读取旧设置时若没有该字段，回退为与旧 sound 一致
  * （即默认开震动），保证老用户升级后体验不跳变；新安装默认全部开。
  */
-const DEFAULTS = { fourColor: true, sound: true, vibrate: true, animation: true };
+const DEFAULTS = { fourColor: true, sound: true, vibrate: true, animation: true, aiUnlimited: false };
 
 function get() {
   try {

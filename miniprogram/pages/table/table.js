@@ -152,8 +152,11 @@ const READY_TIMEOUT_SEC = 30;
  * 本宽限是我**仍在座**时的代点，finishReadyPhase 的真人就绪断言
  * （双保险）仍以 readyMap 计票为准。好友房（remote/房主多人）不适用：
  * 多人节奏该由每个真人自己掌控。
+ * 手感调优（2026-10-17）：8s → 3s。单机两手间隔（结算 3s + 代点 8s 一度
+ * 合计 13s）是节奏拖沓首因；3s 代点 + 就绪条「继续 ▶」手动快进双保险，
+ * 想停的玩家随时站起，赶节奏的玩家零等待。
  */
-const READY_AUTO_SEC = 8;
+const READY_AUTO_SEC = 3;
 
 /**
  * 结算展示时序（毫秒）：一手结束（摊牌亮牌）后，先在牌桌上停留亮牌
@@ -163,8 +166,11 @@ const READY_AUTO_SEC = 8;
  * 弹窗打开后 RESULT_MODAL_MS 自动关闭（防挂屏）；亮牌展示期内打开的，
  * 关闭时顺带进就绪；就绪期内打开的只关弹窗、不重置就绪计票。
  * 镜像端就绪阶段以房主广播为准。
+ * 手感调优（2026-10-17）：5s → 3s。亮牌展示期过长是单机节奏拖沓的首因，
+ * 且摘要条/就绪条同时有「查看结算」+「继续 ▶」双出口，想看牌的玩家
+ * 留得住、赶节奏的玩家走得掉。
  */
-const RESULT_SHOW_MS = 5000;
+const RESULT_SHOW_MS = 3000;
 const RESULT_MODAL_MS = 10000;
 
 /**
@@ -174,13 +180,39 @@ const RESULT_MODAL_MS = 10000;
 const DEFAULT_BUY_IN = 1000;
 
 /**
- * 加注档位（sizing chips）的比例表：档位 key → 底池比例。
+ * 加注档位（sizing chips）分两街口径（资深玩家评审 2026-10-17 的「档位说错了扑克的语言」）：
  *
- * 用百分比而不是 ½池/⅔池 这类分数，因为「池的三分之一」在不同轮次的实际筹码量
- * 会让人算不清「我到底叫了多少」；百分比直接对应池子，横向可比。
- * 33/67 取分数的近似整数倍（1/3、2/3），兼顾直觉与整齐的数字。
+ *   翻前 —— BB 倍数语言。open sizing 的行话是「开 2.5bb / 3bb」，池比例在
+ *     翻前算不出「我到底加了多少个大盲」。档位 key 直接编码倍数（bb25 = 2.5bb），
+ *     目标金额 = bb × 倍数，经 snapToBlind 吸附、钳到合法区间（当前注已高于
+ *     该档时钳到 min，等价「最小」——面对 3bet 时 4bb 档退化但不消失）。
+ *   翻后 —— 池比例语言（33%/50%/67%/100%）。用百分比而不是 ½池/⅔池 这类分数，
+ *     因为「池的三分之一」在不同轮次的实际筹码量会让人算不清「我到底叫了多少」；
+ *     33/67 取分数的近似整数倍（1/3、2/3），兼顾直觉与整齐的数字。
+ *
+ * render 按 game.street 重建 raisePresets（g.street 已入渲染指纹，切街必重算）。
  */
+const RAISE_PRESET_BB = { bb25: 2.5, bb30: 3, bb40: 4 };
 const RAISE_PRESET_PCT = { p33: 1 / 3, p50: 0.5, p67: 2 / 3, p100: 1 };
+/** 翻前 6 档：最小 / 2.5bb / 3bb / 4bb / 全下 / 自定义（BB 语言） */
+const PRESETS_PREFLOP = [
+  { k: 'min', t: '最小' },
+  { k: 'bb25', t: '2.5BB' },
+  { k: 'bb30', t: '3BB' },
+  { k: 'bb40', t: '4BB' },
+  { k: 'allin', t: '全下' },
+  { k: 'custom', t: '自定义' }
+];
+/** 翻后 7 档：最小 / 33% / 50% / 67% / 100% / 全下 / 自定义（池比例语言） */
+const PRESETS_POSTFLOP = [
+  { k: 'min', t: '最小' },
+  { k: 'p33', t: '33%' },
+  { k: 'p50', t: '50%' },
+  { k: 'p67', t: '67%' },
+  { k: 'p100', t: '100%' },
+  { k: 'allin', t: '全下' },
+  { k: 'custom', t: '自定义' }
+];
 
 const BUY_IN_OPTIONS = [500, 1000, 2000, 5000];
 
@@ -320,16 +352,10 @@ Page({
     myActText: '',
     myActCls: '',
 
-    // 加注档位（主流 App 的 bet sizing chips，替代占位很大的滑杆）
-    raisePresets: [
-      { k: 'min', t: '最小' },
-      { k: 'p33', t: '33%' },
-      { k: 'p50', t: '50%' },
-      { k: 'p67', t: '67%' },
-      { k: 'p100', t: '100%' },
-      { k: 'allin', t: '全下' },
-      { k: 'custom', t: '自定义' }
-    ],
+    // 加注档位（主流 App 的 bet sizing chips，替代占位很大的滑杆）。
+    // render 按街重建：翻前 BB 语言（PRESETS_PREFLOP），翻后池比例语言（PRESETS_POSTFLOP）。
+    // 初始值翻前口径（开局第一帧即翻前）。
+    raisePresets: PRESETS_PREFLOP,
     // 自定义下注面板：数值范围 0 ~ raiseMax（MAX = 全下金额），步进 = 小盲注
     raiseCustom: false,
     raiseMin: 0,
@@ -391,6 +417,11 @@ Page({
     // 批⑤：SNG 淘汰赛模式（mode=sng）。复用 AI 桌引擎路径，但关闭补筹、
     // 启用淘汰编排（筹码归零即淘汰，最后一人夺冠）。不消耗房卡、无好友同步。
     this.mode = opts.room ? 'friend' : (opts.mode === 'sng' ? 'sng' : 'ai');
+    // 快速入桌（P1-4）：quick=1 → AI 桌跳过「选座+手工补位+点开始」三步，
+    // 直接坐 0 号位、补满 bots（URL 携带，钳 1~7）、立即发牌。难度仍由
+    // level 携带；要调难度 → 首页长按 AI 卡片出 ActionSheet。
+    this.quick = this.mode === 'ai' && opts.quick === '1';
+    this.quickBots = this.quick ? Math.min(7, Math.max(1, Number(opts.bots) || 5)) : 0;
     // AI 难度档位（批②）：rookie/advanced/expert，默认 advanced。仅 AI/SNG 桌生效，
     // 好友房的机器人沿用默认梯度（好友房 Bot 不该比真人强太多）
     this.level = ((this.mode === 'ai' || this.mode === 'sng') && opts.level) ? opts.level : 'advanced';
@@ -459,6 +490,9 @@ Page({
     flySeed = 0;
     this.emoteSeen = 0;        // 镜像端已放过气泡的表情 ts 高水位（防轮询重放）
     const s = settings.get();
+    // AI 桌无限练习：true = 旧行为每手自动补满；false（默认）= 真枪实弹，我输光即本桌结束。
+    // 放 this （实例字段）而非 data：参与 startHand 守卫与 render 指纹，属页面级常量而非渲染态。
+    this.aiUnlimited = !!s.aiUnlimited;
     this.setData({
       mode: this.mode,
       roomNo: this.roomNo,
@@ -514,7 +548,46 @@ Page({
       // AI 对战：与好友房共用同一间等待室——先挑座位坐下、点「开始游戏」才发牌，
       // 不再一进就自动开局。差别只在：无房间号、不跨设备同步、坐下后自动补 AI 对手。
       this.initWaiting();
+      // 快速入桌（P1-4）：等一帧让等待室首帧渲染出来（避免「点了没反应」的白屏错觉），
+      // 再自动坐 0 号位 + 补满 bots + 直接开局。若 400ms 内已被用户手动推进
+      // （phase != waiting），startGame 静默 return，不抢他的操作。
+      if (this.quick && this.mode === 'ai') {
+        this.quick = false;   // 只消费一次——重启/续路径不复用
+        setTimeout(() => {
+          if (this.data.phase !== 'waiting') return;
+          this.sitSeat(0, DEFAULT_BUY_IN);
+          this.fillBotsTo(this.quickBots + 1);
+          this.startGame();
+        }, 400);
+      }
     }
+  },
+
+  /**
+   * AI 桌补位到目标人数（quick 快速入桌用）：把空位逐个补成电脑玩家，
+   * 与 fillBots 共用「先 find 空位 → occupied + isBot + 命名」的路径，
+   * 区别只在目标数不再硬编码 2。目标达到后或不余人位数退出。
+   */
+  fillBotsTo(targetTotal) {
+    if (this.mode === 'friend') return;
+    const seats = (this.data.waitSeats || []).slice();
+    // 起点编号：沿用 fillBots 的「按当前已入 bot 个数连续编号」口径
+    let botNo = seats.filter(s => s.isBot).length;
+    let guard = 0;   // 防死循环：单局 maxSeats ≤ 9，兜底 20 次退出即可
+    while (seats.filter(s => s.occupied).length < targetTotal && guard++ < 20) {
+      const empty = seats.find(s => !s.occupied);
+      if (!empty) break;
+      empty.occupied = true;
+      empty.isBot = true;
+      empty.name = this.botLabel(botNo);
+      empty.stack = DEFAULT_BUY_IN;
+      botNo++;
+    }
+    this.setData({
+      waitSeats: seats,
+      seats: this.buildWaitSeats(seats),
+      canStart: this.canStartOf(seats)
+    });
   },
 
   /**
@@ -2219,6 +2292,19 @@ Page({
    */
   endGame() {
     if (!game) return;
+    // P1-6：结算单「打法画像」一行（仅 AI 对战且本机权威端，非镜像端）。
+    // 数据源 = replayStore 全量（上限 20 局，analyze 内部 O(n) 扫描，开销可忽略）。
+    // 样本 < 10 不硬算（analyze 自带 insufficient 态兜底，避免小样本误导）。
+    let styleLine = '';
+    if (this.mode === 'ai' && !this.remoteMode) {
+      try {
+        const res = styleAnalyzer.analyze(replayStore.listAll());
+        if (res && !res.insufficient && (res.sample | 0) >= 10) {
+          styleLine = '你的打法画像：' + res.quadrant + ' · VPIP ' + res.vpipPct +
+            '（近 ' + res.sample + ' 手）';
+        }
+      } catch (e) { /* 失败静默，不阻断结算 */ }
+    }
     // 批⑤重入防护：SNG 终局链路 _sngCheckFinalize → endGame → _sngCheckFinalize 会递归
     // （endGame 内调 _sngCheckFinalize 补齐存活者名次，补齐后又判 alive<=1 想再次 endGame）。
     // 用 _sngEnding 幂等位：进入即置位，_sngCheckFinalize 内见已置位则不再触发 endGame。
@@ -2273,6 +2359,7 @@ Page({
         summary: {
           title: isChampion ? 'SNG 结束 · 恭喜夺冠！' : 'SNG 结束 · 淘汰赛结算',
           sub: '共 ' + game.handNo + ' 手 · 按淘汰顺序排名',
+          styleLine: styleLine,   // P1-6：打法画像一行（无样本时空串，wxml wx:if 隐藏）
           rows: rows,
           isSng: true,    // WXML 按此切换「名次」列而非「盈亏」列
           myPlace: myPlace,
@@ -2350,6 +2437,7 @@ Page({
       summary: {
         title: '本局结束 · 时长已到',
         sub: '共 ' + game.handNo + ' 手 · 全员盈亏结算',
+        styleLine: styleLine,   // P1-6：打法画像一行（无样本时空串，wxml wx:if 隐藏）
         rows: rows,
         myNet: me ? me.net : 0,
         myNetText: me ? ((me.net >= 0 ? '+' : '') + me.net) : '0',
@@ -2572,13 +2660,14 @@ Page({
     //「无高亮但按钮显示某个金额」或「高亮全下却只能加最小」的错觉。
     this.resetRaiseState();
 
-    // 演示：筹码不足自动补充；同步修正起始筹码，避免补充额被算成盈亏。
-    // 批⑤：SNG 淘汰赛不补筹——筹码归零即淘汰，靠 sng 检测记名次推进赛制。
-    if (this.mode !== 'sng') {
+    // 补筹守卫（计划 P0-1）：AI 桌默认「真枪实弹」不补筹，设置里开「无限练习」才恢复
+    // 每手自动补满；好友房沿用旧行为（演示性质，筹码不足自动补充）；SNG 不补筹——
+    // 筹码归零即淘汰，靠 sng 检测记名次推进赛制。
+    if (this.mode === 'friend' || (this.mode === 'ai' && this.aiUnlimited)) {
       game.players.forEach(p => {
         if (p.stack < 20) {
-          const add = 1000 - p.stack;
-          p.stack = 1000;
+          const add = DEFAULT_BUY_IN - p.stack;
+          p.stack = DEFAULT_BUY_IN;
           if (this.startStacks[p.seat] !== undefined) this.startStacks[p.seat] += add;
         }
       });
@@ -2678,6 +2767,13 @@ Page({
     // 收割夺冠高光徽章（仅我夺冠时）
     if (championSeat === this.mySeat && game.result) {
       highlightStore.addHighlight(game, this.mySeat, 'sng', 'sng_win', 0);
+      // 新高光解锁即时反馈（P1-6，与 showResultModal 收割点同口径）。
+      const first = highlightStore.listAll().filter(r => r.type === 'sng_win').length === 1;
+      wx.showToast({
+        title: '🏆 新高光：SNG 夺冠' + (first ? '（首次）' : ''),
+        icon: 'none',
+        duration: 2500
+      });
     }
     // 若游戏尚未 over，由 endGame 收尾结算（按名次而非净值）。
     // 关键：不判 game.result——SNG 终局常发生在「最后一手 startHand 即 skipToShowdown
@@ -2825,6 +2921,8 @@ Page({
       const g = game;
       // 超时口径按模式取（remote 30s / 单机 20s）：timerPct/timerUrgent 均 from tickMax
       const tickMax = this.timerMax();
+      // P0-1：指纹里引用的 me 必须在拼接前解析——引擎未起局时（等待室）me 可能为空
+      const mePre = game.seatOf(this.mySeat);
       const fp = [
         g.handNo, g.street, g.potTotal(), g.currentBet, g.actionSeat,
         (g.board || []).join(','),
@@ -2847,7 +2945,11 @@ Page({
         myActCls,
         this.myStanding ? 1 : 0,
         this.pendingSit ? 1 : 0, // 影响 mySeated（坐下待下一手入局）的派生态
-        this.data.resultModal ? 'rm' : ''   // 结算弹窗开/关状态
+        this.data.resultModal ? 'rm' : '',  // 结算弹窗开/关状态
+        // P0-1：AI 桌输光/练习模式开关——派生 myAIBusted/aiUnlimitedTip 由二者驱动，
+        // 不进指纹则设置切换或筹码归零瞬间的 mytip 切换会被跳过分支吞掉
+        (this.mode === 'ai' && this.aiUnlimited) ? 'u' : '',
+        (this.mode === 'ai' && !this.aiUnlimited && mePre && mePre.stack <= 0) ? 'b' : ''
       ].join('#');
       if (this._lastRenderFp === fp) {
         this._renderTail();
@@ -3005,6 +3107,13 @@ Page({
       const myBuyIn = meP ? (this.startStacks[meP.seat] !== undefined ? this.startStacks[meP.seat] : meP.stack) : 0;
       const myNetLive = meP ? meP.stack - myBuyIn : 0;
 
+      // P0-1：AI 「真枪实弹」我输光后，本桌结束态（blocking 提示 + 「再来一桌」出口）；
+      //        「无限练习」开启时，就绪/结算阶段把原有 mytip 换成练习模式提示。
+      // 两字段同由 render 派生（指纹里的 mode/aiUnlimited/stack 段驱动），不进 setData 会
+      // 被跳过分支吞掉；只在对应分支显示，不会并存——后写即终值。
+      const myAIBusted = this.mode === 'ai' && !this.aiUnlimited && !!meP && meP.stack <= 0;
+      const aiUnlimitedTip = this.mode === 'ai' && this.aiUnlimited && (readyPhase || !!result) && !myAIBusted;
+
       // 操作区（站起观战时不参与行动）
       const isMyTurn = game.actionSeat === this.mySeat && !result && !standing;
       let legal = null;
@@ -3070,6 +3179,9 @@ Page({
         raiseMax,
         raiseStep,
         raiseCustom,
+        // 加注档位按街重建（翻前 BB 语言 / 翻后池比例语言）。g.street 已入渲染指纹，
+        // 切街自然触发重算；镜像端 loadSnapshot 恢复 street 后同路径生效。
+        raisePresets: this.presetsForStreet(game.street),
         // 档位高亮与金额必须同帧写入同一个 setData：分两次写会出现
         //「高亮已回『最小』但金额还是上一手」的中间态被渲染出来。
         raisePreset: wasReset ? 'min' : this.data.raisePreset,
@@ -3106,7 +3218,10 @@ Page({
         // 也让 wxml/测试可读；数值由 this.timerMax() 派生，不进指纹（模式不变即常量）
         timerMax: tickMax,
         // 结算清空时同步收起弹窗（新一手/回等待室），有结算时保留现状
-        resultModal: result ? this.data.resultModal : null
+        resultModal: result ? this.data.resultModal : null,
+        // P0-1：AI 桌输光/练习模式提示（已入指纹，见上）
+        myAIBusted: myAIBusted,
+        aiUnlimitedTip: aiUnlimitedTip
       });
       // 主 setData 成功 → 现在置位指纹。异常帧（走下面 catch）不更新 _lastRenderFp，
       // 下一帧同势 render 会重试，降级态不致卡死。
@@ -3687,7 +3802,7 @@ Page({
     this.setData({ menuOpen: false, helpShow: true });
   },
 
-  /** 牌桌内设置入口（⋯ 菜单）：即时生效，四色牌/音效/震动/动画 */
+  /** 牌桌内设置入口（⋯ 菜单）：即时生效，四色牌/音效/震动/动画/无限练习 */
   onMenuSettings() {
     const s = settings.get();
     this.setData({
@@ -3696,7 +3811,8 @@ Page({
       sFourColor: s.fourColor,
       sSound: s.sound,
       sVibrate: s.vibrate,
-      sAnim: s.animation
+      sAnim: s.animation,
+      sAiUnlimited: !!s.aiUnlimited
     });
   },
 
@@ -3704,7 +3820,7 @@ Page({
     this.setData({ settingsShow: false });
   },
 
-  /** 切换设置项并即时生效（四色牌/音效/震动/动画） */
+  /** 切换设置项并即时生效（四色牌/音效/震动/动画/无限练习） */
   onToggleSetting(e) {
     const key = e.currentTarget.dataset.k;
     const patch = {};
@@ -3712,18 +3828,22 @@ Page({
     if (key === 'sound') patch.sound = !this.data.sSound;
     if (key === 'vibrate') patch.vibrate = !this.data.sVibrate;
     if (key === 'animation') patch.animation = !this.data.sAnim;
+    if (key === 'aiUnlimited') patch.aiUnlimited = !this.data.sAiUnlimited;
     const next = settings.set(patch);
     this.setData({
       sFourColor: next.fourColor,
       sSound: next.sound,
       sVibrate: next.vibrate,
       sAnim: next.animation,
+      sAiUnlimited: !!next.aiUnlimited,
       // 即时生效：渲染用的派生字段同步刷新
       fourColor: next.fourColor,
       soundOn: next.sound,
       vibrateOn: next.vibrate,
       animOn: next.animation
     });
+    // aiUnlimited 即时生效：下一手 startHand 补筹守卫读 this.aiUnlimited，同步切换
+    if (key === 'aiUnlimited') this.aiUnlimited = !!next.aiUnlimited;
   },
 
   onMenuStand() {
@@ -3754,9 +3874,13 @@ Page({
     this.setData({ coachShow: false });
   },
 
-  buildResult(res) {
+  buildResult(res, opts) {
     // 结算行覆盖「所有投入过筹码的人」：含弃牌者（他们输掉的盲注/下注也要显示），
     // 每人给出净盈亏 net = 赢得 - 投入，输赢一目了然。
+    // 上帝视角（P1-5）：opts.revealAll = true 且本机权威端时，非摊牌玩家的
+    // p.hole 也降级构建迷你牌面 + 标「（盖牌）」——数据全部在场（引擎不清
+    // p.hole），默认不开是 muck 礼仪（玩家主动点才看）。
+    const revealAll = !!(opts && opts.revealAll && !this.remoteMode);
     const rows = game.players
       .filter(p => p.committed > 0 || res.winners.indexOf(p.seat) !== -1)
       .map(p => {
@@ -3767,12 +3891,12 @@ Page({
         const holeTxt = rv
           ? rv.hole.map(code => this.codeToStr(code)).join(' ')
           : p.hole.map(c => P.cardToStr(c)).join(' ');
-        // 摊牌结算弹窗里的「手牌牌面」：只亮真正摊牌（rv 存在）的座位，
+        // 摊牌结算弹窗里的「手牌牌面」：默认只亮真正摊牌（rv 存在）的座位，
         // 弃牌者的牌不公开（muck 不亮牌，扑克通行礼仪），此时 cards 为空数组、
         // 由 .sr-cards 的固定宽度占位保持各行「牌型 / 盈亏」两列仍对齐。
         // hi 标记 = 该底牌参与了最佳成手 5 张（摊牌时金边高亮，便于看懂为什么赢）。
         const bestSet = (rv && rv.hand) ? new Set(rv.hand) : null;
-        const cards = ((rv && rv.hole) ? rv.hole : [])
+        let cards = ((rv && rv.hole) ? rv.hole : [])
           .map((code, ci) => {
             const id = P.codeToCard(code);
             if (id < 0) return null;
@@ -3781,14 +3905,26 @@ Page({
             return d;
           })
           .filter(Boolean);
+        // 上帝视角降级构建：非摊牌玩家的 hole 用引擎残留数据拼迷你牌面，
+        // hi 不标（没有 showdownReveal 的最佳成手依据，瞎标会误导）。
+        if (!cards.length && revealAll && p.hole && p.hole.length === 2) {
+          cards = p.hole.map((id, ci) => {
+            const d = this.cardData(id, ci);
+            d.degraded = true;   // 盖牌：UI 可弱化（透明度/斜体）
+            return d;
+          }).filter(Boolean);
+        }
+        // 盖牌标注：仅在降级构建时追加，不覆盖摊牌/弃牌/未入池的正常文案
+        const mucked = !rv && p.hole && p.hole.length === 2 && revealAll && p.folded;
         return {
           seat: p.seat,
           name: p.name,
           icon: win ? '🏆 ' : '',
           hand: rv ? holeTxt + ' → ' + rv.name : holeTxt,
-          cards,                    // 结算弹窗的迷你手牌（弃牌为空）
-          // 结算条胶囊用的短文本：摊牌显示牌型名；弃牌/未摊牌给状态文案
-          short: rv ? rv.name : (p.folded ? '弃牌' : (holeTxt || '未摊牌')),
+          cards,                    // 结算弹窗的迷你手牌（默认：弃牌为空）
+          // 结算条胶囊用的短文本：摊牌显示牌型名；上帝视角降级构建标「（盖牌）」；
+          // 普通弃牌/未摊牌给状态文案
+          short: rv ? rv.name : (mucked ? holeTxt + '（盖牌）' : (p.folded ? '弃牌' : (holeTxt || '未摊牌'))),
           committed: p.committed,   // 本手总投入（飞筹动画的筹码量）
           isMe: p.seat === this.mySeat,   // 结算弹窗高亮我的行
           win,
@@ -3920,13 +4056,21 @@ Page({
     this.setRaiseTo(target, v);
   },
 
+  /** 按当前街重建加注档位表：翻前 BB 语言，翻后池比例语言（g.street 已入渲染指纹） */
+  presetsForStreet(street) {
+    return street === P.STREET.PREFLOP ? PRESETS_PREFLOP : PRESETS_POSTFLOP;
+  },
+
   /**
    * 预设档 → 目标「加注到」金额。返回 null 表示该档非法（不改动任何状态）。
    *
-   * 口径：加注到 = 当前最高下注 × 2 + 底池 × 比例。
-   *   - 多轮加注后 currentBet 已抬高，直接用「×2 + 池×比例」能保证叫的量
-   *     始终是「池的百分之多少」（主流 App 的 sizing chips 就是这个口径）。
-   *   - 比例档一律向下吸附到小盲注整数倍（见 snapToBlind），避免出现 137 这种
+   * 两街口径（档位表见 PRESETS_PREFLOP / PRESETS_POSTFLOP 头注释）：
+   *   - BB 档（bb25/bb30/bb40，翻前）：加注到 = 大盲 × 倍数。bb 取 game.bb
+   *     （镜像端 loadSnapshot 已恢复该值，无需加广播字段）。
+   *   - 比例档（p33…p100，翻后）：加注到 = 当前最高下注 × 2 + 底池 × 比例。
+   *     多轮加注后 currentBet 已抬高，「×2 + 池×比例」能保证叫的量始终是
+   *     「池的百分之多少」（主流 App 的 sizing chips 就是这个口径）。
+   *   - 比例/BB 档一律向下吸附到小盲注整数倍（见 snapToBlind），避免出现 137 这种
    *     零头数字，与自定义面板的步进口径保持一致。
    *   - 全下不吸附：all-in 的金额就是玩家剩余筹码，本身可能不是盲注倍数。
    */
@@ -3936,6 +4080,11 @@ Page({
     const max = Number(l.maxRaiseTo) || 0;
     if (v === 'min') return min;
     if (v === 'allin') return max;
+    const mult = RAISE_PRESET_BB[v];
+    if (mult !== undefined) {
+      const bb = game && game.bb > 0 ? game.bb : 20;
+      return Math.min(max, Math.max(min, this.snapToBlind(Math.min(bb * mult, max))));
+    }
     const pct = RAISE_PRESET_PCT[v];
     if (pct === undefined) return null;
     const raw = game.currentBet * 2 + game.potTotal() * pct;
@@ -4008,7 +4157,10 @@ Page({
       raiseTo: 0,
       raiseSubmit: 0,
       raiseAllIn: false,
-      raiseCustom: false
+      raiseCustom: false,
+      // 档位随新一手回翻前口径（startHand 后 game.street 已是 preflop，
+      // render 的按街重建是同口径单来源，此处与 render 用同一函数防漂移）
+      raisePresets: this.presetsForStreet(P.STREET.PREFLOP)
     });
   },
 
@@ -4219,7 +4371,22 @@ Page({
       // winStreaks 已被 renderAmbience 的 _bumpStreaks 更新（先于 showResultModal）、
       // events 完整。失败静默（体验优化，与 replay 同口径）。
       const hl = this._detectHighlight();
-      if (hl) highlightStore.addHighlight(game, this.mySeat, this.data.mode, hl.type, hl.streak);
+      if (hl) {
+        highlightStore.addHighlight(game, this.mySeat, this.data.mode, hl.type, hl.streak);
+        // 新高光解锁即时反馈（P1-6）：入档后 listAll 已含本条，数同类型条数=1 即「首次」。
+        // 一手最多一条（_detectHighlight 单返回，优先级见函数头注释），toast 不用排队。
+        const HIGHLIGHT_LABEL = {
+          royal_flush: '皇家同花顺', quads: '四条', streak5: '五连胜',
+          bluff_success: '诈唬成功', sng_win: 'SNG 夺冠'
+        };
+        const label = HIGHLIGHT_LABEL[hl.type] || '高光时刻';
+        const first = highlightStore.listAll().filter(r => r.type === hl.type).length === 1;
+        wx.showToast({
+          title: '🏆 新高光：' + label + (first ? '（首次）' : ''),
+          icon: 'none',
+          duration: 2500
+        });
+      }
     }
     this.setData({ resultModal: this.data.result });
     this.clearResultModalTimer();
@@ -4376,6 +4543,11 @@ Page({
         this.autoReadyTimer = null;
         if (this.data.readyPhase && !this.data.myReady) this.onReadyTap();
       }, READY_AUTO_SEC * 1000);
+      // 「继续 ▶」快进：亮牌展示期点继续 → 进就绪后立刻替我点就绪
+      if (this.autoReadyNext) {
+        this.autoReadyNext = false;
+        this.onReadyTap();
+      }
     }
   },
 
@@ -4523,6 +4695,26 @@ Page({
       return;
     }
     this.markReady(this.mySeat, true);
+  },
+
+  /**
+   * 「继续 ▶」快进（手感调优 2026-10-17）：亮牌展示期/就绪期内一键跳过剩余等待。
+   * - 亮牌展示期（result 存在、尚未 readyPhase）：作废展示定时器 + 直接进就绪阶段
+   *   并替我点就绪——等价于「我看完牌了，马上发下一手」。
+   * - 就绪期：等价于手动点「准备就绪」，幂等复用 onReadyTap。
+   * 镜像端：就绪以房主广播为准，这里只做我自己的就绪上行（onReadyTap 已处理）。
+   */
+  onFastForward() {
+    if (this.data.myReady) return;   // 已就绪，无需快进
+    if (!this.data.readyPhase && !this.data.result) return;
+    if (this.data.soundOn) sfx.play('click');
+    this.clearResultTimer();
+    if (!this.data.readyPhase && !this.remoteMode) {
+      this.autoReadyNext = true;   // 进就绪阶段后立即替我调一次 onReadyTap
+      this.enterReadyPhase();
+      return;
+    }
+    this.onReadyTap();
   },
 
   scheduleAI() {

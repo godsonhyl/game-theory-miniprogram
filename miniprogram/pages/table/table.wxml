@@ -162,16 +162,21 @@
        「查看结算」与「准备就绪」并存（结算弹窗不自动弹，想看明细随时点）。 -->
   <view class="resultbar" wx:if="{{readyPhase}}">
     <text class="rb-title">等待就绪</text>
-    <text class="rb-sub">各座位已亮出准备状态</text>
+    <text class="rb-sub" wx:if="{{!myAIBusted}}">各座位已亮出准备状态</text>
+    <text class="rb-sub" wx:if="{{myAIBusted}}">练习桌已结束</text>
     <view class="rb-right">
       <text class="rb-hint">{{readyHint}}</text>
       <view class="rb-btns">
         <button class="rb-btn ghost" wx:if="{{result}}" bindtap="onShowResult">查看结算</button>
         <button class="rb-btn ghost" wx:if="{{canStand}}" bindtap="onMenuStand">站起退出本局</button>
         <button class="rb-btn ghost" wx:if="{{myStanding && !mySeated}}" bindtap="onMenuSit">坐下加入游戏</button>
+        <!-- P0-1：AI 「真枪实弹」我输光后，本桌结束，仅留「再来一桌」出口（引擎其余玩家继续打完后排就绪） -->
+        <button class="rb-btn" wx:if="{{myAIBusted}}" bindtap="restartGame">再来一桌</button>
+        <!-- 快进：一键就绪立即发下一手（手感调优：跳过 3s 自动代点等待） -->
+        <button class="rb-btn" wx:if="{{mySeated && !myReady && !myAIBusted}}" bindtap="onFastForward">继续 ▶</button>
         <!-- 就绪按钮：点完就地变灰禁用（不再消失成一行小字），
              否则按钮消失会让右侧布局跳动，且用户看不出「我已就绪」的确定状态 -->
-        <button class="rb-btn {{myReady ? 'done' : ''}}" wx:if="{{mySeated}}"
+        <button class="rb-btn {{myReady ? 'done' : ''}}" wx:if="{{mySeated && !myAIBusted}}"
                 bindtap="onReadyTap" disabled="{{myReady}}">
           {{myReady ? '已准备' : '准备就绪'}}{{!myReady && readyLeft > 0 ? '（' + readyLeft + 's）' : ''}}
         </button>
@@ -183,12 +188,17 @@
        就绪条上同样保留「查看结算」入口（两个按钮并存） -->
   <view class="resultbar" wx:elif="{{result}}">
     <text class="rb-title">{{result.title}}</text>
-    <text class="rb-net">{{result.netText}}</text>
+    <text class="rb-net" wx:if="{{!myAIBusted}}">{{result.netText}}</text>
+    <text class="rb-net" wx:if="{{myAIBusted}}">练习桌已结束</text>
     <view class="rb-right">
       <view class="rb-btns">
         <button class="rb-btn ghost" wx:if="{{canStand}}" bindtap="onMenuStand">站起退出本局</button>
         <button class="rb-btn ghost" wx:if="{{myStanding && !mySeated}}" bindtap="onMenuSit">坐下加入游戏</button>
-        <button class="rb-btn" bindtap="onShowResult">查看结算</button>
+        <button class="rb-btn ghost" bindtap="onShowResult">查看结算</button>
+        <!-- P0-1：AI 「真枪实弹」我输光后，本桌结束，仅留「再来一桌」出口 -->
+        <button class="rb-btn" wx:if="{{myAIBusted}}" bindtap="restartGame">再来一桌</button>
+        <!-- 快进：看完牌一键进就绪 + 替我点就绪（跳过 3s 亮牌展示等待） -->
+        <button class="rb-btn" wx:if="{{mySeated && !myAIBusted}}" bindtap="onFastForward">继续 ▶</button>
       </view>
     </view>
   </view>
@@ -265,9 +275,11 @@
               <view class="rc-q" bindtap="onCustomClose">收起</view>
             </view>
           </view>
+          <view class="mytip" wx:elif="{{myAIBusted}}">筹码耗尽 · 本桌已结束</view>
           <view class="mytip" wx:elif="{{timeUp}}">本局已结束 · 可在菜单退出房间</view>
           <view class="mytip" wx:elif="{{myStanding && !mySeated}}">观战中</view>
           <view class="mytip" wx:elif="{{myStanding && mySeated}}">已坐下 · 下一手开始入局</view>
+          <view class="mytip" wx:elif="{{aiUnlimitedTip}}">练习模式 · 筹码无限</view>
           <view class="mytip" wx:elif="{{readyPhase}}">{{myReady ? '已准备 · 等待其他人就绪…' : '上一手已结束 · 点「准备就绪」继续'}}</view>
           <view class="mytip" wx:elif="{{result}}">本手已结束 · 每人盈亏见结算弹窗或「查看结算」</view>
           <view class="mytip" wx:elif="{{myActText}}">{{myActText}}</view>
@@ -379,6 +391,8 @@
     <view class="summary-dialog" catchtap="onBlockTap">
       <text class="summary-title">{{summary.title}}</text>
       <text class="summary-sub">{{summary.sub}}</text>
+      <!-- P1-6：打法画像一行（样本不足时 styleLine 为空串，wx:if 整行隐藏） -->
+      <text class="summary-style" wx:if="{{summary.styleLine}}">{{summary.styleLine}}</text>
 
       <!-- 我的三件套：带入 / 剩余 / 盈亏。放在最上面，玩家第一眼就能对上账 -->
       <view class="sum-bank">
@@ -501,7 +515,7 @@
     </view>
   </view>
 
-  <!-- 牌桌设置（菜单入口）：四色牌 / 音效 / 震动 / 动画，即时生效 -->
+  <!-- 牌桌设置（菜单入口）：四色牌 / 音效 / 震动 / 动画 / 无限练习，即时生效 -->
   <view class="help-mask" wx:if="{{settingsShow}}" bindtap="onSettingsClose">
     <view class="help-dialog settings-dialog" catchtap="onBlockTap">
       <text class="help-title">牌桌设置</text>
@@ -520,6 +534,15 @@
       <view class="set-row" bindtap="onToggleSetting" data-k="animation">
         <text class="set-name">牌桌动画</text>
         <view class="switch {{sAnim ? 'on' : ''}}"><view class="knob"></view></view>
+      </view>
+      <!-- P0-1：AI 桌独有——关（默认）= 真枪实弹输光出局；开 = 无限练习每手自动补满 -->
+      <view class="set-row" bindtap="onToggleSetting" data-k="aiUnlimited"
+            wx:if="{{mode === 'ai'}}">
+        <view class="set-col">
+          <text class="set-name">无限练习</text>
+          <text class="set-sub">真枪实弹：输光出局；无限练习：自动补满</text>
+        </view>
+        <view class="switch {{sAiUnlimited ? 'on' : ''}}"><view class="knob"></view></view>
       </view>
       <button class="help-btn" bindtap="onSettingsClose">完成</button>
     </view>

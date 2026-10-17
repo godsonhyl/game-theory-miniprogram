@@ -563,18 +563,26 @@ Page({
     }
   },
 
-  /** AI 对战：弹难度选择（新手 / 进阶 / 高手），默认进阶 */
+  /** AI 对战·快速入桌（P1-4）：点卡片直接开局，省去「难度 ActionSheet → 等待室
+   *  → 选座 → 补位 → 开始」五步。默认进阶难度 + 5 bot（与历史首局体验同口径）；
+   *  要换难度 → 长按卡片出 ActionSheet。 */
+  onAIQuick() {
+    wx.navigateTo({ url: '/pages/table/table?mode=ai&level=advanced&bots=5&quick=1' });
+  },
+
+  /** AI 对战·手动入口（长按触发）：弹难度选择（新手 / 进阶 / 高手），默认进阶。
+   *  其余调用处（新手流程/关闭房卡弹窗等「先玩 AI 桌」回退）保持直进等待室。 */
   onAIMode() {
     wx.showActionSheet({
       itemList: ['新手 · 对手较温和', '进阶 · 均衡对手', '高手 · 对手更狡猾'],
       success: res => {
         const levels = ['rookie', 'advanced', 'expert'];
         const level = levels[res.tapIndex] || 'advanced';
-        wx.navigateTo({ url: '/pages/table/table?mode=ai&level=' + level });
+        wx.navigateTo({ url: '/pages/table/table?mode=ai&level=' + level + '&bots=5&quick=1' });
       },
       fail: () => {
         // 用户取消 ActionSheet（tapIndex 不存在）→ 默认进阶直进，不阻断入口
-        wx.navigateTo({ url: '/pages/table/table?mode=ai&level=advanced' });
+        wx.navigateTo({ url: '/pages/table/table?mode=ai&level=advanced&bots=5&quick=1' });
       }
     });
   },

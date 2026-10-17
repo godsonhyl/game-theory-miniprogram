@@ -52,7 +52,7 @@
     </view>
 
     <!-- AI 对战 -->
-    <view class="mode mode-ai" bindtap="onAIMode">
+    <view class="mode mode-ai" bindtap="onAIQuick" bindlongpress="onAIMode">
       <view class="mode-icon ic ic-ai"></view>
       <view class="mode-body">
         <text class="mode-title">AI 对战</text>
