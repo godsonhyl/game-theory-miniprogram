@@ -3557,9 +3557,12 @@ while (guard++ < 400) {
     // 镜像端 addBot 必须短路：好友端不跑引擎，pendingBotSeat 会空插不广播
     ok(/addBot\(\)\s*\{[\s\S]{0,120}!this\.isOwner\)\s*\{[\s\S]{0,80}?仅房主可添加玩家/.test(tableSrc),
       'table.js addBot 仅房主守卫仍在（镜像端好友点按钮被拦）');
-    // WXML：进行中行动条上方出现「添加电脑玩家」按钮
-    ok(/add-bot-bar/.test(tableWxml) && /ab-addbot/.test(tableWxml),
-      'table.wxml 进行中含 add-bot-bar / ab-addbot（房主中途补 bot 入口）');
+    // WXML：对局内**不再**有「添加电脑玩家」入口（2026-10-17 用户反馈反转：
+    // 开局后凑人只走真人路径——好友经邀请/房间号进来点空位坐下；加 bot 只在等待室）。
+    // actbar 区（含 myTimerUrgent 行动条起）到页面结束不得出现 addBot 绑定。
+    ok(!/actbar add-bot-bar/.test(tableWxml) && !/ab-addbot/.test(tableWxml),
+      'table.wxml 对局内已移除「添加电脑玩家」入口（add-bot-bar / ab-addbot 不得出现）');
+    // 等待室的入口仍在（唯一合法的加 bot 入口）
     ok(/bindtap="addBot"[\s\S]{0,200}?添加电脑玩家/.test(tableWxml) ||
        /添加电脑玩家[\s\S]{0,60}?bindtap="addBot"/.test(tableWxml),
       'table.wxml 进行中「添加电脑玩家」按钮绑 addBot');

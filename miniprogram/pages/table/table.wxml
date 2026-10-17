@@ -312,9 +312,9 @@
         </view>
       </view>
 
-      <view class="actbar add-bot-bar" wx:if="{{isOwner && mode === 'friend' && !myStanding}}">
-        <button class="ab ab-addbot" bindtap="addBot">添加电脑玩家</button>
-      </view>
+      <!-- 对局内不再提供「添加电脑玩家」入口（2026-10-17 用户反馈）：
+           开局后凑人只走真人路径——好友通过邀请卡片 / 房间号进来点空位坐下
+           （waiting 选座、joinMidGame 中途加入）。加 bot 只在等待室。 -->
       <!-- 行动条：三个大按钮，间距拉大避免误触；最后 5s 整条紧迫脉冲提示 -->
       <view class="actbar {{myTimerUrgent ? 'urgent' : ''}}">
         <button class="ab ab-fold {{foldConfirm ? 'confirm' : ''}}" bindtap="onFold" disabled="{{!isMyTurn}}">{{foldConfirm ? '再点弃牌' : '弃牌'}}</button>
