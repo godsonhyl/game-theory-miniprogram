@@ -398,6 +398,13 @@ Page({
     this.sngPlacement = {};
     this.sngEliminationOrder = [];
     this.sngNextPlace = null;
+    // 批⑨：AI 读人反制的滚动 VPIP 状态（仅 mode==='ai' && level==='expert' 用）。
+    // _humanVpipHands=已统计手数、_humanVpipCount=自愿入池手数、
+    // _humanActedThisHand=本手人类是否行动过（startHand 边界累加用）。
+    // 不进 setData/三道指纹（纯实例字段，仅 scheduleAI 注入 tight 时读）。
+    this._humanVpipHands = 0;
+    this._humanVpipCount = 0;
+    this._humanActedThisHand = false;
     this.chatSeq = this.chatSeq || 0;
     // 氛围状态：页面级重置（连胜/频控/飞行 id 随页面实例归零）
     winStreaks = {};
@@ -2174,6 +2181,12 @@ Page({
     // 但「本手不参与」≠「自动淘汰」——此处检测筹码归零者记名次推进赛制。
     // 放在 startHand 成功后：此时游戏对象字段（stack/folded）已就绪。
     if (this.mode === 'sng') this._sngDetectEliminations();
+    // 批⑨：startHand 边界——上手机人类若行动过，计入已统计手数并重置本手标记。
+    // 仅 expert：小样本（<3 手）不注入 tight，避免噪音主导。SNG 终局 r.ok=false 分支已在上方 return，不计数。
+    if (this.mode === 'ai' && this.level === 'expert' && this._humanActedThisHand) {
+      this._humanVpipHands++;
+      this._humanActedThisHand = false;
+    }
     this.prevDealerSeat = prevDealer;
     myActText = '';
     myActCls = '';
@@ -2251,6 +2264,19 @@ Page({
       // 触发终局结算——endGame 内会按 sngPlacement 排名次表
       this.endGame();
     }
+  },
+
+  /**
+   * 批⑨：根据人类滚动 VPIP 调整 AI 风格 tight 值（零引擎改动，纯包装层）。
+   * 引擎 aiDecide 翻前用 style.tight（threshold=26-tight*10），此处构造调整后的 style 副本传入。
+   * 基准 0.28 与 style-analyzer VPIP_LOOSE 一致；delta=(humanVpip-0.28)*0.5。
+   * 人类 VPIP 高（松）→ delta 正 → bot 收紧（不陪松玩家）；人类 VPIP 低（紧）→ delta 负 → bot 放松（多偷池）。
+   * 纯算术，不调用概率路径（rnd()/rng.float()），不修改 baseStyle 原对象（Object.assign 副本）。 */
+  _adjustTightByVpip(baseStyle, humanVpip) {
+    const adjusted = Object.assign({}, baseStyle);
+    const delta = (humanVpip - 0.28) * 0.5;
+    adjusted.tight = Math.max(0, Math.min(1, baseStyle.tight + delta));
+    return adjusted;
   },
 
   /**
@@ -3643,10 +3669,18 @@ Page({
     if (game.actionSeat !== this.mySeat || game.result) return;
     // 任何行动都先解除弃牌确认态（防确认态残留到下一回合）
     if (this.data.foldConfirm) { this.setData({ foldConfirm: false }); this.clearFoldTimer(); }
+    // 批⑨：act 前 street 快照——game.act() 可能触发街推进，翻前计数必须取推进前的 street
+    const streetBefore = game.street;
     const res = game.act(this.mySeat, action, amount);
     if (!res.ok) {
       wx.showToast({ title: res.error, icon: 'none' });
       return;
+    }
+    // 批⑨：AI 读人反制——翻前自愿入池计数（仅 expert）。
+    // 口径同 style-analyzer：blind/check 不计，call/raise/allin 计入自愿入池。
+    if (this.mode === 'ai' && this.level === 'expert' && streetBefore === P.STREET.PREFLOP) {
+      if (action === 'call' || action === 'raise' || action === 'allin') this._humanVpipCount++;
+      this._humanActedThisHand = true;
     }
     myActText = text;
     myActCls = cls;
@@ -4010,6 +4044,15 @@ Page({
 
         const seats = game.inHandPlayers().map(x => x.seat);
         const pf = (seats.indexOf(seat) - seats.indexOf(game.dealerSeat) + seats.length) % seats.length;
+        // 批⑨：AI 读人反制——expert 难度下，按人类玩家滚动 VPIP 调整 bot 的 tight。
+        // 人类松（高 VPIP）→ bot 收紧（多弃牌不陪松玩家）；人类紧（低 VPIP）→ bot 放松
+        // （多偷池）。用 Object.assign 副本注入，不碰 p.style 原对象。零引擎改动：
+        // 引擎 aiDecide 读 ctx.style.tight，此处调的就是它读到的值，签名不变。
+        let aiStyle = p.style;
+        if (this.mode === 'ai' && this.level === 'expert' && this._humanVpipHands >= 3) {
+          const humanVpip = this._humanVpipCount / this._humanVpipHands;
+          aiStyle = this._adjustTightByVpip(p.style, humanVpip);
+        }
         const d = P.aiDecide({
           hole: p.hole,
           board: game.board,
@@ -4019,7 +4062,7 @@ Page({
           currentBet: game.currentBet,
           numActive: game.activePlayers().length,
           positionFactor: pf <= 1 ? 0.9 : (pf <= 3 ? 0.4 : 0),
-          style: p.style,
+          style: aiStyle,
           minRaiseTo: legal.minRaiseTo,
           maxRaiseTo: legal.maxRaiseTo,
           // 加注权 & 大盲一并交给 AI：退化路径的估算区间不精确，

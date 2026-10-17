@@ -2034,6 +2034,9 @@ while (guard++ < 400) {
 
     // ---- 高光分享卡片（批⑦）静态守卫 ----
     guardShareCardIntegration(tableSrc, tableWxml, tableWxss, profSrc, hlSrc);
+
+    // ---- AI 读人反制（批⑨）静态守卫 ----
+    guardAiCounterIntegration(tableSrc);
   })();
 
   /* ---------- 静态守卫函数定义区 ----------
@@ -3377,6 +3380,54 @@ while (guard++ < 400) {
     ok(/onShareTimeline/.test(profSrc), 'profile.js 定义 onShareTimeline');
     ok(/highlightBest\.summary/.test(profSrc) || /best\.summary/.test(profSrc),
       'profile.js onShareAppMessage 用 highlightBest.summary 作 title');
+  }
+
+  /* 批⑨ AI 读人反制：零引擎改动，纯 table.js 包装层注入滚动 VPIP 调整 tight。 */
+  function guardAiCounterIntegration(tableSrc) {
+    // ---- 滚动 VPIP 实例字段（onLoad 初始化） ----
+    ok(/_humanVpipHands\s*=\s*0/.test(tableSrc), 'table.js onLoad 初始化 _humanVpipHands=0');
+    ok(/_humanVpipCount\s*=\s*0/.test(tableSrc), 'table.js onLoad 初始化 _humanVpipCount=0');
+    ok(/_humanActedThisHand\s*=\s*false/.test(tableSrc), 'table.js onLoad 初始化 _humanActedThisHand=false');
+
+    // ---- _adjustTightByVpip 方法 ----
+    ok(/_adjustTightByVpip\s*\(/.test(tableSrc), 'table.js 定义 _adjustTightByVpip 方法');
+    ok(/Object\.assign\(\{\},\s*baseStyle\)/.test(tableSrc),
+      'table.js _adjustTightByVpip 用 Object.assign 副本（不修改 p.style 原对象）');
+    ok(/0\.28/.test(tableSrc), 'table.js VPIP 基准 0.28（与 style-analyzer VPIP_LOOSE 一致）');
+    ok(/Math\.max\(0,\s*Math\.min\(1,/.test(tableSrc) || /Math\.min\(1,\s*Math\.max\(0,/.test(tableSrc),
+      'table.js _adjustTightByVpip clamp01 限制 tight ∈[0,1]');
+    // 概率守卫：_adjustTightByVpip 内禁止调用 rnd()/rng.float()（纯算术）
+    const adjMatch = tableSrc.match(/_adjustTightByVpip\(baseStyle,\s*humanVpip\)\s*\{[\s\S]*?\n\s*\}/);
+    ok(!!adjMatch, 'table.js _adjustTightByVpip 函数体可定位');
+    if (adjMatch) {
+      ok(!/rnd\(\)|rng\.float\(\)/.test(adjMatch[0]),
+        'table.js _adjustTightByVpip 纯算术，无 rnd()/rng.float() 概率调用');
+    }
+
+    // ---- expert 门控 ----
+    ok(/mode\s*===\s*['"]ai['"]\s*&&\s*this\.level\s*===\s*['"]expert['"]/.test(tableSrc),
+      "table.js AI 读人反制 expert 门控（mode==='ai' && level==='expert'）");
+    ok(/_humanVpipHands\s*>=\s*3/.test(tableSrc),
+      'table.js 最小 3 手后注入（_humanVpipHands>=3，防小样本噪音）');
+
+    // ---- doAct 翻前计数 ----
+    ok(/streetBefore\s*=\s*game\.street/.test(tableSrc),
+      'table.js doAct act 前记录 streetBefore（防 act 后街推进）');
+    ok(/P\.STREET\.PREFLOP/.test(tableSrc), 'table.js 翻前计数判 P.STREET.PREFLOP');
+    ok(/action\s*===\s*['"]call['"]\s*\|\|\s*action\s*===\s*['"]raise['"]\s*\|\|\s*action\s*===\s*['"]allin['"]/.test(tableSrc),
+      'table.js 翻前自愿入池计 call/raise/allin（blind/check 不计）');
+    ok(/_humanActedThisHand\s*=\s*true/.test(tableSrc),
+      'table.js 翻前任意动作设 _humanActedThisHand=true（startHand 边界累加用）');
+
+    // ---- startHand 边界累加 ----
+    ok(/_humanVpipHands\+\+/.test(tableSrc),
+      'table.js startHand 边界累加 _humanVpipHands++');
+
+    // ---- scheduleAI 注入点 ----
+    ok(/aiStyle\s*=\s*this\._adjustTightByVpip/.test(tableSrc),
+      'table.js scheduleAI 用 _adjustTightByVpip 构造 aiStyle');
+    ok(/style:\s*aiStyle/.test(tableSrc),
+      'table.js scheduleAI 传 style: aiStyle（不碰 p.style 原对象）');
   }
 
   /* ---------- 输出 ---------- */
