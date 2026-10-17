@@ -454,7 +454,10 @@ eq(roomSync.readySeats([mkRow(1, 99999, { ready_hand: 4 })], 4, now), {}, '离�
   await flush();
   ok(host.data.phase === 'playing', '房主：开局进入牌桌');
   eq(host.mySeat, 0, '房主：本地渲染座位仍是 0');
-  ok(host.data.seats.length === 3, '房主：3 个座位（含我）都在牌桌环上');
+  // 座位环按房间座位数铺满：桌上有几个位就画几个位，没坐满的那几个是空位
+  ok(host.data.seats.length === 4, '房主：座位环按房间 4 个位铺满，实际 ' + host.data.seats.length);
+  ok(host.data.seats.filter(s => !s.empty).length === 3,
+    '房主：3 个在座者（含我）都在牌桌环上，实际 ' + host.data.seats.filter(s => !s.empty).length);
   const seat2 = host.data.seats.filter(s => s.seat === 2)[0];
   ok(seat2 && seat2.stack >= 1980 && seat2.stack <= 2000,
     '房主：按好友买入额发筹码（2000，已扣盲注），实际 ' + (seat2 && seat2.stack));
@@ -471,7 +474,9 @@ eq(roomSync.readySeats([mkRow(1, 99999, { ready_hand: 4 })], 4, now), {}, '离�
   ok(friend.remoteMode === true, '好友：进入镜像模式（不跑引擎）');
   ok(friend.data.phase === 'playing', '好友：镜像进入牌桌');
   eq(friend.mySeat, 0, '好友：本地渲染座位恒 0');
-  ok(friend.data.seats.length === 3, '好友：同样 3 个座位（含镜像端的我）都在牌桌环上');
+  ok(friend.data.seats.length === 4, '好友：座位环同样按 4 个位铺满，实际 ' + friend.data.seats.length);
+  ok(friend.data.seats.filter(s => !s.empty).length === 3,
+    '好友：同样 3 个在座者（含镜像端的我）都在牌桌环上，实际 ' + friend.data.seats.filter(s => !s.empty).length);
   ok(friend.data.myCards.length === 2, '好友：myzone 有自己的两张底牌');
   ok(friend.data.myCards.every(c => !!c.rank && !!c.suit && !!c.cls),
     '好友：镜像底牌带 rank/suit/cls（渲染不缺字段）');
@@ -652,9 +657,10 @@ eq(roomSync.readySeats([mkRow(1, 99999, { ready_hand: 4 })], 4, now), {}, '离�
     ok(host.data.board.length === 0 && host.data.pot === 0,
       '房主：就绪阶段上一手公共牌与底池已收走');
     ok(host.data.myCards.length === 0, '房主：就绪阶段我的底牌已收走');
+    // 空位不参与就绪计票（它们没人在座），只校验在座座位
     ok(host.data.seats.length > 0 &&
-      host.data.seats.filter(s => !s.standing).every(s => s.ready === true || s.ready === false),
-      '房主：每个在座座位都带就绪徽章字段（true=已准备 / false=准备中，观战座不显示）');
+      host.data.seats.filter(s => !s.empty && !s.standing).every(s => s.ready === true || s.ready === false),
+      '房主：每个在座座位都带就绪徽章字段（true=已准备 / false=准备中，观战座与空位不显示）');
     await sleep(650);   // 等房主就绪状态广播穿透 ~500ms 节流窗口，好友轮询才能看到
 
     /* ---- 就绪同步：好友 + 房主 + 机器人齐 → 自动发下一手 ---- */
@@ -665,7 +671,7 @@ eq(roomSync.readySeats([mkRow(1, 99999, { ready_hand: 4 })], 4, now), {}, '离�
     ok(friend.data.board.length === 0 && friend.data.myCards.length === 0,
       '好友：镜像端同样收走上一手公共牌与底牌');
     ok(friend.data.seats.length > 0 &&
-      friend.data.seats.filter(s => !s.standing).every(s => s.ready === true || s.ready === false),
+      friend.data.seats.filter(s => !s.empty && !s.standing).every(s => s.ready === true || s.ready === false),
       '好友：镜像在座座位同样亮出就绪徽章');
     friend.sitDown();
     ok(friend.pendingSit === true, '好友：坐下（下一手生效）');

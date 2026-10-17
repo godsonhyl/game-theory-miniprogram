@@ -52,7 +52,10 @@ function ringPositions(seatSet, mySeat) {
   // 锚点若压到 y=15%，牌就正好落在 top:22% 的底池上。
   // 现取 cy=42 / ry=27 → 座位带最低 15%，块底约 27.6%，仍需靠 z-index 与底盘兜底，
   // 但顶/中座位不再直接骑在公共牌（top:46%）上。
-  const cx = 50, cy = 42, rx = 43, ry = 27;
+  // 大桌（7 座及以上）把椭圆撑宽压扁：座位越多弧上越挤，不加宽的话
+  // 8~9 人桌两侧座位会叠在一起（配合 .seat.tight 缩小座位块）。
+  const big = total >= 7;
+  const cx = 50, cy = 42, rx = big ? 46 : 43, ry = big ? 25 : 27;
   const pos = {};
   if (total === 1) {
     pos[arr[0]] = { x: 50, y: 82 };
@@ -80,6 +83,28 @@ function ringPositions(seatSet, mySeat) {
 }
 /** ringPositions 的模块级缓存（seatSet+mySeat → 坐标对象） */
 const _ringCache = {};
+
+/**
+ * 空座位条目（游戏中座位环的占位）。
+ *
+ * 桌上有 N 个位，人没坐满时那几个位照样要画出来——否则 8 人房 5 人开局，
+ * 玩家看到的只有 5 个位、根本不知道还能再进 3 个人（更没法点空位加入）。
+ * 字段与「有人的座位」逐条对齐，WXML 里共用同一套模板，
+ * 靠 empty 让 .sit-btn 显形、其余元素自然不渲染。
+ */
+function emptySeat(seat, pp, inGame) {
+  return {
+    seat, seatNo: seat + 1, cls: 'seat empty', name: '', initial: '', empty: true,
+    // 牌桌上的空位文案跟着阶段走：等待室是「坐下」，牌局中是「入座」
+    // （按钮文案一律在 JS 里算好，WXML 只取值——三元表达式放进 wxml 会编译失败）
+    sitText: inGame ? '入座' : '坐下',
+    x: pp.x, y: pp.y, stack: '', bet: 0, allIn: false, folded: false,
+    standing: false, active: false, isDealer: false, isSB: false, isBB: false,
+    isMe: false, ready: null, cardsBack: false, showCards: false, hole: [],
+    win: false, winGain: 0, timer: '', timerPct: 0, timerUrgent: false,
+    actText: '', actCls: ''
+  };
+}
 
 /** 电脑玩家名（AI 桌的预设对手；NAMES[0] 是「我」的占位，组局时按 mySeat 覆盖） */
 const BOT_NAMES = ['林小满', '陈默', '苏晴', '赵岩', '周叙'];
@@ -376,6 +401,11 @@ Page({
     this.hostStaleSince = 0;   // 好友端：房主心跳疑似停滞的起始时刻（超宽限判房间僵死）
     this.botSeats = {};        // 机器人座位（不会上行动作，超时不管）
     this.pendingSitMap = {};   // 好友「坐下」待下一手生效：seat → true
+    this.pendingJoinMap = {};  // 好友中途加入：房间座位 → { name, stack }，下一手插入
+    this.pendingMove = null;   // 游戏中换座：{ from, to }，下一手发牌前落位
+    this.pendingJoin = null;   // 中途加入：{ seat, stack, name, isHuman, style }
+    this.pendingBotSeat = null;// AI 桌：空位补电脑玩家的目标座位
+    this.leftPlayers = [];     // 中途离场者战绩留档（结算单仍统计他们）
     this.pollTimer = null;
     this.hbTimer = null;
     this.publishTimer = null;
@@ -612,6 +642,10 @@ Page({
       return {
         seat: s.seat,
         seatNo: s.seat + 1,
+        // cls 此前只有游戏态在构造，等待室这里漏了 → class 为空 → 座位拿不到
+        // .seat 的绝对定位，与游戏中共用的座位环位置对不上。补齐后两态一致。
+        cls: ['seat', list.length >= 7 ? 'tight' : '', empty ? 'empty' : '', s.isMe ? 'self' : ''].filter(Boolean).join(' '),
+        sitText: '坐下',
         x: p.x, y: p.y,
         empty,
         occupied: !!s.occupied,
@@ -904,6 +938,9 @@ Page({
           this.setData({ phase: 'waiting', result: null, summary: null, timeUp: false, resultModal: null });
           if (game) game.result = null;
         }
+        // 座位环按房间座位数铺满：以房主广播为准。好友从分享卡片进来时 URL
+        // 不带 max，默认 6 会让 4 人桌在他那边多画出 2 个不存在的空位。
+        if (st.maxSeats) this.maxSeats = Math.min(9, Math.max(2, Number(st.maxSeats) || 6));
         this.renderWait();
         return;
       }
@@ -939,7 +976,7 @@ Page({
       .filter(s => s.isBot)
       .map(s => ({ seat: s.seat, kind: 'bot', name: s.name }));
     // 任何一处静默吞错都会让好友端 UI 与权威端静默撕裂；改回去前先读评审报告 MEDIUM 一节。
-    roomSync.publishState(this.roomNo, { kind: 'waiting', seats: bots })
+    roomSync.publishState(this.roomNo, { kind: 'waiting', seats: bots, maxSeats: this.maxSeats })
       .catch(() => this.syncFailToast('布局广播失败，好友端可能暂看不到'));
   },
 
@@ -948,19 +985,32 @@ Page({
    * 点自己的座位可改买入额；点已占用座位给出提示。
    */
   chooseSeat(e) {
-    if (this.data.phase !== 'waiting') return;
     const seat = Number(e.currentTarget.dataset.seat);
     if (isNaN(seat)) return;
-    const source = (this.data.waitSeats || []);
-    const target = source.filter(s => s.seat === seat)[0];
-    if (!target) return;
-    if (target.occupied && !target.isMe) { wx.showToast({ title: '该座已有人', icon: 'none' }); return; }
-
-    // 弹窗选买入额（默认沿用上次选择或默认买入）
+    // 等待室：原流程（选买入额 → 落座，开局才发牌）
+    if (this.data.phase === 'waiting') {
+      const source = (this.data.waitSeats || []);
+      const target = source.filter(s => s.seat === seat)[0];
+      if (!target) return;
+      if (target.occupied && !target.isMe) { wx.showToast({ title: '该座已有人', icon: 'none' }); return; }
+      this.setData({
+        buyInShow: true,
+        buyInSeat: seat,
+        buyInValue: this.buyInStack[seat] || DEFAULT_BUY_IN
+      });
+      return;
+    }
+    // 游戏中（含就绪阶段）：桌上有 N 个位，没坐满时那几个位照样能点。
+    // 只拦「正坐着人」的位——站起观战者（sittingOut）不算占座，可以让位给新来的人。
+    const occupant = game ? game.seatOf(seat) : null;
+    if (occupant && !occupant.sittingOut) {
+      wx.showToast({ title: '该座已有人', icon: 'none' }); return;
+    }
+    this.buyInStack[seat] = this.buyInStack[seat] || DEFAULT_BUY_IN;
     this.setData({
       buyInShow: true,
       buyInSeat: seat,
-      buyInValue: this.buyInStack[seat] || DEFAULT_BUY_IN
+      buyInValue: this.buyInStack[seat]
     });
   },
 
@@ -981,7 +1031,178 @@ Page({
     const buyIn = Number(this.data.buyInValue) || DEFAULT_BUY_IN;
     if (seat < 0) { this.setData({ buyInShow: false }); return; }
     this.setData({ buyInShow: false, buyInSeat: -1 });
-    this.sitSeat(seat, buyIn);
+    // 等待室：直接落座，开局发牌；游戏中：下一手才入局（不插当前手）
+    if (this.data.phase === 'waiting') {
+      this.sitSeat(seat, buyIn);
+    } else {
+      this.joinMidGame(seat, buyIn);
+    }
+  },
+
+  /**
+   * 游戏中（含就绪阶段）入座：选好买入额后，下一手发牌才正式入局——
+   * 不插进当前进行中的这一手（本手仍观战，轮到也自动弃牌）。
+   *
+   * 三种情形在一个入口收口，全部推迟到下一手生效：
+   *   ① 我还没座位（新进来 / 已离席）→ 中途加入，落到点的那个位
+   *   ② 我已有座位（含站起观战中）  → 换座，下一手挪到新位
+   *   ③ AI 桌我已在座              → 点空位 = 在该位补一个电脑玩家
+   * 顶替：目标位上是站起观战的人时，他把位子让给新来的——战绩先转入 leftPlayers，
+   *      结算单照旧统计他（让座不等于从结算里消失）。
+   *
+   * 好友房镜像端：座位号是本地重映射的，上行一律换成房间座位号，
+   * 否则房主端按「座位伪冒」直接丢弃。
+   */
+  joinMidGame(seat, buyIn) {
+    if (!game) return;
+    this.vacateIfStanding(seat);
+    this.buyInStack[seat] = buyIn;
+    if (this.remoteMode) {
+      const roomSeat = this.roomSeatOfLocal(seat);
+      // 先占云端的房间座位，再上行加入动作——两条串在一条链上，
+      // 任一步失败都统一提示（上行失败必须让用户看见，不能静默吞掉）
+      roomSync.moveSeat(this.roomNo, roomSeat, buyIn)
+        .then(() => roomSync.pushAction(this.roomNo, { type: 'join', seat: roomSeat }))
+        .catch(() => this.syncFailToast('入座未同步成功，请重试'));
+      this.pendingSit = true;
+      wx.showToast({ title: '下一手开始入局', icon: 'none' });
+      this.render();
+      return;
+    }
+    const me = game.seatOf(this.mySeat);
+    const seated = me && !me.sittingOut;
+    if (!me) {
+      // ① 中途加入：引擎里还没我这个人，下一手把新玩家插进去
+      this.pendingJoin = {
+        seat, stack: buyIn, isHuman: true,
+        name: this.meLabel(this.isOwner),
+        style: { aggro: 0.4, tight: 0.35 }
+      };
+      this.myStanding = false;
+      wx.showToast({ title: '下一手开始入局', icon: 'none' });
+    } else if (this.mode === 'ai' && seated) {
+      // ③ AI 桌：我一直在座，点空位就是在那位补个电脑玩家
+      this.pendingBotSeat = seat;
+      wx.showToast({ title: '下一手安排电脑玩家入座', icon: 'none' });
+    } else if (seat === this.mySeat) {
+      // 点自己的位（站起观战中）→ 重新入局
+      this.pendingSit = true;
+      this.myStanding = false;
+      wx.showToast({ title: '下一手开始入局', icon: 'none' });
+    } else {
+      // ② 换座：本手打完再挪位
+      this.pendingMove = { from: this.mySeat, to: seat };
+      this.myStanding = false;
+      // 房主换座要同步到云端：好友端的座位布局以云端座位行为准，
+      // 不同步的话好友那边看到的还是旧座位
+      if (this.syncLive && this.isOwner) {
+        this.roomSeat = seat;
+        roomSync.moveSeat(this.roomNo, seat, buyIn)
+          .catch(() => this.syncFailToast('换座同步失败'));
+      }
+      wx.showToast({ title: '下一手换到 ' + (seat + 1) + ' 号位', icon: 'none' });
+    }
+    this.render();
+  },
+
+  /**
+   * 目标位上是「站起观战」的人 → 他让位：先留档战绩再移出席位。
+   *
+   * 留档是必须的：结算单要统计所有参与过这局的人，中途离场者若直接从
+   * game.players 消失，他就从结算单里蒸发了——账面盈亏会对不上。
+   * leftPlayers 在 endGame 与在座者合并统计，并标「中途离场」。
+   */
+  vacateIfStanding(seat) {
+    if (!game) return;
+    const p = game.seatOf(seat);
+    if (!p || !p.sittingOut) return;
+    const buyIn = this.startStacks[p.seat] !== undefined ? this.startStacks[p.seat] : p.stack;
+    this.leftPlayers.push({
+      seat: p.seat, name: p.name || '玩家', isHuman: !!p.isHuman,
+      buyIn, stack: p.stack, left: true
+    });
+    delete this.startStacks[p.seat];
+    delete this.standingMap[p.seat];
+    delete this.botSeats[p.seat];
+    game.players = game.players.filter(x => x.seat !== seat);
+  },
+
+  /**
+   * 下一手发牌前落位：换座 / 中途加入 / 补电脑玩家，三件都在引擎开新一手
+   * （game.startHand）之前完成——引擎的座位名单、按钮轮转、盲注与发牌都是
+   * 那一刻从 game.players 现算的，早一步插进去，新座位这一手就自然进了牌局。
+   */
+  applyPendingSeats() {
+    if (!game) return;
+    // ① 换座：记账跟着座位走（起始筹码按座位记账），并同步庄位引用
+    if (this.pendingMove) {
+      const from = this.pendingMove.from;
+      const to = this.pendingMove.to;
+      this.pendingMove = null;
+      const p = game.seatOf(from);
+      if (p && !game.seatOf(to)) {
+        if (this.startStacks[from] !== undefined) {
+          this.startStacks[to] = this.startStacks[from];
+          delete this.startStacks[from];
+        }
+        if (this.botSeats[from]) { delete this.botSeats[from]; this.botSeats[to] = true; }
+        delete this.standingMap[from];
+        p.seat = to;
+        p.sittingOut = false;                 // 换座即入座（含观战者重新入局）
+        // 庄位若正落在这个座位，跟着迁移，否则按钮轮转会被打回 seats[0]
+        if (game.dealerSeat === from) game.dealerSeat = to;
+        if (game.sbSeat === from) game.sbSeat = to;
+        if (game.bbSeat === from) game.bbSeat = to;
+        if (this.mySeat === from) this.mySeat = to;
+      }
+    }
+    // ② 中途加入：引擎里没有这个人 → 新建玩家插进去
+    if (this.pendingJoin) {
+      const j = this.pendingJoin;
+      this.pendingJoin = null;
+      if (!game.seatOf(j.seat)) {
+        game.players.push({
+          id: 'p' + j.seat + '-' + Date.now(), name: j.name, seat: j.seat,
+          stack: j.stack, isHuman: !!j.isHuman, style: j.style,
+          hole: [], folded: false, allIn: false,
+          bet: 0, committed: 0, actedBet: null, canRaise: true, sittingOut: false,
+          hands: 0, net: 0
+        });
+        this.startStacks[j.seat] = j.stack;
+        if (j.isHuman) { this.mySeat = j.seat; this.myStanding = false; }
+        delete this.standingMap[j.seat];
+      }
+    }
+    // ③ AI 桌：空位补一个电脑玩家
+    if (this.pendingBotSeat !== null && this.pendingBotSeat !== undefined) {
+      const seat = this.pendingBotSeat;
+      this.pendingBotSeat = null;
+      if (!game.seatOf(seat)) {
+        const botNo = game.players.filter(x => !x.isHuman).length;
+        game.players.push({
+          id: 'bot' + seat + '-' + Date.now(), name: this.botLabel(botNo), seat,
+          stack: DEFAULT_BUY_IN, isHuman: false,
+          style: botProfiles.styleFor(botNo, this.mode === 'ai' ? this.level : 'advanced'),
+          hole: [], folded: false, allIn: false,
+          bet: 0, committed: 0, actedBet: null, canRaise: true, sittingOut: false,
+          hands: 0, net: 0
+        });
+        this.botSeats[seat] = true;
+        this.startStacks[seat] = DEFAULT_BUY_IN;
+      }
+    }
+  },
+
+  /**
+   * 镜像端（好友）：本地座位是 loadSnapshot 重映射后的紧凑号，
+   * 与房间座位号不是同一个东西——上行的座位号必须是房间座位号。
+   * 逆映射表在 enterRemote 时按引擎同一套规则复算（房间座位升序 → 本地 0,1,2…）。
+   */
+  roomSeatOfLocal(localSeat) {
+    if (this._localToRoom && this._localToRoom[localSeat] !== undefined) {
+      return this._localToRoom[localSeat];
+    }
+    return localSeat;
   },
 
   /** 落座（含换座）：本地即时反馈 + 云端同步，买入额随行写入 */
@@ -1087,6 +1308,25 @@ Page({
       delete this.standingMap[seat];
       const p = game.seatOf(seat);
       if (p) this.pushChat(seat, p.name, '重新入局（下一手生效）');
+      this.forcePublish();
+      return;
+    }
+    if (a.type === 'join') {
+      // 中途加入：好友在牌局进行中占了新座位。
+      // 房主端的座位号就是房间座位号，无需重映射——直接用动作来源行自己的座位。
+      if (Number(a.seat) !== Number(a.rowSeat)) return;   // 座位伪冒 → 丢弃
+      // 座位已被占（可能是别人抢先一步）→ 退化成「重新入局」，不重复插人
+      if (game.seatOf(seat)) {
+        this.pendingSitMap[seat] = true;
+      } else {
+        const row = (this.roomRows || []).filter(r => Number(r.seat) === seat)[0];
+        this.pendingJoinMap[seat] = {
+          name: (row && row.name) || '玩家',
+          stack: Number(row && row.stack) || DEFAULT_BUY_IN
+        };
+      }
+      delete this.standingMap[seat];
+      this.pushChat(seat, '玩家', '加入牌局（下一手生效）');
       this.forcePublish();
       return;
     }
@@ -1237,6 +1477,10 @@ Page({
       summary: this.data.summary || null,
       clockPendingEnd: !!this.data.clockPendingEnd,   // 到点挂起中：好友端也显示「本手后」
       handNo: game.handNo,
+      // 房间座位数：座位环按它铺满，好友端必须与房主端看到同样多的位。
+      // 好友从分享卡片进来时 URL 上不带 max，默认 6 会让 4 人桌在他那边
+      // 多画出 2 个根本不存在的空位（还能点进去，点了坐不上）。
+      maxSeats: this.maxSeats,
       // 氛围表情队列（设计 §1）：随快照广播，镜像端按放行窗口渲染。
       // 频控已在发送端/冒泡侧做过，这里只做滚动上限截断。
       emotes: (this.data.emotes || []).slice(-EMOTE_QUEUE_MAX),
@@ -1281,6 +1525,9 @@ Page({
   enterRemote(st) {
     const snap = st && st.snapshot;
     if (!snap) return;
+    // 座位环按房间座位数铺满：以房主广播为准。好友从分享卡片进来时 URL 不带
+    // max，默认 6 会让 4 人桌在他那边多画出 2 个根本不存在的空位（还能点进去）。
+    if (st.maxSeats) this.maxSeats = Math.min(9, Math.max(2, Number(st.maxSeats) || 6));
     if (!game) {
       game = P.createGame({ players: [], sb: 10, bb: 20, dealerSeat: 0, seed: 'mirror-' + this.roomNo });
     }
@@ -1301,6 +1548,10 @@ Page({
     ((snap.players && snap.players.map(p => p.seat)) || []).sort((a, b) => a - b).forEach(s => {
       remapS[s] = (s === this.roomSeat) ? 0 : nextLocal++;
     });
+    // 逆映射留档：本地座位 → 房间座位。上行的座位号（入座/换座）必须是房间座位号，
+    // 房主端按房间座位记账，传本地号会被当成座位伪冒直接丢弃。
+    this._localToRoom = {};
+    Object.keys(remapS).forEach(r => { this._localToRoom[remapS[r]] = Number(r); });
     const list = (st.readyList || [])
       .map(x => Object.assign({}, x, { seat: remapS[Number(x.seat)] !== undefined ? remapS[Number(x.seat)] : -1 }))
       .filter(x => x.seat >= 0);
@@ -1734,6 +1985,11 @@ Page({
       this.botSeats = {};
       players.forEach(p => { if (p.id.indexOf('bot') === 0) this.botSeats[p.seat] = true; });
       this.pendingSitMap = {};
+      this.pendingJoinMap = {};
+      this.pendingMove = null;
+      this.pendingJoin = null;
+      this.pendingBotSeat = null;
+      this.leftPlayers = [];     // 新一局：中途离场者的战绩留档从零开始
 
       // 批⑤：SNG 赛制初始化——淘汰名次从总人数倒数（第 N 名先淘汰），涨盲默认 3 分钟
       if (this.mode === 'sng') {
@@ -1880,7 +2136,9 @@ Page({
   },
 
   /**
-   * 时长到点：结束本局，统计所有参与人盈亏（当前筹码 − 起始筹码），按盈亏排名。
+   * 时长到点：结束本局，统计**所有参与过游戏的人**盈亏（当前筹码 − 起始筹码），
+   * 按盈亏排名。中途站起/掉线离场者同样入单并标「中途离场」，每行带齐
+   * 带入 / 剩余 / 盈亏，底部另有全员合计对账行。
    * 结束的是「这一局」，不是退出房间——房间仍在，可再来一局或返回。
    */
   endGame() {
@@ -1949,17 +2207,39 @@ Page({
       return;
     }
 
-    const rows = game.players.map(p => ({
-      seat: p.seat,
-      name: p.name,
-      stack: p.stack,
-      buyIn: this.startStacks[p.seat] !== undefined ? this.startStacks[p.seat] : p.stack,
+    // 全员统计（用户 2026-10-16 反馈）：结算单必须覆盖**所有参与过游戏的人**，
+    // 包括中途站起离场、掉线自动站起、站起后未再入局者——引擎的 game.players
+    // 始终保留这些座位（站起只置 sittingOut，筹码原样保留），所以逐人遍历即可
+    // 全覆盖；中途离场的人额外打 left 标记，结算单上可见「中途离场」。
+    // 每行带齐「带入 / 剩余 / 盈亏」三件套，另有全员合计（total）供对账。
+    // 让位离场者（座位被新来的人顶替）已移出 game.players，账却要继续记：
+    // 他们打过的那些手若直接从结算单消失，全桌合计盈亏就对不上。
+    // 与在座者合并统计，统一标「中途离场」。
+    const rows = (this.leftPlayers || []).map(p => ({
+      seat: p.seat, name: p.name, stack: p.stack, buyIn: p.buyIn,
+      net: p.stack - p.buyIn, isMe: !!p.isHuman, left: true
+    })).concat(game.players.map(p => {
       // 盈亏基准 = 起始筹码。兜底不再是常数 1000（站起观战者/续局快照缺项者曾被
       // 凭空记 ±几百的假盈亏），而是该玩家当前筹码——即「无基准记录则视为 0 盈亏」，
       // 与 startStacks 的记账语义一致（评审 2026-10-15 MEDIUM）。
-      net: p.stack - (this.startStacks[p.seat] !== undefined ? this.startStacks[p.seat] : p.stack),
-      isMe: !!p.isHuman
+      const buyIn = this.startStacks[p.seat] !== undefined ? this.startStacks[p.seat] : p.stack;
+      return {
+        seat: p.seat,
+        name: p.name,
+        stack: p.stack,
+        buyIn: buyIn,
+        net: p.stack - buyIn,
+        isMe: !!p.isHuman,
+        // 中途离场：站起/掉线自动站起（sittingOut 是权威标记，isStanding 兜住
+        // 本地「我已站起」等仅存在于 UI 层的状态）
+        left: !!(p.sittingOut || this.isStanding(p.seat))
+      };
     })).sort((a, b) => b.net - a.net);
+    // 全员合计：所有人带入 / 剩余 / 盈亏的总和。零和游戏里合计盈亏 ≈ 0，
+    // 对不上即说明有记账缺口——这行本身就是一张自检表。
+    const sumBuyIn = rows.reduce((s, r) => s + r.buyIn, 0);
+    const sumStack = rows.reduce((s, r) => s + r.stack, 0);
+    const sumNet = sumStack - sumBuyIn;
 
     const me = rows.filter(r => r.isMe)[0];
     this.setData({
@@ -1981,7 +2261,14 @@ Page({
         myNetText: me ? ((me.net >= 0 ? '+' : '') + me.net) : '0',
         // 我的「带入 / 剩余 / 盈亏」三件套（结算单顶部概览用）
         myBuyIn: me ? me.buyIn : 0,
-        myStack: me ? me.stack : 0
+        myStack: me ? me.stack : 0,
+        // 全员合计（结算单底部对账行）：所有人带入 / 剩余 / 盈亏总和
+        total: {
+          buyIn: sumBuyIn,
+          stack: sumStack,
+          net: sumNet,
+          netText: (sumNet >= 0 ? '+' : '') + sumNet
+        }
       }
     });
 
@@ -2129,10 +2416,15 @@ Page({
     winStreaks = {};             // 连胜计数随新手清零（设计 §2.2：连胜徽章只活到下一手）
     this._winFxSeats = [];
     this.setData({ spark: null, flyOut: [], flyIn: [], winFx: '', streaks: {} });
+    // 中途入座 / 换座 / 补电脑玩家：本手结束、下一手发牌前落位
+    this.applyPendingSeats();
     // 「坐下加入游戏」下一手才生效：本手发牌前正式落座并入局
     if (this.pendingSit) {
       this.pendingSit = false;
       this.myStanding = false;
+      // 中途加入的座位：本手为观战（sittingOut），下一手正式入局需清除该标记
+      const me = game.seatOf(this.mySeat);
+      if (me) me.sittingOut = false;
     }
     // 跨设备：好友的「坐下」上行到本手才生效（清 sittingOut 正式入局）
     if (this.pendingSitMap && game) {
@@ -2141,6 +2433,28 @@ Page({
         if (p) p.sittingOut = false;
       });
       this.pendingSitMap = {};
+    }
+    // 跨设备：好友的中途加入（引擎里本没有这个座位的人）→ 下一手发牌前插入。
+    // 座位号沿用房间座位号，与房主端其余记账完全同一套坐标。
+    if (this.pendingJoinMap && game) {
+      Object.keys(this.pendingJoinMap).forEach(s => {
+        const seat = Number(s);
+        const info = this.pendingJoinMap[s] || {};
+        const stack = Number(info.stack) || DEFAULT_BUY_IN;
+        if (!game.seatOf(seat)) {
+          game.players.push({
+            id: 'p' + seat + '-' + Date.now(),
+            name: info.name || '玩家', seat, stack, isHuman: true,
+            style: { aggro: 0.4, tight: 0.35 },
+            hole: [], folded: false, allIn: false,
+            bet: 0, committed: 0, actedBet: null, canRaise: true, sittingOut: false,
+            hands: 0, net: 0
+          });
+          this.startStacks[seat] = stack;
+        }
+        delete this.standingMap[seat];
+      });
+      this.pendingJoinMap = {};
     }
     // 新的一手开始，清理上一手的就绪状态与结算弹窗
     this.clearReadyClock();
@@ -2188,6 +2502,10 @@ Page({
       this._humanActedThisHand = false;
     }
     this.prevDealerSeat = prevDealer;
+    // 加注档位重置追踪：与本手 handNo 对齐，双保险覆盖 render 的跨手检测
+    // （resetRaiseState 已置 _raiseResetPending，这里再锚定 handNo，
+    //  即便某次 render 跳过也不致下一手残留上一手的高亮选择）。
+    this._raiseHandNo = game.handNo;
     myActText = '';
     myActCls = '';
     this.render();
@@ -2465,9 +2783,19 @@ Page({
       // 座位环：所有玩家（含「我」）都渲染在椭圆上——「我」锚定在底部中央，
       // 与等待室共用同一套坐标系（ringPositions）→ 开局瞬间座位位置完全连续、无跳变。
       // 我的底牌仍单独展示在底部我的操作区（myzone），座位卡只放身份/筹码/下注/状态。
-      const allSeats = game.players.map(p => p.seat);
+      // 座位环按房间设定的 N 个位整体铺开：桌子有几个位就画几个位，
+      // 空位同样常显（带「坐下」按钮）→ 人员不满时能看见、能点进去加入或换座。
+      // （旧版只画 game.players：8 人房 5 人开局，剩下 3 个位在界面上根本不存在。）
+      const allSeats = [];
+      for (let si = 0; si < this.maxSeats; si++) allSeats.push(si);
+      // 兜底：万一有玩家的座位号落在房间座位数之外（默认局按预设名单建人），
+      // 也要进环——宁可多画一个位，不能让某个玩家在牌桌上凭空消失。
+      game.players.forEach(p => { if (allSeats.indexOf(p.seat) < 0) allSeats.push(p.seat); });
+      allSeats.sort((a, b) => a - b);
       const pos = ringPositions(allSeats, this.mySeat);
-      const seats = game.players.map(p => {
+      const seats = allSeats.map(si => {
+        const p = game.seatOf(si);
+        if (!p) return emptySeat(si, pos[si] || { x: 50, y: 20 }, true);
         const pp = pos[p.seat] || { x: 50, y: 20 };
         const isMe = p.seat === this.mySeat;
         const isWinner = !readyPhase && result && result.winners.indexOf(p.seat) !== -1;
@@ -2477,6 +2805,9 @@ Page({
         const readyFlag = rEntry ? !!rEntry.ready : null;
         // 对手手中暗牌：未摊牌、未弃牌、有底牌 → 显示两张小牌背（WPK 式：一眼看出谁还在手）
         const cardsBack = !readyPhase && !isMe && !p.folded && !showdown && p.hole.length === 2;
+        // 摊牌亮牌：摊牌座位要整块浮到最上层——否则相邻座位的名牌/筹码堆
+        // 会压在刚亮出的两张牌上，等于「亮了还是看不清」。
+        const showCards = !readyPhase && !isMe && showdown && !p.folded && p.hole.length === 2;
         const isStanding = this.isStanding(p.seat);
         const isActive = !readyPhase && game.actionSeat === p.seat && !result;
         const isFolded = readyPhase ? false : !!p.folded;
@@ -2499,6 +2830,7 @@ Page({
          */
         const cls = [
           'seat',
+          allSeats.length >= 7 ? 'tight' : '',   // 大桌紧凑模式：8~9 人不挤成一团
           p.stack === undefined || p.name === '' ? 'empty' : '',   // 空位（等待室无人）
           isMe ? 'self' : '',
           isFolded ? 'folded' : '',
@@ -2506,7 +2838,8 @@ Page({
           isWinner ? 'win' : '',
           isStanding ? 'standing' : '',
           isEliminated ? 'eliminated' : '',   // 批⑤：淘汰灰显（声明在 folded/standing 之后以覆盖 opacity）
-          isWinner && this._winFxSeats && this._winFxSeats.indexOf(p.seat) >= 0 ? 'winfx' : ''
+          isWinner && this._winFxSeats && this._winFxSeats.indexOf(p.seat) >= 0 ? 'winfx' : '',
+          showCards ? 'reveal' : ''
         ].filter(Boolean).join(' ');
         return {
           seat: p.seat,
@@ -2531,7 +2864,7 @@ Page({
           ready: readyPhase ? readyFlag : null,
           // 对手底牌：平时不展示（德扑常识），仅摊牌时亮出；我在底部 myzone 单独展示
           cardsBack,
-          showCards: !readyPhase && !isMe && showdown && !p.folded && p.hole.length === 2,
+          showCards,
           hole: readyPhase ? [] : this.markBest(p.hole.map((card, ci) => this.cardData(card, ci)), bestSet),
           win: !!isWinner,
           // 摊牌后赢家座位直接飘出赢得的筹码数（WPK 式结算反馈）
@@ -2560,6 +2893,15 @@ Page({
       const isMyTurn = game.actionSeat === this.mySeat && !result && !standing;
       let legal = null;
       let raiseTo = 0;
+      // 跨手重置的触发条件 = 「手数前进」，而不是「走过 startHand()」。
+      // ⚠️ 曾经只挂在 startHand() 上，结果好友房复发「一直高亮上一局的」：
+      // 镜像端根本不走 startHand()——enterRemote() 直接 loadSnapshot 房主快照
+      // 再 setData + render()，续局 restoreRoom 同理。这些路径都绕过了重置点。
+      // 以 handNo 为判据挂在 render 上，所有让牌局前进的路径都被同一处覆盖。
+      if (game && this._raiseHandNo !== game.handNo) {
+        this._raiseHandNo = game.handNo;
+        this._raiseResetPending = true;
+      }
       // 每手重置：startHand 刚置的标志（见 resetRaiseState）。setData 异步，
       // this.data.raiseTo 同帧还是上一手的值，必须用实例字段在同一同步路径上覆盖，
       // 否则会出现「档位已高亮回『最小』，金额却还是上一手 100%」的新矛盾态。
@@ -2581,8 +2923,11 @@ Page({
       const raiseMax = (isMyTurn && legal) ? legal.maxRaiseTo : 0;
       // 步进 = 小盲注：滑杆与 ± 按钮都以它为单位，金额永不为零头
       const raiseStep = isMyTurn ? this.blindStep() : 0;
-      // 非我回合 / 不可加注时收起自定义面板，避免残留数值误导
-      const raiseCustom = isMyTurn && legal && legal.canRaise ? this.data.raiseCustom : false;
+      // 非我回合 / 不可加注时收起自定义面板，避免残留数值误导。
+      // 每手首帧额外强制收起：上一手展开的面板不得跨手残留（好友房镜像端同理）。
+      const raiseCustom = wasReset
+        ? false
+        : (isMyTurn && legal && legal.canRaise ? this.data.raiseCustom : false);
       // 实际会提交的加注额（与 onRaise 钳制同口径，仅用于按钮文案）：
       // 数字输入框能填出低于下限的值，而失焦补正未必先触发；到达上限则等价全下。
       // ⚠️ 读 raiseTo（上面算好的局部量）而非 this.data.raiseTo：每手重置帧
@@ -2609,6 +2954,9 @@ Page({
         raiseMax,
         raiseStep,
         raiseCustom,
+        // 档位高亮与金额必须同帧写入同一个 setData：分两次写会出现
+        //「高亮已回『最小』但金额还是上一手」的中间态被渲染出来。
+        raisePreset: wasReset ? 'min' : this.data.raisePreset,
         raiseSubmit,
         raiseAllIn,
         isMyTurn,
@@ -3924,6 +4272,15 @@ Page({
   },
 
   finishReadyPhase() {
+    // AI 对战（单机）：下一手必须由真人明确点「准备就绪」才发——绝不自动开局。
+    // 即使其余电脑玩家都已就绪，只要真人没点，就停在就绪阶段等真人入局。
+    // 用户 2026-10-16 反馈：未点准备就绪却自动下一局，这里兜底拦截。
+    // （checkAllReady 已要求全员就绪，此处再显式确认真人就绪，双保险。）
+    if (this.mode !== 'friend' && !(this.data.readyList || []).some(x => x.isMe && this.readyMap[x.seat])) {
+      this.renderReady();
+      this.setData({ readyHint: '请点「准备就绪」继续' });
+      return;
+    }
     this.clearReadyClock();
     this.setData({ readyPhase: false, readyLeft: 0, readyHint: '', myReady: false });
     this.uploadRecord();
@@ -3975,12 +4332,23 @@ Page({
     const seated = list.filter(x => this.seatedOf(x.seat));
     this.setData({ readyList: seated });
 
-    if (seated.length >= 2 && seated.every(x => !!this.readyMap[x.seat])) {
+    // ⚠️ AI 对战（单机）里「我」是唯一的真人。超时把我站起后，若还照常判断
+    //「剩余在座者是否都已准备」，我已被移出名单、剩下的电脑玩家又都已经准备，
+    // 于是直接开局——真机反馈：「我还没点准备就绪，怎么牌局就开始了」，
+    // 而且开局后我还变成了观战，更让人摸不着头脑。
+    // 单机场景必须留在这个阶段，等玩家自己从菜单「坐下加入游戏」重新入局，
+    // 不能开一局没有真人参与的纯电脑互打。好友房不受影响（那边本就是多人，
+    // 有人超时挂机、其他人继续是设计意图）。
+    const soleHumanStoodUp = this.mode !== 'friend' && !seated.some(x => x.seat === this.mySeat);
+
+    if (!soleHumanStoodUp && seated.length >= 2 && seated.every(x => !!this.readyMap[x.seat])) {
       this.finishReadyPhase();
       return;
     }
     this.renderReady();
-    if (seated.length < 2) {
+    if (soleHumanStoodUp) {
+      this.setData({ readyHint: '你已自动站起 · 菜单「坐下加入游戏」可重新入局' });
+    } else if (seated.length < 2) {
       this.setData({ readyHint: '人数不足 2 人 · 菜单「坐下加入游戏」可重新入局' });
     }
     this.render();

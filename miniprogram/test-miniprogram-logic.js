@@ -147,7 +147,11 @@ pageCtx.onBack();
 ok(global.__reLaunched || global.__navBack, '返回动作触发 navigateBack 或兜底 reLaunch');
 pageCtx.startGame();
 ok(dataStore.phase === 'playing', '房主点开始后进入牌桌');
-ok(dataStore.seats.length === 2, '2 人局：2 个座位都在牌桌环上（含我），实际 ' + dataStore.seats.length);
+// 座位环按房间座位数铺满：桌上有几个位就画几个位，没坐满的那几个显示为空位。
+// 旧断言只数「在座人数」，改铺满后应为 6 个位（其中 2 个位有人）。
+ok(dataStore.seats.length === 6, '2 人局：座位环按房间 6 个位铺满（含 4 个空位），实际 ' + dataStore.seats.length);
+ok(dataStore.seats.filter(s => !s.empty).length === 2,
+  '2 个在座的人都在环上（含我），实际 ' + dataStore.seats.filter(s => !s.empty).length);
 ok(dataStore.myCards.length === 2, '我的两张底牌已在 myzone 渲染，实际 ' + dataStore.myCards.length);
 ok(dataStore.pot === 30, '开局底池 30（盲注 10+20），实际 ' + dataStore.pot);
 
@@ -214,7 +218,9 @@ ok(!!global.__lastModal && global.__lastModal.title === '继续上一局？', '�
 ok(!!global.__lastModal && global.__lastModal.confirmText === '继续' && global.__lastModal.cancelText === '重开',
   '续局确认按钮：继续 / 重开');
 ok(dataStore.phase === 'playing', '选择「继续」后回到牌桌');
-ok(dataStore.seats.length === 2, '续局保留原座位数（2 个座位都在环上），实际 ' + dataStore.seats.length);
+ok(dataStore.seats.length === 6, '续局保留房间座位数（6 个位都在环上），实际 ' + dataStore.seats.length);
+ok(dataStore.seats.filter(s => !s.empty).length === 2,
+  '续局 2 个在座者仍在环上，实际 ' + dataStore.seats.filter(s => !s.empty).length);
 ok(dataStore.handNo === handBefore, '续局从第 ' + handBefore + ' 手继续，实际 ' + dataStore.handNo);
 ok(toasts.indexOf('已回到房间 · 第 ' + handBefore + ' 手') >= 0, '续局提示文案正确: ' + toasts.slice(-1)[0]);
 
@@ -273,7 +279,10 @@ pageCtx.addBot();
 pageCtx.startGame();
 ok(dataStore.phase === 'playing', '带时长的房间开局进入牌桌');
 ok(dataStore.remainSec === 1800, '开局倒计时 1800 秒，实际 ' + dataStore.remainSec);
-ok(dataStore.seats.length === 2, '4 人桌 2 人入局（2 个座位都在环上），实际 ' + dataStore.seats.length);
+// 4 人桌只坐了 2 人：环上依然是 4 个位，空着的那 2 个位可点「入座」加入
+ok(dataStore.seats.length === 4, '4 人桌座位环按 4 个位铺满，实际 ' + dataStore.seats.length);
+ok(dataStore.seats.filter(s => !s.empty).length === 2,
+  '4 人桌 2 人入局（2 个在座者在环上），实际 ' + dataStore.seats.filter(s => !s.empty).length);
 pageCtx.endGame();
 ok(dataStore.timeUp === true, '到点后置 timeUp');
 ok(!!dataStore.summary && dataStore.summary.title.indexOf('时长已到') > 0, '生成结束结算面板');
@@ -295,6 +304,28 @@ ok(dataStore.summary.rows.filter(r => r.isMe).length === 1, '结算标出我自�
   const row2 = dataStore.summary.rows.filter(r => r.seat === probe.seat)[0];
   eq(row2.net, 0, '无起始记录的座位盈亏记 0（不再按常数 1000 算假盈亏）');
   pageCtx.startStacks = savedSs;   // 还原记账，后续流程不受影响
+}
+/* ---------- 中途加入 / 换座：N 人桌没坐满时，中途还能进人 ----------
+   真机场景：8 人房开局只来 5 人，剩下的 3 个位必须看得见、点得进去。 */
+{
+  const gA = pageCtx.requireGame();
+  const cntA = gA.players.length;
+  // 房主端消化好友的「中途加入」动作：当手不插人，下一手才落座
+  pageCtx.applyFriendAction({ type: 'join', seat: 2, rowSeat: 2 });
+  ok(pageCtx.requireGame().players.length === cntA,
+    '中途加入当手不插人（不打断进行中的这一手），实际 ' + pageCtx.requireGame().players.length);
+  pageCtx.startHand();
+  const gB = pageCtx.requireGame();
+  ok(gB.players.length === cntA + 1, '中途加入：下一手座位 2 正式入局，实际 ' + gB.players.length);
+  ok(!!gB.seatOf(2), '中途加入者落在他选的座位上');
+  ok(pageCtx.startStacks[2] !== undefined, '中途加入者的带入额已记账（结算单盈亏有基准）');
+  // 换座：我在座时点另一个空位 → 下一手挪过去，记账跟着座位走
+  const myStackBefore = pageCtx.startStacks[pageCtx.mySeat];
+  pageCtx.pendingMove = { from: pageCtx.mySeat, to: 3 };
+  pageCtx.startHand();
+  ok(pageCtx.mySeat === 3, '换座：下一手我已在新座位，实际 ' + pageCtx.mySeat);
+  ok(pageCtx.startStacks[3] === myStackBefore, '换座后起始筹码记账跟着座位迁移（盈亏口径不漂移）');
+  ok(!!pageCtx.requireGame().seatOf(3), '换座后新座位上有人');
 }
 // timeUp 后不再接受行动
 const stackBefore = dataStore.myStack;
@@ -687,11 +718,26 @@ while (guard++ < 400) {
   /* ---------- 就绪超时：超过 30 秒未点就绪自动站起 ---------- */
   pageCtx.enterReadyPhase();
   ok(dataStore.readyPhase === true, '再次进入就绪阶段以验证超时逻辑');
+  const handBeforeTimeout = dataStore.handNo;
   pageCtx.autoStandUnready();     // 模拟 30 秒到点（不等待真实时间）
   ok(dataStore.myStanding === true, '超时未准备，我被自动站起（仍留在房间内）');
   ok(pageCtx.seatedOf(0) === false, '自动站起后不再算「在座」，下一手不参与发牌');
-  ok(dataStore.readyHint.indexOf('人数不足') >= 0 || dataStore.readyPhase === false,
-    '自动站起后给出提示或直接开下一手，实际提示：' + dataStore.readyHint);
+
+  // ⚠️ 这条断言此前写成 `readyHint 含人数不足 || readyPhase === false`，
+  // 用 || 同时接受了两种结果 —— 而后者正是「我还没点准备就绪牌局就自己开了」
+  // 这个真机 bug 的表现。断言过宽会把 bug 固化成合法行为，必须拆开精确断言。
+  // 注意：本块是**好友房 2 人局**（我站起后只剩 1 个 bot，本就被「不足 2 人」
+  // 挡住），走不到自动开局那条分支。真正的复现放在文件末尾的 AI 对战 4 人局块。
+  ok(dataStore.readyPhase === true && dataStore.handNo === handBeforeTimeout,
+    '好友房 2 人局：我超时站起后不自动开下一手（handNo 保持 ' +
+    handBeforeTimeout + '，实际 ' + dataStore.handNo + '）');
+
+  // 语义守卫：锁死「单机不许在唯一真人站起后自动开局」这条判断还在
+  const tableSrcReady = require('fs').readFileSync(
+    path.join(__dirname, 'pages', 'table', 'table.js'), 'utf8');
+  ok(/const soleHumanStoodUp = this\.mode !== 'friend'/.test(tableSrcReady) &&
+    /if \(!soleHumanStoodUp && seated\.length >= 2/.test(tableSrcReady),
+    'autoStandUnready 里有「唯一真人站起则不自动开局」的判断（锁结构不锁数值）');
   pageCtx.clearReadyClock();      // 清理电脑玩家的自动就绪定时器，避免干扰后续断言
 
   /* ---------- 「站起退出本局」入口可见性（WXML 静态检查） ---------- */
@@ -1040,6 +1086,42 @@ while (guard++ < 400) {
       ok(false, '新一局后未能推进到「轮到我且可加注」，无法验证金额与高亮自洽' +
         '（isMyTurn=' + !!dataStore.isMyTurn + ' canRaise=' +
         !!(dataStore.legal && dataStore.legal.canRaise) + '）');
+    }
+  }
+
+  /* ---------- 回归：镜像端（好友房）跨手档位残留 —— 改为「手数驱动」重置 ---------- */
+  // 真机反馈「这个下注选择按钮一直高亮上一局的」在好友房复发。旧修复把重置只
+  // 挂在 startHand() 上，而镜像端根本不走 startHand()：enterRemote() 是
+  // loadSnapshot(房主快照) → setData → render()。续局 restoreRoom 同理。
+  // 这里直接推进 handNo 后调 render，精确复现「手数前进但没走 startHand」的路径。
+  {
+    const gm = pageCtx.requireGame();
+    // 制造脏状态：选中 100% 档 + 展开自定义面板（此时语义仍是「轮到我且可加注」）
+    pageCtx.onPresetTap({ currentTarget: { dataset: { v: 'p100' } } });
+    // ⚠️ 取值时机：onCustomTap() 会把档位一并改写成 'custom'，
+    // 先取档位再展开面板，否则取到的是 'custom' 而不是要复现的 'p100'。
+    const dirtyPreset = dataStore.raisePreset;
+    pageCtx.onCustomTap();
+    const dirtyCustom = dataStore.raiseCustom;
+    ok(dirtyPreset === 'p100' && dirtyCustom === true,
+      '前置：镜像端脏状态（档位=' + dirtyPreset + '，自定义展开=' + dirtyCustom + '）');
+
+    gm.handNo += 1;                 // 房主快照里手数前进（镜像端不调 startHand）
+    pageCtx._lastRenderFp = null;   // 强制走完整渲染，绕开指纹跳过分支
+    pageCtx.render();
+
+    ok(dataStore.raisePreset === 'min',
+      '★ 手数前进但未走 startHand → 档位高亮重置为「最小」（实际 ' +
+      dataStore.raisePreset + '，脏值 ' + dirtyPreset + '）');
+    ok(dataStore.raiseCustom === false,
+      '★ 手数前进但未走 startHand → 自定义面板强制收起（实际 ' + dataStore.raiseCustom + '）');
+    if (dataStore.isMyTurn && dataStore.legal && dataStore.legal.canRaise) {
+      ok(dataStore.raiseTo === dataStore.legal.minRaiseTo,
+        '重置帧轮到我 → 金额 = 最小加注 ' + dataStore.legal.minRaiseTo +
+        '（实际 ' + dataStore.raiseTo + '，与高亮「最小」自洽）');
+    } else {
+      ok(dataStore.raiseTo === 0,
+        '重置帧非我回合 → 金额先清零，等轮到我时再取最小额（实际 ' + dataStore.raiseTo + '）');
     }
   }
 
@@ -2074,6 +2156,9 @@ while (guard++ < 400) {
     // 微信小程序没有 process 全局对象（Node 测试里一切正常）——一旦源码里
     // 残留 process.env 调试语句，真机上直接 ReferenceError，且往往发生在
     // render 等关键链路上，全局回退等待室。此处静态扫描运行时源码防复发。
+    // 豁免 utils/vendor/：内联的第三方构建产物（云 SDK），其 process 引用
+    // 是「var process = globalThis2.process; ... process && process.versions」
+    // 形式的环境探测，自带防御，真机安全。
     const fs = require('fs');
     const scanDirs = ['pages', 'utils', 'core', 'components'];
     const bad = [];
@@ -2082,16 +2167,26 @@ while (guard++ < 400) {
       try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch (e) { return; }
       entries.forEach(en => {
         const p = path.join(dir, en.name);
+        // dir 由 path.join(__dirname, d) 传入，是绝对路径——相对判断一律走 rel
+        const rel = path.relative(__dirname, p).split(path.sep).join('/');
         if (en.isDirectory()) walk(p);
         else if (/\.js$/.test(en.name) && en.name.indexOf('test-') !== 0) {
+          if (rel.indexOf('utils/vendor/') === 0) return;
           const src = fs.readFileSync(p, 'utf8');
-          if (/(^|[^\w.])process\s*\./.test(src)) bad.push(path.relative(__dirname, p));
+          if (/(^|[^\w.])process\s*\./.test(src)) bad.push(rel);
         }
       });
     };
     scanDirs.forEach(d => walk(path.join(__dirname, d)));
     ok(bad.length === 0, '小程序运行时源码无裸 process 引用（真机无 process 全局）' +
       (bad.length ? '，违规文件: ' + bad.join(', ') : ''));
+    // 云 SDK 内联产物就位：cloud.js 以相对路径 require 它，文件缺失 = 全局登录/同步失效
+    ok(fs.existsSync(path.join(__dirname, 'utils/vendor/workbuddy-cloud-sdk.js')),
+      '云 SDK 内联产物就位（utils/vendor/workbuddy-cloud-sdk.js）');
+    ok(fs.existsSync(path.join(__dirname, 'utils/cloud.js')) &&
+      fs.readFileSync(path.join(__dirname, 'utils/cloud.js'), 'utf8')
+        .indexOf("require('./vendor/workbuddy-cloud-sdk')") >= 0,
+      'cloud.js 引用内联 SDK（不再依赖 node_modules / 「构建 npm」）');
   }
 
   function guardResultShowPhase(tableSrc, wxmlSrc, wxssSrc) {
@@ -2165,6 +2260,22 @@ while (guard++ < 400) {
     ok(/card-xs back/.test(wxmlSrc), 'WXML：牌背用小牌样式 card-xs back');
     ok(/\.seat-no\s*\{/.test(wxssSrc), 'WXSS：存在座位号样式 .seat-no');
     ok(/ab-fold\.confirm/.test(wxssSrc), 'WXSS：存在弃牌确认态样式 .ab-fold.confirm');
+
+    // ④ 桌上 N 个位常显：座位环按房间座位数铺满，没坐满时那几个位照样画出来
+    //    （旧版只画在座者 → 8 人房 5 人开局时看不到还能再进 3 个人）
+    ok(/for \(let si = 0; si < this\.maxSeats; si\+\+\) allSeats\.push\(si\)/.test(tableSrc),
+      'render 按房间座位数铺满座位环（N 人桌就画 N 个位）');
+    ok(/function emptySeat\(/.test(tableSrc) && /if \(!p\) return emptySeat\(/.test(tableSrc),
+      '座位环上无人之位渲染成空位条目（不是直接跳过不画）');
+    ok(/\.seat-cards \{[\s\S]{0,200}?margin-left: calc\(-4\.6 \* var\(--uw\)\)/.test(wxssSrc),
+      '暗牌态仍是紧凑叠放（未摊牌时省空间）');
+
+    // ⑤ 摊牌：两张牌必须都看得清（真机反馈「只能看清一张，另一张被遮挡」）
+    ok(/class="seat-cards show"/.test(wxmlSrc), 'WXML：摊牌卡片容器带 show 类（走并排样式）');
+    ok(/\.seat-cards\.show \.card-xs \+ \.card-xs \{ margin-left: calc\(0\.6 \* var\(--uw\)\)/.test(wxssSrc),
+      '摊牌时两张牌并排（不再 -4.6uw 叠放遮挡第一张）');
+    ok(/\.seat\.reveal \{ z-index: 8; \}/.test(wxssSrc),
+      '摊牌座位整块浮到最上层（不被邻座名牌/筹码压住）');
 
     // ④ 弃牌二次确认逻辑
     ok(/onFold\(\)\s*\{[\s\S]*foldConfirm/.test(tableSrc), 'onFold 实现弃牌二次确认（首次进入确认态）');
@@ -2385,7 +2496,8 @@ while (guard++ < 400) {
   function guardSeatCardNoOverlap(tableSrc, wxmlSrc, wxssSrc) {
     const feltSrc = tableSrc;
     const cy = Number((feltSrc.match(/cy = (\d+)/) || [0, 0])[1]);
-    const ry = Number((feltSrc.match(/ry = (\d+)/) || [0, 0])[1]);
+    // ry 支持两种写法：定值（ry = 27）与按人数自适应的三元（ry = big ? 25 : 27）
+    const ry = Number((feltSrc.match(/ry = (?:big \? )?(\d+)/) || [0, 0])[1]);
     ok(cy > 0 && ry > 0, 'ringPositions 椭圆参数可解析 cy=' + cy + ' ry=' + ry);
     ok(cy - ry >= 10, '座位带最低点 ' + (cy - ry) + '% （≥10%，留出块延伸空间）');
     const yMax = Number((feltSrc.match(/y = Math\.max\(\d+, Math\.min\((\d+)/) || [0, 999])[1]);
@@ -2439,8 +2551,8 @@ while (guard++ < 400) {
       'enterReadyPhase 是「打完这手再总结束」的收口点');
     ok(/myBuyIn: me \? me\.buyIn : 0/.test(tableSrc) && /myStack: me \? me\.stack : 0/.test(tableSrc),
       'endGame 的 summary 输出 myBuyIn / myStack');
-    ok(/buyIn: this\.startStacks\[p\.seat\] !== undefined/.test(tableSrc),
-      '结算单每行带 buyIn（带入筹码）');
+    ok(/buyIn:\s*this\.startStacks\[p\.seat\] !== undefined|const buyIn\s*=\s*this\.startStacks\[p\.seat\] !== undefined/.test(tableSrc),
+      '结算单每行带 buyIn（带入筹码，口径取自 startStacks）');
     ok(/sum-bank/.test(wxmlSrc) && /带入/.test(wxmlSrc) && /剩余/.test(wxmlSrc),
       '结算单与实时面板共用「带入/剩余/盈亏」三件套组件');
     ok(/bindtap="onMenuBank"/.test(wxmlSrc) && /onMenuBank\(\)\s*\{[\s\S]{0,200}?bankShow: true/.test(tableSrc),
@@ -2644,6 +2756,13 @@ while (guard++ < 400) {
     // 语义守卫：raiseSubmit 必须读局部 raiseTo，不能读 this.data.raiseTo
     ok(/raiseSubmit = Math\.max\(legal\.minRaiseTo, Math\.round\(raiseTo \|\| 0\)\)/.test(tableSrc2),
       '加注按钮文案读局部 raiseTo 而非 this.data.raiseTo（与档位高亮同帧自洽）');
+    // 语义守卫：重置判据必须是「手数前进」而不只是 startHand —— 只挂 startHand 时
+    // 镜像端（enterRemote）与续局（restoreRoom）都不经过，档位高亮会跨手残留。
+    ok(/this\._raiseHandNo !== game\.handNo/.test(tableSrc2),
+      'render 以「手数前进」为判据触发档位重置（覆盖不经过 startHand 的镜像端/续局路径）');
+    // 档位高亮必须与金额同帧写入同一个 setData，否则会渲染出「高亮最小、金额旧值」的中间态
+    ok(/raisePreset: wasReset \? 'min' : this\.data\.raisePreset/.test(tableSrc2),
+      '重置帧把 raisePreset 与金额写进同一个 setData（避免高亮与金额不同步的中间态）');
   }
 
   function guardAmbienceConstants(tableSrc, wxmlSrc, wxssSrc) {
@@ -3428,6 +3547,115 @@ while (guard++ < 400) {
       'table.js scheduleAI 用 _adjustTightByVpip 构造 aiStyle');
     ok(/style:\s*aiStyle/.test(tableSrc),
       'table.js scheduleAI 传 style: aiStyle（不碰 p.style 原对象）');
+  }
+
+  /* ---------- 回归：AI 对战「还没点准备就绪，牌局就自己开始了」 ----------
+   * 真机反馈的完整触发链：
+   *   一手结束 → 结算弹窗（RESULT_MODAL_MS=10s 后自动关闭）
+   *   → closeResultModal(true) → enterReadyPhase() → 30s 就绪倒计时
+   *   → autoStandUnready() 把我站起 → 我从名单移除
+   *   → 剩下的电脑玩家早已自动 ready → 判定「全员就绪」→ 直接开局
+   * 结果：玩家既没点准备，开局后还变成了观战。
+   *
+   * ⚠️ 复现必须同时满足两个条件，缺一不可：
+   *   ① mode 必须是 'ai'（好友房里有人超时站起、其他人继续是设计意图，不能改）
+   *   ② 人数必须 >= 3（2 人局里我站起后只剩 1 个 bot，会被「不足 2 人」挡住，
+   *      根本走不到自动开局那条分支 —— 只测 2 人局会漏掉这个 bug）
+   */
+  {
+    pageCtx.onLoad();                      // 无参 → mode='ai'
+    pageCtx.chooseSeat({ currentTarget: { dataset: { seat: 0 } } });
+    pageCtx.confirmBuyIn({ currentTarget: { dataset: { amt: '1000' } } });
+    for (let i = 0; i < 3; i++) pageCtx.addBot();   // 我 + 3 bot = 4 人
+    pageCtx.startGame();
+    ok(pageCtx.mode === 'ai' && dataStore.phase === 'playing',
+      '复现前置：AI 对战已开局（mode=' + pageCtx.mode + ' phase=' +
+      dataStore.phase + '）');
+    // 只断言「3 人以上」：game 是模块级单例，前面用例留下的 bot 可能还在，
+    // 硬编码具体人数会随用例顺序变动而误报。复数才是复现的必要前提。
+    ok((dataStore.seats || []).length >= 3,
+      '复现前置：至少 3 人在座（2 人局会被「不足 2 人」挡住，测不出这个 bug），实际 ' +
+      (dataStore.seats || []).length);
+
+    // 进入就绪阶段后，让所有电脑玩家先准备好（真机上它们在 1.5~4s 内自动 ready）
+    pageCtx.enterReadyPhase();
+    ok(dataStore.readyPhase === true, '进入就绪阶段（等所有人准备就绪）');
+    dataStore.readyList.forEach(r => { if (!r.isMe) pageCtx.markReady(r.seat, true); });
+
+    const handBeforeTimeout2 = dataStore.handNo;
+    ok(dataStore.readyPhase === true,
+      '只有电脑玩家准备好、我还没点 → 不该开下一手（实际 readyPhase=' +
+      dataStore.readyPhase + '）');
+
+    // 模拟 30 秒到点：我超时被自动站起
+    pageCtx.autoStandUnready();
+    ok(dataStore.myStanding === true, '我超时未准备 → 被自动站起');
+
+    ok(dataStore.readyPhase === true,
+      '★ AI 对战：我站起后**不**自动开下一手（真机 bug：还没点准备就绪牌局就开始了）' +
+      '，实际 readyPhase=' + dataStore.readyPhase);
+    ok(dataStore.handNo === handBeforeTimeout2,
+      '★ AI 对战：我站起后不发新一手（handNo 保持 ' + handBeforeTimeout2 +
+      '，实际 ' + dataStore.handNo + '）');
+    ok(/自动站起/.test(dataStore.readyHint),
+      '给出「已自动站起 · 可重新入局」的明确提示，实际：' + dataStore.readyHint);
+    ok((dataStore.readyList || []).every(r => r.seat !== 0),
+      '站起后我已被移出就绪名单（只剩电脑玩家，此时绝不能开局）');
+    pageCtx.clearReadyClock();
+  }
+  /* ---------- 回归：AI 对战「还没点准备就绪，牌局就自己开始了」 ----------
+   * 真机反馈的完整触发链：
+   *   一手结束 → 结算弹窗（RESULT_MODAL_MS=10s 后自动关闭）
+   *   → closeResultModal(true) → enterReadyPhase() → 30s 就绪倒计时
+   *   → autoStandUnready() 把我站起 → 我从名单移除
+   *   → 剩下的电脑玩家早已自动 ready → 判定「全员就绪」→ 直接开局
+   * 结果：玩家既没点准备，开局后还变成了观战。
+   *
+   * ⚠️ 复现必须同时满足两个条件，缺一不可：
+   *   ① mode 必须是 'ai'（好友房里有人超时站起、其他人继续是设计意图，不能改）
+   *   ② 人数必须 >= 3（2 人局里我站起后只剩 1 个 bot，会被「不足 2 人」挡住，
+   *      根本走不到自动开局那条分支 —— 只测 2 人局会漏掉这个 bug）
+   */
+  {
+    pageCtx.onLoad();                      // 无参 → mode='ai'
+    pageCtx.chooseSeat({ currentTarget: { dataset: { seat: 0 } } });
+    pageCtx.confirmBuyIn({ currentTarget: { dataset: { amt: '1000' } } });
+    for (let i = 0; i < 3; i++) pageCtx.addBot();   // 我 + 3 bot = 4 人
+    pageCtx.startGame();
+    ok(pageCtx.mode === 'ai' && dataStore.phase === 'playing',
+      '复现前置：AI 对战已开局（mode=' + pageCtx.mode + ' phase=' +
+      dataStore.phase + '）');
+    // 只断言「3 人以上」：game 是模块级单例，前面用例留下的 bot 可能还在，
+    // 硬编码具体人数会随用例顺序变动而误报。复数才是复现的必要前提。
+    ok((dataStore.seats || []).length >= 3,
+      '复现前置：至少 3 人在座（2 人局会被「不足 2 人」挡住，测不出这个 bug），实际 ' +
+      (dataStore.seats || []).length);
+
+    // 进入就绪阶段后，让所有电脑玩家先准备好（真机上它们在 1.5~4s 内自动 ready）
+    pageCtx.enterReadyPhase();
+    ok(dataStore.readyPhase === true, '进入就绪阶段（等所有人准备就绪）');
+    dataStore.readyList.forEach(r => { if (!r.isMe) pageCtx.markReady(r.seat, true); });
+
+    const handBeforeTimeout2 = dataStore.handNo;
+    ok(dataStore.readyPhase === true,
+      '只有电脑玩家准备好、我还没点 → 不该开下一手（实际 readyPhase=' +
+      dataStore.readyPhase + '）');
+
+    // 模拟 30 秒到点：我超时被自动站起
+    pageCtx.autoStandUnready();
+    ok(dataStore.myStanding === true, '我超时未准备 → 被自动站起');
+
+    ok(dataStore.readyPhase === true,
+      '★ AI 对战：我站起后**不**自动开下一手（真机 bug：还没点准备就绪牌局就开始了）' +
+      '，实际 readyPhase=' + dataStore.readyPhase);
+    ok(dataStore.handNo === handBeforeTimeout2,
+      '★ AI 对战：我站起后不发新一手（handNo 保持 ' + handBeforeTimeout2 +
+      '，实际 ' + dataStore.handNo + '）');
+    ok(/自动站起/.test(dataStore.readyHint),
+      '给出「已自动站起 · 可重新入局」的明确提示，实际：' + dataStore.readyHint);
+    ok((dataStore.readyList || []).every(r => r.seat !== 0),
+      '站起后我已被移出就绪名单（只剩电脑玩家，此时绝不能开局）');
+    pageCtx.clearReadyClock();
   }
 
   /* ---------- 输出 ---------- */

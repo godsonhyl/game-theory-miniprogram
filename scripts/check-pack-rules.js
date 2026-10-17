@@ -7,7 +7,8 @@
  *      完全一致（多一项少一项都算失败）；
  *   2. miniprogram 下实际存在的 test-*.js 必须都在 pack-rules.TEST_FILES 里
  *      （开发者工具不支持通配，漏登记的测试文件会进包；前缀兜底只救 pack.js/upload.js）；
- *   3. miniprogram_npm 必须不在任何排除清单里（排除 = 体验版白屏，历史事故）。
+ *   3. 云 SDK 产物必须不在任何排除清单里（排除 = 体验版白屏，历史事故）。
+ *      形态已变过一次：miniprogram_npm/（构建 npm 产物）→ utils/vendor/（内联）。
  *
  * 用法：node scripts/check-pack-rules.js（纳进 npm test）
  */
@@ -40,13 +41,23 @@ ok(unregistered.length === 0,
   'miniprogram 下的 test-*.js 全部已登记进 pack-rules.TEST_FILES' +
   (unregistered.length ? '（漏登记：' + unregistered.join(', ') + '  会进开发者工具包）' : ''));
 
-/* ---------- 3) miniprogram_npm 绝不被排除（历史事故：排除 = 白屏） ---------- */
+/* ---------- 3) 云 SDK 产物绝不被排除（历史事故：排除 = 体验版白屏） ---------- */
+// 2026-10-17 起 SDK 以构建产物内联在 miniprogram/utils/vendor/workbuddy-cloud-sdk.js
+// （去掉「构建 npm」环节，换机器 clone 即可上传）；早期形态是 npm 依赖 + 微信
+// 「构建 npm」生成的 miniprogram_npm/。两种形态都不能进任何排除清单。
 const allIgnores = [].concat(
   actual.map(x => x.value),
   RULES.ciIgnores()
 );
 ok(allIgnores.every(v => String(v).indexOf('miniprogram_npm') === -1),
-  'miniprogram_npm 不在任何排除清单（排除会导致体验版白屏）');
+  'miniprogram_npm 不在任何排除清单（SDK 的历史形态，排除会导致体验版白屏）');
+ok(allIgnores.every(v => String(v).indexOf('vendor') === -1),
+  'utils/vendor 不在任何排除清单（云 SDK 内联产物，排除会令 require 失败白屏）');
+// pack.js 是按 basename 逐段调 shouldExclude 的，这两段都必须放行
+ok(fs.existsSync(path.join(MP, 'utils/vendor/workbuddy-cloud-sdk.js')),
+  '云 SDK 内联产物存在：miniprogram/utils/vendor/workbuddy-cloud-sdk.js');
+ok(!RULES.shouldExclude('vendor') && !RULES.shouldExclude('workbuddy-cloud-sdk.js'),
+  'shouldExclude 放行 vendor 目录与其下的 SDK 文件（pack.js 按 basename 逐段判定）');
 
 /* ---------- 4) pack.js / upload.js 确实接上了单一来源 ---------- */
 const packSrc = fs.readFileSync(path.join(__dirname, '..', 'pack.js'), 'utf8');

@@ -10,8 +10,8 @@
 |---|---|
 | `project.config.json` | ✅ `appid: touristappid`、`miniprogramRoot: miniprogram/`、`libVersion: 3.5.5` |
 | `packOptions.ignore` | ✅ 已排除测试文件 / package*.json / node_modules / dist |
-| 云 SDK 构建产物 | ✅ `miniprogram_npm/@tencent-ai/workbuddy-cloud-sdk/miniprogram.js`（519KB 就位） |
-| 云环境配置 | ✅ `endpoint: mp-api.app.workbuddy.host`，应用 `wbapp_2qkKI2ZGSh13zUKRFfD8Cm` |
+| 云 SDK | ✅ 构建产物内联在 `miniprogram/utils/vendor/workbuddy-cloud-sdk.js`（2026-10-17 起，无需「构建 npm」/npm install） |
+| 云环境配置 | ✅ `endpoint: mp-api.app.workbuddy.host`；应用 ID **不要在此写死**，以 `miniprogram/utils/cloud.js` 的 `publishableKey`（`wbpk_<appId>_…`）为准。2026-10-17 已切换过一次应用（`2qkKI2ZGSh13zUKRFfD8Cm` → `qcAtDwEIzbnS2Bjm1i0ylw`），换应用后必须回到**新**应用上重跑一遍迁移与 rpc 核对，npm test 查不出来 |
 | 页面声明 | ✅ 3 页，单主包无分包 |
 
 ## 二、上传前预检（已全部通过）
