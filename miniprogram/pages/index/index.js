@@ -60,6 +60,8 @@ Page({
     durPresets: DUR_PRESETS,
     cBlind: BLIND_DEF,      // 涨盲间隔（分钟）：0 = 不涨盲
     blindPresets: BLIND_PRESETS,
+    sngShow: false,     // SNG 配置弹窗（人数）
+    sngMax: C_MAX_DEF,  // SNG 桌型：2–9，逐人可调，默认 6
     setShow: false,     // 设置弹窗（参考主流 App 的 Table Appearance）
     cardsShow: false,   // 房卡弹窗（免费获取途径）
     claim: { dailyReady: true, dailyCount: 2, handCards: 0, handsPerCard: 10, handsToNext: 10 },
@@ -111,6 +113,35 @@ Page({
   /** 打开创建房间弹窗（人数与时长均可自定义） */
   onCreateTap() {
     this.setData({ createShow: true });
+  },
+
+  /** 打开 SNG 配置弹窗（选桌型，再弹难度 ActionSheet） */
+  onSngConfigTap() {
+    this.setData({ sngShow: true });
+  },
+
+  onSngConfigClose() {
+    this.setData({ sngShow: false });
+  },
+
+  /** SNG 桌型 ±1（复用 setMax 的夹取口径，仅写 sngMax） */
+  onSngMaxStep(e) {
+    const step = Number(e.currentTarget.dataset.step) || 0;
+    const v = Math.min(C_MAX_MAX, Math.max(C_MAX_MIN, this.data.sngMax + step));
+    this.setData({ sngMax: v });
+  },
+
+  /** SNG 桌型预设（2 / 4 / 6 / 9） */
+  onSngPickMax(e) {
+    const v = Number(e.currentTarget.dataset.max);
+    const clamped = Math.min(C_MAX_MAX, Math.max(C_MAX_MIN, isNaN(v) ? C_MAX_DEF : Math.round(v)));
+    this.setData({ sngMax: clamped });
+  },
+
+  /** SNG 配置确认：关弹窗后弹难度档 ActionSheet */
+  onSngConfigConfirm() {
+    this.setData({ sngShow: false });
+    this.onSngMode();
   },
 
   onCreateClose() {
@@ -550,18 +581,22 @@ Page({
 
   /** SNG 淘汰赛（批⑤）：纯客户端赛制编排，不消耗房卡。
    *  涨盲默认 3 分钟（天然推进僵局），筹码归零即淘汰，最后一人夺冠。
-   *  选用专家级 AI 对手（与 AI 对战同口径，走 mode=ai&level=expert 路径，
-   *  table.js 内 mode=sng 分支关闭补筹、启用淘汰编排）。 */
+   *  难度档位（rookie/advanced/expert）现在真实生效——table.js 的
+   *  styleFor/applyLevel 均按 mode==='ai'||mode==='sng' 读 this.level，
+   *  故选「高手场」时 bot 真按 expert 档绑定角色风格，不再是恒 advanced。
+   *  桌型默认 6 人桌（SNG 标准）；可选桌型见 onSngConfigConfirm 后拼接的 max=。 */
   onSngMode() {
     wx.showActionSheet({
       itemList: ['新手场 · 对手较温和', '进阶场 · 均衡对手', '高手场 · 对手更狡猾'],
       success: res => {
         const levels = ['rookie', 'advanced', 'expert'];
         const level = levels[res.tapIndex] || 'advanced';
-        wx.navigateTo({ url: '/pages/table/table?mode=sng&level=' + level + '&blind=3' });
+        const max = this.data.sngMax || 6;
+        wx.navigateTo({ url: '/pages/table/table?mode=sng&level=' + level + '&blind=3&max=' + max });
       },
       fail: () => {
-        wx.navigateTo({ url: '/pages/table/table?mode=sng&level=advanced&blind=3' });
+        const max = this.data.sngMax || 6;
+        wx.navigateTo({ url: '/pages/table/table?mode=sng&level=advanced&blind=3&max=' + max });
       }
     });
   },

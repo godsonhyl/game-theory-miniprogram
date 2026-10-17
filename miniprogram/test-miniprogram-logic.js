@@ -3390,6 +3390,31 @@ while (guard++ < 400) {
     ok(/champion\s*\(c,\s*t\)/.test(sfxSrc), 'sfx.js 定义 champion 音色');
     ok(/sfx\.play\(['"]eliminate['"]\)/.test(tableSrc), 'table.js 淘汰播 eliminate 音效');
     ok(/sfx\.play\(['"]champion['"]\)/.test(tableSrc), 'table.js 夺冠播 champion 音效');
+
+    // ---- 批⑤补丁：SNG 难度档真实生效（不再恒 advanced） ----
+    // 三处 styleFor/applyLevel 的守卫从 mode==='ai' 扩到 mode==='ai'||mode==='sng'，
+    // 否则 onSngMode 给的三档难度菜单是空头支票（SNG bot 永远 advanced）。
+    ok(/\(this\.mode\s*===\s*['"]ai['"]\s*\|\|\s*this\.mode\s*===\s*['"]sng['"]\)\s*\?\s*this\.level/.test(tableSrc),
+      'table.js styleFor/applyLevel 三处守卫含 mode===ai||mode===sng（SNG 用所选 level）');
+    ok(!/this\.mode\s*===\s*['"]ai['"]\s*\?\s*this\.level\s*:\s*['"]advanced['"]/.test(tableSrc),
+      'table.js 不再残留单 ai 三元（旧守卫已被 ai||sng 替换）');
+
+    // ---- 批⑤补丁：SNG 支持中途补 bot（点空位下一手安排电脑玩家） ----
+    // joinMidGame 分支 ③ 从 mode==='ai' 扩到 (ai||sng)，SNG 人类点空位也能补 bot。
+    ok(/\(this\.mode\s*===\s*['"]ai['"]\s*\|\|\s*this\.mode\s*===\s*['"]sng['"]\)\s*&&\s*seated/.test(tableSrc),
+      'table.js joinMidGame 分支 ③ 守卫含 (ai||sng)&&seated（SNG 中途补 bot）');
+
+    // ---- 批⑤补丁：SNG 桌型可选（onSngMode 带 max=，首页弹人数选择） ----
+    ok(/sngShow/.test(idxSrc), 'index.js data 含 sngShow（SNG 配置弹窗 toggle）');
+    ok(/sngMax/.test(idxSrc), 'index.js data 含 sngMax（SNG 桌型人数）');
+    ok(/onSngConfigTap/.test(idxSrc) && /onSngConfigConfirm/.test(idxSrc),
+      'index.js 定义 onSngConfigTap/onSngConfigConfirm（SNG 配置入口/确认）');
+    ok(/onSngMaxStep/.test(idxSrc) && /onSngPickMax/.test(idxSrc),
+      'index.js 定义 onSngMaxStep/onSngPickMax（SNG 桌型 ±1/预设）');
+    ok(/&max=/.test(idxSrc), 'index.js onSngMode 跳转带 max=（SNG 桌型传入）');
+    ok(/sngShow/.test(idxWxml), 'index.wxml 含 sngShow 弹窗（SNG 配置）');
+    ok(/sngMax/.test(idxWxml), 'index.wxml SNG 弹窗用 sngMax（人数显示与步进）');
+    ok(/onSngConfigTap/.test(idxWxml), 'index.wxml SNG 入口绑 onSngConfigTap（先配置再选难度）');
   }
 
   /**

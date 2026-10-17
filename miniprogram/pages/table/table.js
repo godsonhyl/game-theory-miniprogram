@@ -1080,8 +1080,8 @@ Page({
       };
       this.myStanding = false;
       wx.showToast({ title: '下一手开始入局', icon: 'none' });
-    } else if (this.mode === 'ai' && seated) {
-      // ③ AI 桌：我一直在座，点空位就是在那位补个电脑玩家
+    } else if ((this.mode === 'ai' || this.mode === 'sng') && seated) {
+      // ③ AI/SNG 桌：我一直在座，点空位就是在那位补个电脑玩家
       this.pendingBotSeat = seat;
       wx.showToast({ title: '下一手安排电脑玩家入座', icon: 'none' });
     } else if (seat === this.mySeat) {
@@ -1182,7 +1182,7 @@ Page({
         game.players.push({
           id: 'bot' + seat + '-' + Date.now(), name: this.botLabel(botNo), seat,
           stack: DEFAULT_BUY_IN, isHuman: false,
-          style: botProfiles.styleFor(botNo, this.mode === 'ai' ? this.level : 'advanced'),
+          style: botProfiles.styleFor(botNo, (this.mode === 'ai' || this.mode === 'sng') ? this.level : 'advanced'),
           hole: [], folded: false, allIn: false,
           bet: 0, committed: 0, actedBet: null, canRaise: true, sittingOut: false,
           hands: 0, net: 0
@@ -1949,7 +1949,7 @@ Page({
         if (s.isBot) {
           // 按已入座 Bot 的序号绑定角色（同 botLabel 的计数口径：小于等于本座位的 Bot 数 - 1）
           const botSeq = Math.max(0, (this.data.waitSeats || []).filter(x => x.isBot && x.seat <= s.seat).length - 1);
-          style = botProfiles.styleFor(botSeq, this.mode === 'ai' ? this.level : 'advanced');
+          style = botProfiles.styleFor(botSeq, (this.mode === 'ai' || this.mode === 'sng') ? this.level : 'advanced');
         } else {
           style = { aggro: 0.3 + Math.random() * 0.5, tight: 0.25 + Math.random() * 0.45 };
         }
@@ -2143,6 +2143,11 @@ Page({
    */
   endGame() {
     if (!game) return;
+    // 批⑤重入防护：SNG 终局链路 _sngCheckFinalize → endGame → _sngCheckFinalize 会递归
+    // （endGame 内调 _sngCheckFinalize 补齐存活者名次，补齐后又判 alive<=1 想再次 endGame）。
+    // 用 _sngEnding 幂等位：进入即置位，_sngCheckFinalize 内见已置位则不再触发 endGame。
+    if (this.mode === 'sng' && this._sngEnding) return;
+    if (this.mode === 'sng') this._sngEnding = true;
     if (timer) { clearInterval(timer); timer = null; }
     if (aiTimer) { clearTimeout(aiTimer); aiTimer = null; }
     this.clearReadyClock();
@@ -2152,7 +2157,20 @@ Page({
     // 终局可能由 _sngCheckFinalize 调入（存活者<=1），也可能由时长到点兜底。
     if (this.mode === 'sng') {
       this._sngCheckFinalize();   // 确保所有名次已记录（兜底补齐存活者名次）
-      const rows = game.players.map(p => ({
+      // 防御性合并 leftPlayers：让位离场者已移出 game.players，不合并则其从
+      // SNG 结算单蒸发；且「我」被让位时 me 取不到会误判 isChampion=true。
+      // 名次从 sngPlacement 取，未记录者（离场早于淘汰记录）兜底末位。
+      const rows = (this.leftPlayers || []).map(p => ({
+        seat: p.seat,
+        name: p.name,
+        stack: p.stack,
+        buyIn: p.buyIn,
+        net: p.stack - p.buyIn,
+        place: this.sngPlacement[p.seat] != null ? this.sngPlacement[p.seat] : players.length,
+        placeText: '第 ' + (this.sngPlacement[p.seat] != null ? this.sngPlacement[p.seat] : players.length) + ' 名',
+        isMe: !!p.isHuman,
+        left: true
+      })).concat(game.players.map(p => ({
         seat: p.seat,
         name: p.name,
         stack: p.stack,
@@ -2161,7 +2179,7 @@ Page({
         place: this.sngPlacement[p.seat] != null ? this.sngPlacement[p.seat] : 1,
         placeText: '第 ' + (this.sngPlacement[p.seat] != null ? this.sngPlacement[p.seat] : 1) + ' 名',
         isMe: !!p.isHuman
-      })).sort((a, b) => a.place - b.place);   // 名次升序：冠军在前
+      }))).sort((a, b) => a.place - b.place);   // 名次升序：冠军在前
       const me = rows.filter(r => r.isMe)[0];
       const myPlace = me ? me.place : 1;
       const isChampion = myPlace === 1;
@@ -2300,6 +2318,14 @@ Page({
       id: p.id, name: p.name, seat: p.seat, stack: 1000,
       isHuman: !!p.isHuman, style: p.style
     }));
+    // 批⑤修复：SNG「再来一局」须重置赛制状态——sngPlacement 只在 startGame 初始化，
+    // 不重置则所有座位已有名次，_sngDetectEliminations 判 undefined 才记新名次的
+    // 逻辑永远不触发，新一局打不出淘汰、直到时长到点（盲注不涨、赛制失效）。
+    if (this.mode === 'sng') {
+      this.sngPlacement = {};
+      this.sngEliminationOrder = [];
+      if (players.length) this.sngNextPlace = players.length;
+    }
     this.setData({ summary: null, timeUp: false, clockPendingEnd: false });
     this.pendingTimeUp = false;
     this.initGame(players);   // startHand 内部会清理就绪状态
@@ -2354,9 +2380,9 @@ Page({
   },
 
   initGame(players, snap) {
-    // AI 桌默认局：机器人按序号绑定角色 style（取代旧随机），仅 AI 桌应用难度档位。
-    // 好友房走 toPlayer 已绑过；这里只兜底「未传 players 的 AI 桌默认局」。
-    const applyLevel = this.mode === 'ai' ? this.level : 'advanced';
+    // AI/SNG 桌：机器人按序号绑定角色 style（取代旧随机），应用所选难度档位。
+    // 好友房走 toPlayer 已绑过；这里只兜底「未传 players 的 AI/SNG 桌默认局」。
+    const applyLevel = (this.mode === 'ai' || this.mode === 'sng') ? this.level : 'advanced';
     const ps = players || NAMES.map((name, i) => ({
       id: 'u' + i,
       // AI 桌：我的座位用微信昵称，其余沿用预设对手名（NAMES[0] 是「我」的占位）
@@ -2577,9 +2603,11 @@ Page({
     if (championSeat === this.mySeat && game.result) {
       highlightStore.addHighlight(game, this.mySeat, 'sng', 'sng_win', 0);
     }
-    // 若游戏尚未 over，由 endGame 收尾结算（按名次而非净值）
-    if (!game.over && !game.result) {
-      // 触发终局结算——endGame 内会按 sngPlacement 排名次表
+    // 若游戏尚未 over，由 endGame 收尾结算（按名次而非净值）。
+    // 关键：不判 game.result——SNG 终局常发生在「最后一手 startHand 即 skipToShowdown
+    // 结算、game.result 已置位」的同一手，若用 !game.result 守卫则永远进不来 endGame
+    // （赛制卡在「最后一站立」、发不出结算面板）。endGame 幂等处理已在结算中的手。
+    if (!game.over) {
       this.endGame();
     }
   },

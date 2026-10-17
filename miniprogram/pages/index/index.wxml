@@ -62,7 +62,7 @@
     </view>
 
     <!-- SNG 淘汰赛（批⑤） -->
-    <view class="mode mode-sng" bindtap="onSngMode">
+    <view class="mode mode-sng" bindtap="onSngConfigTap">
       <view class="mode-icon ic ic-rank"></view>
       <view class="mode-body">
         <text class="mode-title">SNG 淘汰赛</text>
@@ -242,6 +242,41 @@
       <view class="join-btns">
         <button class="btn-ghost join-btn" bindtap="onCreateClose">取消</button>
         <button class="btn-primary join-btn" bindtap="onCreateConfirm">创建 · 1 房卡</button>
+      </view>
+    </view>
+  </view>
+
+  <!-- SNG 淘汰赛配置弹窗（选桌型，确认后弹难度档） -->
+  <view class="join-mask" wx:if="{{sngShow}}" bindtap="onSngConfigClose">
+    <view class="join-dialog" catchtap="onBlockTap">
+      <text class="join-title">SNG 淘汰赛</text>
+      <text class="join-sub">不消耗房卡 · 筹码归零即淘汰，活到最后夺冠</text>
+
+      <!-- 限定人数 -->
+      <view class="field">
+        <view class="field-head">
+          <text class="field-name">桌型人数</text>
+          <text class="field-hint">2 – 9 人，2 人即可开局</text>
+        </view>
+        <view class="stepper">
+          <view class="step-btn {{sngMax <= 2 ? 'off' : ''}}" data-step="-1" bindtap="onSngMaxStep">−</view>
+          <view class="step-val">
+            <text class="sv-num">{{sngMax}}</text><text class="sv-unit">人</text>
+          </view>
+          <view class="step-btn {{sngMax >= 9 ? 'off' : ''}}" data-step="1" bindtap="onSngMaxStep">+</view>
+        </view>
+        <view class="chips">
+          <view class="chip {{sngMax === item ? 'on' : ''}}" wx:for="{{maxPresets}}" wx:key="*this"
+                data-max="{{item}}" bindtap="onSngPickMax">{{item}} 人</view>
+        </view>
+      </view>
+
+      <text class="dlg-note">{{sngMax}} 人桌 · 每 3 分涨盲 · 不限时长</text>
+      <text class="dlg-note-sub">下一步选难度档（新手 / 进阶 / 高手）</text>
+
+      <view class="join-btns">
+        <button class="btn-ghost join-btn" bindtap="onSngConfigClose">取消</button>
+        <button class="btn-primary join-btn" bindtap="onSngConfigConfirm">下一步</button>
       </view>
     </view>
   </view>
