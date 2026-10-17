@@ -918,9 +918,12 @@
   border-radius: calc(1.4 * var(--uh)); margin-bottom: calc(0.7 * var(--uh)); background: rgba(255,255,255,.04);
 }
 .summary-row.me { background: rgba(232,163,61,.14); border: 1rpx solid rgba(232,163,61,.36); }
+/* G2：sr-main 桶把「名字+底牌+牌型」收成一块——sr-board 公共牌条插在 main 与 sr-net
+   之间时，给 main 一个最小宽度让 board 自然占中间空白，否则公共牌被压到边缘 */
+.sr-main { flex: 0 0 auto; display: flex; align-items: center; min-width: 0; }
 .sr-rank { width: calc(5.6 * var(--uh)); font-size: calc(2.9 * var(--uh)); color: var(--mut); font-weight: 700; flex: none; }
 .sr-namewrap { flex: 1; display: flex; align-items: center; overflow: hidden; margin-right: calc(1 * var(--uw)); }
-.sr-name { flex: 1; font-size: calc(3.2 * var(--uh)); color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sr-name { flex: 1; font-size: calc(3.2 * var(--uh)); color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: calc(14 * var(--uh)); }
 /* 中途离场标记：人不出单（统计覆盖所有人），但一眼可辨谁没打到底 */
 .sr-left {
   flex: none; font-size: calc(2.2 * var(--uh)); color: var(--mut);
@@ -964,6 +967,11 @@
 .hc-s { font-size: calc(2.4 * var(--uh)); margin-top: calc(0.2 * var(--uh)); }
 /* 参与最佳成手 5 张的底牌：金边高亮，一眼看出「为什么他赢」 */
 .hc.hi { border-color: var(--gold); box-shadow: 0 0 0 calc(0.5 * var(--uh)) rgba(232,163,61,.55); }
+/* G2 公共牌条：尺寸同 .hc 但视觉层级靠底色区分——公共牌条用暖灰调（提示「这是
+   台面，不是他的底牌」），hi 金边与底牌同口径保持「参与成手 = 高亮」的全局一致性 */
+.sr-board { flex: 1; display: flex; align-items: center; justify-content: flex-start;
+  gap: calc(0.6 * var(--uw)); margin: 0 calc(1.2 * var(--uw)); min-width: 0; overflow: hidden; }
+.sr-board .hc.bc { background: linear-gradient(160deg, #f5f0e2, #dcd4be); }
 /* 上帝视角盖牌：弱化透明——「降级展示」，与 hi 金边形成强对比 */
 .hc.degraded { opacity: 0.55; }
 .hc.s-diamond, .hc.s-heart { color: #d0342c; }

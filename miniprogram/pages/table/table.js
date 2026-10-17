@@ -3920,6 +3920,11 @@ Page({
         // 由 .sr-cards 的固定宽度占位保持各行「牌型 / 盈亏」两列仍对齐。
         // hi 标记 = 该底牌参与了最佳成手 5 张（摊牌时金边高亮，便于看懂为什么赢）。
         const bestSet = (rv && rv.hand) ? new Set(rv.hand) : null;
+        // 未摊牌/无 rv 的玩家 bestSet 为 null → bestIds 必须兜底空集。
+        // 只判断 bestSet 是否真值，避免在「玩家有底牌但未摊牌」场景里 new Set(null) 抛错。
+        const bestIds = bestSet
+          ? new Set([...bestSet].map(code => P.codeToCard(code)).filter(id => id >= 0))
+          : new Set();
         let cards = ((rv && rv.hole) ? rv.hole : [])
           .map((code, ci) => {
             const id = P.codeToCard(code);
@@ -3946,6 +3951,7 @@ Page({
           icon: win ? '🏆 ' : '',
           hand: rv ? holeTxt + ' → ' + rv.name : holeTxt,
           cards,                    // 结算弹窗的迷你手牌（默认：弃牌为空）
+          bestIds,                  // 该玩家参与最佳成手的牌 id 集——G2 公共牌行按行高亮
           // 结算条胶囊用的短文本：摊牌显示牌型名；上帝视角降级构建标「（盖牌）」；
           // 普通弃牌/未摊牌给状态文案
           short: rv ? rv.name : (mucked ? holeTxt + '（盖牌）' : (p.folded ? '弃牌' : (holeTxt || '未摊牌'))),
@@ -3956,6 +3962,20 @@ Page({
           net                       // 净盈亏：正 = 赢，负 = 输
         };
       });
+
+    // G2（玩家审视 2026-10-17）：每行附公共牌条 = 本手翻牌/转牌/河牌 5 张全部显示，
+    // 「该玩家参与最佳成手」的那几张公共牌打 hi——回答玩家最直觉的问题「他到底
+    // 击中了公共牌的哪几张」。数据即 game.board 机读 id，过 cardData 克隆（防 hi
+    // 残留污染缓存）。翻前弃牌局 board 为空 → 该行 board 为空数组，WXML 不渲染条；
+    // 摊牌失败方/弃牌者 bestIds 为空 → 公共牌全亮但无高亮（muck 玩家无依据可标）。
+    const boardIds = (game.board || []);
+    rows.forEach(r => {
+      r.board = boardIds.map((id, i) => {
+        const d = this.cardData(id, i + 100);   // idx +100 避开与底牌 hc 段同 key 撞缓存
+        d.hi = r.bestIds.has(id);
+        return d;
+      });
+    });
 
     // 我的座位可能因云端行滞后/他端换座而不在引擎里（seatOf 取不到），
     // 结算不能因此崩掉——缺失时按 0 投入兜底，战绩底牌留空。

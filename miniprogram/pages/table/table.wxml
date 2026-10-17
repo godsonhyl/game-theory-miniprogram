@@ -480,18 +480,28 @@
 
       <view class="summary-rows">
         <view class="summary-row {{item.isMe ? 'me' : ''}}" wx:for="{{resultModal.rows}}" wx:key="seat">
-          <text class="sr-name">{{item.icon}}{{item.name}}</text>
-          <!-- 摊牌手牌：亮牌者的两张底牌（迷你牌面）。
-               弃牌者不亮牌 → item.cards 为空，占位宽度靠 .sr-cards 固定住，列不错位。
-               金边 = 该牌参与了最佳成手 5 张，一眼看出赢在哪。
-               上帝视角（看全桌牌）开启时：盖牌降级构建为弱化版（无金边、加 degraded 斜体）。 -->
-          <view class="sr-cards">
-            <view class="hc {{c.cls}} {{c.hi ? 'hi' : ''}} {{c.degraded ? 'degraded' : ''}}" wx:for="{{item.cards}}" wx:for-item="c" wx:key="idx">
+          <view class="sr-main">
+            <text class="sr-name">{{item.icon}}{{item.name}}</text>
+            <!-- 摊牌手牌：亮牌者的两张底牌（迷你牌面）。
+                 弃牌者不亮牌 → item.cards 为空，占位宽度靠 .sr-cards 固定住，列不错位。
+                 金边 = 该牌参与了最佳成手 5 张，一眼看出赢在哪。
+                 上帝视角（看全桌牌）开启时：盖牌降级构建为弱化版（无金边、加 degraded 斜体）。 -->
+            <view class="sr-cards">
+              <view class="hc {{c.cls}} {{c.hi ? 'hi' : ''}} {{c.degraded ? 'degraded' : ''}}" wx:for="{{item.cards}}" wx:for-item="c" wx:key="idx">
+                <text class="hc-r">{{c.rank}}</text>
+                <text class="hc-s">{{c.suit}}</text>
+              </view>
+            </view>
+            <text class="sr-hand">{{item.short}}</text>
+          </view>
+          <!-- 公共牌条：本手 5 张全亮（翻前三张 / 转牌 / 河牌），金边 = 该玩家
+               击中的公共牌（参与其最佳成手 5 张）。翻前走人 board 为空不渲染。 -->
+          <view class="sr-board" wx:if="{{item.board.length}}">
+            <view class="hc bc {{c.cls}} {{c.hi ? 'hi' : ''}}" wx:for="{{item.board}}" wx:for-item="c" wx:key="idx">
               <text class="hc-r">{{c.rank}}</text>
               <text class="hc-s">{{c.suit}}</text>
             </view>
           </view>
-          <text class="sr-hand">{{item.short}}</text>
           <text class="sr-net {{item.net > 0 ? 'up' : (item.net < 0 ? 'down' : '')}}">
             {{item.net > 0 ? '+' + item.net : (item.net < 0 ? item.net : '±0')}}
           </text>

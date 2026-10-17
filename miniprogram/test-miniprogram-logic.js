@@ -2283,6 +2283,13 @@ while (guard++ < 400) {
       'buildResult 为摊牌手牌打「参与最佳成手」高亮标记');
     ok(wxmlSrc.indexOf('sr-hand') >= 0 && wxssSrc.indexOf('.sr-hand') >= 0,
       '结算弹窗行显示牌型/状态列（sr-hand 样式齐备）');
+    // G2（2026-10-17）：结算弹窗每行附带公共牌条 + 「我击中的」高亮
+    ok(wxmlSrc.indexOf('sr-board') >= 0 && wxssSrc.indexOf('.sr-board') >= 0,
+      '结算弹窗每行附公共牌条（sr-board + .sr-board 样式齐备）');
+    ok(tableSrc.indexOf('bestIds') >= 0 && /new Set\(\[\.\.\.bestSet\]/.test(tableSrc),
+      'buildResult 给每行派生 bestIds（参与最佳成手 5 张的 id 集，供公共牌行高亮）');
+    ok(wxmlSrc.indexOf('item.board') >= 0,
+      'WXML 用 item.board 渲染公共牌条（每行随底牌块同行展示）');
     ok(wxmlSrc.indexOf('wx:elif="{{result}}"') >= 0,
       '结算摘要条与就绪条互斥切换（亮牌期不出现逐人盈亏胶囊）');
   }
