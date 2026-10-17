@@ -3985,6 +3985,57 @@ while (guard++ < 400) {
     pageCtx.remoteMode = false;
   }
 
+
+  /* ---------- 回归：档位口径随街/加注失效即重置（2026-10-17 真机截图实锤）---------- */
+  /* 现象：点 50% 档后未确认，AI 行动推进 street/currentBet → 旧档位金额算出来
+     低于新一轮 minRaiseTo，render 把 raiseTo 钳回最小，而 preset 高亮还停在 50%
+     → 「高亮 50% + 加注 20」矛盾态（AI 桌与好友房同现）。 */
+  {
+    pageCtx.onLoad({});                       // AI 桌（syncLive=false → startGame 同步）
+    pageCtx.chooseSeat({ currentTarget: { dataset: { seat: 0 } } });
+    pageCtx.confirmBuyIn({ currentTarget: { dataset: { amt: '1000' } } });
+    pageCtx.startGame();
+    const g0 = pageCtx.requireGame();
+    ok(g0 && g0.players.length >= 2, 'AI 桌同步开局（回归前置）');
+    // 强制轮到我（不依赖 AI 异步行动），把我复位成可加注的确定态
+    g0.players.forEach(p => { if (p.seat !== pageCtx.mySeat) p.folded = false; });
+    const me0 = g0.seatOf(pageCtx.mySeat);
+    me0.folded = false; me0.allIn = false; me0.sittingOut = false;
+    g0.currentBet = 20; g0.actionSeat = pageCtx.mySeat; g0.result = null;
+    pageCtx.render();
+    pageCtx.onPresetTap({ currentTarget: { dataset: { v: 'p50' } } });
+    ok(dataStore.raisePreset === 'p50', '点 50% 档后高亮 p50，实际 ' + dataStore.raisePreset);
+    ok(dataStore.raiseTo > 20, '50% 档金额大于最小（' + dataStore.raiseTo + '）');
+    // 模拟 AI 加注：currentBet 抬高 → 档位口径失效 → 高亮与金额必须同帧回「最小」
+    g0.currentBet += 40;
+    g0.actionSeat = pageCtx.mySeat;
+    pageCtx.render();
+    ok(dataStore.raisePreset === 'min',
+      '★ 口径失效（currentBet 变）后高亮回「最小」，实际 ' + dataStore.raisePreset);
+    ok(dataStore.raiseTo === dataStore.raiseMin || dataStore.raiseSubmit === dataStore.raiseMin,
+      '★ 口径失效后金额=新一轮最小（raiseTo=' + dataStore.raiseTo + ' min=' + dataStore.raiseMin + '），不再矛盾');
+    // 对照：同街内（currentBet 不变）重渲染，不得清掉我刚选的档位
+    pageCtx.onPresetTap({ currentTarget: { dataset: { v: 'p67' } } });
+    pageCtx.render();
+    ok(dataStore.raisePreset === 'p67',
+      '同街重渲染保持我选的档位（p67），实际 ' + dataStore.raisePreset);
+    // 恢复：结束本局，防污染后续块（无后续行为块，仅防定时器挂住）
+    pageCtx.onEnterBackground();
+  }
+
+  /* ---------- 结构守卫：档位口径判据 + bot 掉线双判据 + 开局 bot 补齐 ---------- */
+  {
+    // 1) render 里必须有 street:currentBet 口径判据（丢失 = 矛盾态复发）
+    ok(/_raiseEpoch !== raiseEpoch/.test(tableSrc) && /raiseEpoch = game \? Street|const raiseEpoch = game/.test(tableSrc),
+      'render 含「街:当前下注」档位口径判据（raiseEpoch）');
+    // 2) 掉线检测必须双判据：botSeats 之外还要认玩家对象自身的 isHuman===false
+    ok(/if \(this\.botSeats\[p\.seat\]\) return;[\s\S]{0,120}if \(p\.isHuman === false\) return;/.test(tableSrc),
+      'dropOfflineSeats 双判据（botSeats + p.isHuman===false），botSeats 缺标记时不得误杀 bot');
+    // 3) 开局组装 players 必须用本地 waitSeats 的 bot 补齐云端布局（hostState 落库滞后）
+    ok(/if \(this\.syncLive && !this\.remoteMode\) \{[\s\S]{0,500}!cur \|\| !cur\.occupied \|\| !cur\.isBot/.test(tableSrc),
+      'startGame 权威端用本地 waitSeats 的 bot 补齐云端布局（防 hostState 滞后丢 bot）');
+  }
+
   /* ---------- 输出 ---------- */
   console.log('\n' + '='.repeat(52));
   if (failures.length === 0) {

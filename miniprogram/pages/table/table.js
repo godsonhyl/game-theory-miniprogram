@@ -1369,7 +1369,14 @@ Page({
     roomSync.activeSeats(rows, Date.now()).forEach(r => { live[r.seat] = true; });
     let dirty = false;
     game.players.forEach(p => {
+      // ⚠️ 双判据：botSeats 是「座位表」，p.isHuman===false 是「玩家对象自身」的
+      // 属性。只认 botSeats 时，只要它没被正确重建（如开局组装 players 时
+      // 云端布局里该座位 isBot 为 false → id 取 'p'+seat 而非 'bot'+seat），
+      // 电脑玩家就会因为没有云端心跳行而被判掉线、强制站起——真机表现为
+      // 「添加了电脑玩家，坐下几秒后自己退出，人数又不足 2」（2026-10-17）。
+      // 机器人没有云端座位行是设计如此，任何依赖「有无心跳」的判定都会误杀它。
       if (this.botSeats[p.seat]) return;              // 机器人不受心跳影响
+      if (p.isHuman === false) return;                // 同上：按玩家对象判定（兜底）
       if (p.seat === this.mySeat) return;             // 我自己
       if (live[p.seat]) return;                       // 在线
       if (p.sittingOut) return;
@@ -2152,9 +2159,29 @@ Page({
         };
       };
       // 有跨设备同步时按云端布局组局（真人行 + 机器人）；否则用本地等待室布局
-      let players = (this.syncLive
+      let source = this.syncLive
         ? roomSync.buildWaitLayout(this.roomRows, this.hostState, this.maxSeats, this.roomSeat)
-        : (this.data.waitSeats || [])).filter(s => s.occupied).map(toPlayer);
+        : (this.data.waitSeats || []);
+      // ⚠️ 权威端（房主/AI 桌）用本地等待室的电脑玩家补齐云端布局。
+      //  房主点「添加电脑玩家」后 publishWait 是异步写云端的，而 hostState 要等
+      //  下一次轮询才读得回新值；这中间若点「开始游戏」，云端布局里还没有这些
+      //  bot → 它们被漏掉，开局人数比等待室少，极端时不足 2 人直接开不了局
+      //  （真机 2026-10-17：「添加了电脑玩家却开不了，提示人数不足」）。
+      //  只补 bot、只补云端布局里没有的座位；镜像端不参与（它以房主快照为准）。
+      if (this.syncLive && !this.remoteMode) {
+        const bySeat = {};
+        source.forEach(s => { bySeat[Number(s.seat)] = s; });
+        (this.data.waitSeats || []).forEach(s => {
+          if (!s || !s.isBot || !s.occupied) return;
+          // 注意 buildWaitLayout 返回的是「全部座位」（含未占用的空位对象），
+          // 所以判据是「云端该座位未占用或不是 bot」，不是「该座位不存在」。
+          const cur = bySeat[Number(s.seat)];
+          if (!cur || !cur.occupied || !cur.isBot) bySeat[Number(s.seat)] = s;
+        });
+        source = Object.keys(bySeat).map(k => bySeat[k])
+          .sort((a, b) => Number(a.seat) - Number(b.seat));
+      }
+      let players = source.filter(s => s.occupied).map(toPlayer);
       // 兜底：云端布局异常（如 state 残留 playing 导致机器人丢失）→ 用本地布局重试
       if (players.length < 2) {
         players = (this.data.waitSeats || []).filter(s => s.occupied).map(toPlayer);
@@ -3186,6 +3213,19 @@ Page({
       // 以 handNo 为判据挂在 render 上，所有让牌局前进的路径都被同一处覆盖。
       if (game && this._raiseHandNo !== game.handNo) {
         this._raiseHandNo = game.handNo;
+        this._raiseResetPending = true;
+      }
+      // ⚠️ 档位口径随「街 / 当前跟注额」失效（2026-10-17 真机截图实锤）：
+      //  用户点 50% 档（高亮 p50、金额=p50 口径）后没有确认加注，AI 行动把
+      //  street/currentBet 推进 → 旧档位的金额算出来低于新一轮 minRaiseTo，
+      //  render 把 raiseTo 钳回最小（按钮「加注 20」），而 preset 高亮还停在
+      //  50% → 「高亮 50% + 加注 20」的矛盾态（AI 桌与好友房同现）。
+      //  修法：street:currentBet 变化即视为档位口径失效，与跨手同帧重置回
+      //  「最小」——高亮与金额永远同源。同街内无人加注（currentBet 不变）
+      //  时不触发，我选好的档位不会被误清。
+      const raiseEpoch = game ? (game.street + ':' + game.currentBet) : '';
+      if (game && this._raiseEpoch !== raiseEpoch) {
+        this._raiseEpoch = raiseEpoch;
         this._raiseResetPending = true;
       }
       // 每手重置：startHand 刚置的标志（见 resetRaiseState）。setData 异步，
