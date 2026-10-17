@@ -1298,6 +1298,16 @@ while (guard++ < 400) {
     guardTimerMaxUnified(tableSrc);
   }
 
+  /* ---------- 边池归属显示（玩家审视 2026-10-17）---------- */
+  {
+    guardSidePotElig(tableSrc, wxmlSrc, wxssSrc);
+  }
+
+  /* ---------- 非摊牌赢池自愿亮牌「亮一手」（玩家审视 2026-10-17）---------- */
+  {
+    guardDisclose(tableSrc, wxmlSrc);
+  }
+
   /* ---------- 行动计时最后 5s 视觉强化（红+脉冲，与警告音同阈值）---------- */
   {
     guardTimerUrgent(tableSrc, wxmlSrc, wxssSrc);
@@ -1519,10 +1529,13 @@ while (guard++ < 400) {
       pageCtx._lastRenderFp = null;   // 强制重渲染（pots 变化本就令指纹不同，双保险）
       pageCtx.render();
       ok(Array.isArray(dataStore.sidePots) && dataStore.sidePots.length === 2,
-        'render 后 sidePots 含 2 个边池金额（主池排除），实际 ' +
+        'render 后 sidePots 含 2 个边池（主池排除），实际 ' +
         JSON.stringify(dataStore.sidePots));
-      ok(dataStore.sidePots.every(a => typeof a === 'number' && a > 0),
+      ok(dataStore.sidePots.every(a => typeof a.amount === 'number' && a.amount > 0),
         '边池金额均为正整数（分层金额正确落入 setData）');
+      ok(dataStore.sidePots.every(a => Array.isArray(a.eligible) && a.eligible.length > 0 &&
+        typeof a.eligibleList === 'string'),
+        '边池携带归属（eligible 座位数组 + eligibleList 拼接串）');
     }
   }
 
@@ -2684,6 +2697,39 @@ while (guard++ < 400) {
     ok(/tick \/ tickMax \* 100/.test(stBody), '计时环百分比按 tickMax 归一（remote 环走满 30s）');
   }
 
+  /* 边池归属 + 非摊牌赢池自愿亮牌（玩家审视 2026-10-17）：
+   * 多路全下时边池要显示「谁有资格拿这个池」；fold 赢池的获胜者给「亮一手」
+   * 主动选择权（muck 礼仪之外，亮 A 高诈唬是社交货币）。静态守卫兜底——
+   * 亮牌前的多重条件（fold 结算/赢家/权威端/未亮过）在行为测试里复现成本高。 */
+  function guardSidePotElig(tableSrc, wxmlSrc, wxssSrc) {
+    ok(/eligible: \(p\.eligible \|\| \[\]\)\.map\(s => s \+ 1\)/.test(tableSrc),
+      'sidePots 携带 eligible（1 起座位号，与座位环显示口径一致）');
+    ok(/eligibleList: \(p\.eligible \|\| \[\]\)\.map\(s => s \+ 1\)\.join\('\/'\)/.test(tableSrc),
+      'sidePots 携带 eligibleList（拼接展示不在 wxml 里算复杂表达式）');
+    ok(/wx:for-item="sp"/.test(wxmlSrc) && /sp\.eligibleList/.test(wxmlSrc),
+      'WXML 边池用 sp 别名渲染归属列表');
+    ok(/\.side-pot \.sp-elig/.test(wxssSrc), 'WXSS 有边池归属样式');
+  }
+
+  function guardDisclose(tableSrc, wxmlSrc) {
+    ok(/canDisclose: false,/.test(tableSrc), 'data 声明 canDisclose 初始值');
+    ok(/const canDisclose = !!\(!this\.remoteMode && game && game\.result && game\.result\.type === 'fold' &&/.test(tableSrc) &&
+      /game\.result\.winners\.indexOf\(this\.mySeat\) !== -1 && meInResult && meInResult\.hole\.length === 2 &&/.test(tableSrc),
+      'canDisclose 门控四条件：权威端 + fold 结算 + 我是赢家 + 底牌仍在（摊牌局不亮重复）');
+    ok(/onShowMyCards\(\)\s*\{\s*if \(this\.remoteMode\) return;/.test(tableSrc),
+      'onShowMyCards 拒绝镜像端（写本地 reveal 会被下一帧快照卷回）');
+    ok(/game\.showdownReveal\[this\.mySeat\] = \{/.test(tableSrc),
+      '亮牌写进 showdownReveal[mySeat]（复用摊牌亮牌的渲染/同步链路）');
+    ok(/onShowMyCards\(\)\s*\{[\s\S]{0,900}?this\._lastRenderFp = null/.test(tableSrc),
+      'onShowMyCards 穿透渲染指纹（reveal 派生 seats[].hole/结算行，否则跳过分支吞掉亮牌）');
+    ok(/onShowMyCards\(\)\s*\{[\s\S]{0,1000}?forcePublish\(\)/.test(tableSrc),
+      'onShowMyCards 房主端 forcePublish（写库指纹穿透，亮牌随下一帧广播）');
+    ok(/if \(this\.data\.canDisclose\) this\.setData\(\{ resultModal: null, canDisclose: false \}\);/.test(tableSrc),
+      'closeResultModal 关弹窗时复位 canDisclose（防下一手残显按钮）');
+    ok(/bindtap="onShowMyCards" wx:if="\{\{canDisclose\}\}"/.test(wxmlSrc),
+      'WXML 有「亮一手」按钮且由 canDisclose 门控');
+  }
+
   function guardTimerUrgent(tableSrc, wxmlSrc, wxssSrc) {
     ok(/timerUrgent: !readyPhase && game\.actionSeat === p\.seat && tick <= 5 && tick > 0/.test(tableSrc),
       '对手行动座位最后 5s 标记 timerUrgent（计时环转红脉冲）');
@@ -2747,8 +2793,8 @@ while (guard++ < 400) {
   function guardSidePotsRender(tableSrc) {
     ok(/if \(!readyPhase && game\.pots && game\.pots\.length > 1\)/.test(tableSrc),
       'render 有边池分层分支（pots.length > 1 才切边池）');
-    ok(/sidePots = game\.pots\.slice\(1\)\.map\(p => p\.amount\)/.test(tableSrc),
-      '边池取 pots.slice(1) 的 amount 数组（主池在 pot 字段单独展示）');
+    ok(/sidePots = game\.pots\.slice\(1\)\.map\(p => \(\{/.test(tableSrc),
+      '边池取 pots.slice(1) 映射对象（金额 + 归属，主池在 pot 字段单独展示）');
     ok(/sidePots,/.test(tableSrc), 'sidePots 进 setData（渲染层可见）');
   }
 

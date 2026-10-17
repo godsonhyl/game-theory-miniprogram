@@ -160,6 +160,8 @@
   border: 1rpx solid rgba(232,163,61,.28); padding: calc(0.2 * var(--uh)) calc(2.2 * var(--uw));
   border-radius: 999rpx; margin: 0 calc(0.8 * var(--uw)); white-space: nowrap;
 }
+/* 边池归属（有资格竞争该池的座位号）：纯文字色弱化，不引新色（重排红线安全） */
+.side-pot .sp-elig { color: rgba(255,217,138,.72); font-size: calc(2.2 * var(--uh)); }
 
 /* 公共牌 */
 .board-row {

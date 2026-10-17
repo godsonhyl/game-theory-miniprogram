@@ -46,8 +46,13 @@
         <text class="pot-label">底池</text>
         <text class="pot-amount">{{pot}}</text>
       </view>
+      <!-- 边池：金额 + 归属（有资格竞争该池的座位号，玩家审视 2026-10-17：
+           多路全下时一眼看出谁有资格拿哪个池，不必去结算单反查） -->
       <view class="side-pots" wx:if="{{sidePots.length}}">
-        <text class="side-pot" wx:for="{{sidePots}}" wx:key="index">边池{{index + 1}} {{item}}</text>
+        <view class="side-pot" wx:for="{{sidePots}}" wx:for-item="sp" wx:key="index">
+          <text>边池{{index + 1}} {{sp.amount}}</text>
+          <text class="sp-elig" wx:if="{{sp.eligible.length}}">· {{sp.eligible.length}}人: {{sp.eligibleList}}</text>
+        </view>
       </view>
     </view>
 
@@ -474,6 +479,8 @@
 
       <view class="summary-btns">
         <button class="btn-ghost sbtn" bindtap="onReplayTap" wx:if="{{!remoteMode}}">复盘</button>
+        <!-- 非摊牌赢池自愿亮牌（muck 礼仪之外的选择权，仅 fold 结算获胜者可见） -->
+        <button class="btn-ghost sbtn" bindtap="onShowMyCards" wx:if="{{canDisclose}}">亮一手</button>
         <!-- 批⑦：高光分享入口（有高光存档时显示） -->
         <button class="btn-ghost sbtn" bindtap="onShareCardShow">分享高光</button>
         <button class="btn-primary sbtn" bindtap="onResultNext">{{remoteMode || readyPhase ? '知道了' : '下一手'}}</button>
