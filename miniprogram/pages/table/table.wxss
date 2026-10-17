@@ -987,8 +987,7 @@
   background: rgba(255,255,255,.05); border-radius: calc(0.4 * var(--uh));
 }
 .sr-board .hc.bc { background: linear-gradient(160deg, #f5f0e2, #dcd4be); }
-/* 上帝视角盖牌：弱化透明——「降级展示」，与 hi 金边形成强对比 */
-.hc.degraded { opacity: 0.55; }
+/* .hc.degraded（盖牌弱化）已随「看全桌牌」上帝视角入口（2026-10-17）撤销退役 */
 .hc.s-diamond, .hc.s-heart { color: #d0342c; }
 /* 四色牌模式（根节点 .four-color）：♠黑 / ♣绿 / ♦蓝 / ♥红 */
 .four-color .hc.s-club { color: #1f9d55; }
@@ -1354,8 +1353,8 @@
 .no-anim .spark { display: none; }
 
 /* ---------- 结算弹窗查看类入口：平铺胶囊行（2026-10-17 二次反馈，替原二级面板） ----------
- * 复盘 / 全桌牌 / 分享 / 亮一手 直排一行小钮，视觉降级（小字号 + ghost 描边）
- * 不与下方 primary 主操作抢层级；行内居中、放不下自动换行（4+1 颗仍单行）。
+ * 复盘 / 分享 / 亮一手 直排一行小钮（「看全桌牌」已撤销），视觉降级（小字号 + ghost 描边）
+ * 不与下方 primary 主操作抢层级；行内居中、放不下自动换行（3+1 颗仍单行）。
  * 上边细分隔线与按钮区隔开，高度恒定不因 canDisclose 有无而跳动。 */
 .hl-row {
   display: flex; flex-wrap: wrap; justify-content: center;

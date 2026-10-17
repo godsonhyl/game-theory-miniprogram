@@ -2265,7 +2265,8 @@ while (guard++ < 400) {
       '结算弹窗开/关方法齐备（showResultModal / closeResultModal）');
     ok(tableSrc.indexOf('resultModalHand') >= 0,
       '每手只调度一次结算弹窗（resultModalHand 守卫，镜像端轮询不重弹）');
-    ok(tableSrc.indexOf('resultModal: this.data.result') >= 0,
+    ok(tableSrc.indexOf('resultModal: this.data.result') >= 0 ||
+       tableSrc.indexOf('resultModal: this.buildResult(game.result)') >= 0,
       '弹窗复用 buildResult 的每人净盈亏数据');
     ok(tableSrc.indexOf('isMe: p.seat === this.mySeat') >= 0, '结算弹窗高亮我的行（rows 带 isMe）');
     ok(tableSrc.indexOf('onResultNext') >= 0,
@@ -2299,15 +2300,17 @@ while (guard++ < 400) {
       'WXML 用街分桶渲染公共牌条（sr-bucket/sr-bl + item.boardBuckets）');
     ok(wxssSrc.indexOf('.sr-bucket') >= 0 && wxssSrc.indexOf('.sr-bl') >= 0,
       'WXSS 街分桶样式齐备（.sr-bucket/.sr-bl）');
-    // G6（2026-10-17）：好友端上帝视角——endHoles 透传 + 镜像端降级构建
+    // G6 endHoles 透传已随「看全桌牌」入口撤销（2026-10-17）退役：
+    // 镜像端不再消费底牌透传，_localToRoom 仍服务座位上行伪冒防护。
     ok(tableSrc.indexOf('endHoles') >= 0 && tableSrc.indexOf('_endHoleHandNo') >= 0,
-      'writePlayState/enterRemote 两端 endHoles + _endHoleHandNo 字段齐备');
-    ok(tableSrc.indexOf('_localToRoom') >= 0 && /endHolesOk = this\.remoteMode && this\._endHoles/.test(tableSrc),
-      'buildResult 镜像端从 _endHoles 反查降级构建（_localToRoom + endHolesOk 锚定 handNo）');
-    ok(!/onToggleGodView\(\) \{\s*if \(this\.remoteMode\) return;/.test(tableSrc),
-      'onToggleGodView 不再 hard reject 镜像端（G6 后镜像端也有数据可降级）');
-    ok(!/btn-ghost sbtn" bindtap="onToggleGodView" wx:if="\{\{!remoteMode\}\}"/.test(wxmlSrc),
-      '结算弹窗「看全桌牌」按钮对镜像端可见（G6 后数据源已齐）');
+      'endHoles 退役注释与 _endHoles/_endHoleHandNo 清引用齐备（防旧字段残留）');
+    ok(/this\._endHoles = null;[\s\S]{0,80}this\._endHoleHandNo = null;/.test(tableSrc),
+      'enterRemote 显式置空 _endHoles/_endHoleHandNo（防旧快照把退役字段卷回画面）');
+    ok(!/revealAll/.test(tableSrc),
+      'buildResult 的 revealAll 降级分支已删（上帝视角入口撤销，muck 礼仪回归纯摊牌）');
+    ok(!/onToggleGodView/.test(tableSrc) &&
+       !/bindtap="onToggleGodView"|>\s*(看|收起)全桌牌/.test(wxmlSrc),
+      '「看全桌牌」入口彻底移除（onToggleGodView/WXML 按钮均不存在；退役注释不算）');
     ok(wxmlSrc.indexOf('wx:elif="{{result}}"') >= 0,
       '结算摘要条与就绪条互斥切换（亮牌期不出现逐人盈亏胶囊）');
   }

@@ -482,10 +482,9 @@
             <text class="sr-name">{{item.icon}}{{item.name}}</text>
             <!-- 摊牌手牌：亮牌者的两张底牌（迷你牌面）。
                  弃牌者不亮牌 → item.cards 为空，占位宽度靠 .sr-cards 固定住，列不错位。
-                 金边 = 该牌参与了最佳成手 5 张，一眼看出赢在哪。
-                 上帝视角（看全桌牌）开启时：盖牌降级构建为弱化版（无金边、加 degraded 斜体）。 -->
+                 金边 = 该牌参与了最佳成手 5 张，一眼看出赢在哪。 -->
             <view class="sr-cards">
-              <view class="hc {{c.cls}} {{c.hi ? 'hi' : ''}} {{c.degraded ? 'degraded' : ''}}" wx:for="{{item.cards}}" wx:for-item="c" wx:key="idx">
+              <view class="hc {{c.cls}} {{c.hi ? 'hi' : ''}}" wx:for="{{item.cards}}" wx:for-item="c" wx:key="idx">
                 <text class="hc-r">{{c.rank}}</text>
                 <text class="hc-s">{{c.suit}}</text>
               </view>
@@ -515,12 +514,11 @@
         </view>
       </view>
 
-      <!-- 查看类功能平铺一行（2026-10-17 用户反馈：高光时刻不要二级弹层）。
-           四颗胶囊小钮即时执行：复盘跳转自己的页、全桌牌在弹窗内原地切换
-           （resultGodView 重建 rows）、分享起自己的弹层、亮一手写 reveal 后重渲染。 -->
+      <!-- 查看类功能平铺一行（2026-10-17 用户反馈：不要二级弹层，且「看全桌牌」
+           与摊牌行的牌面信息重复——撤销该入口）。胶囊即时执行：复盘跳转
+           自己的页、分享起自己的弹层、亮一手写 reveal 后重渲染。 -->
       <view class="hl-row">
         <button class="hl-chip" wx:if="{{!remoteMode}}" bindtap="onReplayTap">复盘这手牌</button>
-        <button class="hl-chip" bindtap="onToggleGodView">{{resultGodView ? '收起全桌牌' : '看全桌牌'}}</button>
         <button class="hl-chip" bindtap="onShareCardShow">分享高光</button>
         <button class="hl-chip" wx:if="{{canDisclose}}" bindtap="onShowMyCards">亮一手</button>
       </view>
