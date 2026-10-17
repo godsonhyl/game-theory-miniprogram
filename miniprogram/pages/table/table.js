@@ -1611,7 +1611,24 @@ Page({
       // 与 emotes 同构——最近 N 条滚动，房主消化 chat 动作后追加到 chatLog 再裁剪广播。
       // chatLog 里的系统消息（站起/入局/超时代弃）也在队列里，镜像端按白名单过滤后只回放
       // 好友发的快捷语/表情（系统消息在镜像端由其自己的本地逻辑生成，避免重复）。
-      chats: (this.data.chatLog || []).slice(-CHAT_QUEUE_MAX)
+      chats: (this.data.chatLog || []).slice(-CHAT_QUEUE_MAX),
+      /**
+       * G6（2026-10-17）：手结束时一次性透传全体玩家底牌「机读码」→ 镜像端
+       * 结算弹窗的「看全桌牌」有数据可降级。仅 game.result 存在（摊牌或 fold 池
+       * 决出）时搭载，下一手 startHand 引擎 result 清空 → 字段自动消失，生命周期
+       * 天然限制在结算期内。⚠️ 该字段与 snapshot 的 hideHoles 已知边界同口径
+       * （room-sync.js 头注释议定封存：好友端读库本就可见自己之外的底牌），
+       * 此处只是显式化「结算后可看」，不引入新增暴露面。
+       */
+      endHoles: (game.result ? (function () {
+        const map = {};
+        (game.players || []).forEach(p => {
+          // 只透传「有底牌」的玩家——sittingOut/早退玩家 hole 为空不进 map，
+          // 好友端自动跳过该行降级构建（与权威端 p.hole.length===2 守卫同口径）。
+          if (p.hole && p.hole.length === 2) map[p.seat] = p.hole.map(c => P.cardToCode(c));
+        });
+        return map;
+      })() : null)
     };
     // 脏检查（评审 2026-10-15 MEDIUM「房主全量写库无脏检查」）：房主 500ms 节流后
     // 仍会因每次 render / 轮询而调到这里；若牌局实质未变（同手同街同注同池同动作
@@ -1631,7 +1648,10 @@ Page({
       // 表情队列内容/位置变化必须触发写库——否则好友端看不到新表情（轮询内唯一广播时机）
       'e' + (state.emotes || []).map(x => x.seat + x.emoji + x.bornAt).join('|'),
       // 快捷语队列变化必须触发写库——否则好友端看不到新快捷语（轮询内唯一广播时机）
-      'c' + (state.chats || []).map(x => x.id + ':' + x.seat + ':' + (x.text || '')).join('|')
+      'c' + (state.chats || []).map(x => x.id + ':' + x.seat + ':' + (x.text || '')).join('|'),
+      // G6 透传集合改变必须穿透——否则手结束那一帧 endHoles 首次挂载被节流吞掉
+      // （好友端结果弹窗已开但看不到全桌牌），或下一手 startHand 后残留
+      'h' + (state.endHoles ? Object.keys(state.endHoles).sort().map(k => k + ':' + (state.endHoles[k] || []).join(',')).join('|') : '')
     ].join('#');
     if (this._lastPlayFp === fingerprint) return;
     this._lastPlayFp = fingerprint;
@@ -1678,6 +1698,12 @@ Page({
     const list = (st.readyList || [])
       .map(x => Object.assign({}, x, { seat: remapS[Number(x.seat)] !== undefined ? remapS[Number(x.seat)] : -1 }))
       .filter(x => x.seat >= 0);
+    // G6：手结束透传的底牌快照（房间座位键着机读码底牌数组）。handNo 锚定到快照的
+    // 本手——startHand 后 handNo 变化、endHoles 消失，双条件才能降级重建，防串局残影。
+    // ⚠️ 必须挂在 emitRemoteFp 之前：本帧镜像 fp 包含 endHoles 摘要，若「数据没存
+    // 但 fp 已含」——下次数据再变化时 fp 也不变 → 错跳一帧（好友端看不见的盖牌）。
+    this._endHoles = st.endHoles || null;
+    this._endHoleHandNo = (typeof snap.handNo === 'number') ? snap.handNo : null;
     const myEntry = list.filter(x => Number(x.seat) === 0)[0];
     // 房主已离开结算阶段（进入就绪 / 结算清空）→ 收起本地结算弹窗
     const hostLeftResult = st.readyPhase || !snap.result;
@@ -1762,7 +1788,10 @@ Page({
       snap.result ? 'r' + JSON.stringify(snap.result.winners) : '',
       (snap.reveal && JSON.stringify(snap.reveal)) || '',
       (patch.emotes ? 'e' + patch.emotes.map(x => x.seat + x.emoji + x.bornAt).join('|') : ''),
-      (patch.chatLog ? 'c' + patch.chatLog.map(x => x.id + ':' + x.seat + ':' + (x.text || '')).join('|') : '')
+      (patch.chatLog ? 'c' + patch.chatLog.map(x => x.id + ':' + x.seat + ':' + (x.text || '')).join('|') : ''),
+      // G6：endHoles 首次挂载（手结束）或消失（startHand）必须穿透——否则好友端
+      // 结果弹窗打开时 fp 命中跳过，本帧降级构建的盖牌会迟一帧才显示
+      (this._endHoles ? 'h' + Object.keys(this._endHoles).sort().map(k => k + ':' + (this._endHoles[k] || []).join(',')).join('|') : '')
     ].join('#');
     if (this._lastRemoteFp === fp) return;
     this._lastRemoteFp = fp;
@@ -3912,10 +3941,23 @@ Page({
   buildResult(res, opts) {
     // 结算行覆盖「所有投入过筹码的人」：含弃牌者（他们输掉的盲注/下注也要显示），
     // 每人给出净盈亏 net = 赢得 - 投入，输赢一目了然。
-    // 上帝视角（P1-5）：opts.revealAll = true 且本机权威端时，非摊牌玩家的
-    // p.hole 也降级构建迷你牌面 + 标「（盖牌）」——数据全部在场（引擎不清
-    // p.hole），默认不开是 muck 礼仪（玩家主动点才看）。
-    const revealAll = !!(opts && opts.revealAll && !this.remoteMode);
+    // 上帝视角（P1-5/G6）：opts.revealAll = true 时，非摊牌玩家的底牌也降级构建
+    // 为迷你牌面 + 标「（盖牌）」。
+    //   - 权威端（房主/AI/SNG）：数据全在 p.hole 里（引擎手结束后仍保留，下一手
+    //     startHand 才重写）；
+    //   - 镜像端（好友，G6）：从快照 st.endHoles 读。该字段仅在手结束时由房主
+    //     一次性透传「全体玩家机读码底牌」（生命周期限结算期，startHand 清空），
+    //     好友端 enterRemote 后 this._endHoles = {roomSeat: ['Th','Jd']}，此处按
+    //     房间座位 → 本地座位反查（_localToRoom 已就绪）。引擎加载快照后 p.hole
+    //     同样会被重映射填充——但**镜像快照按 hideHoles 协议本就含底牌**（已知
+    //     边界、非新增泄露），endHoles 只是把「结算后可看」显式化并打上时间戳语义，
+    //     与权威端「从 p.hole 读」是同一源头两口径。
+    //     若 handNo 错位（房主已开下一手）则不降级——防串局残影。
+    const revealAll = !!(opts && opts.revealAll);
+    // 镜像端的降级数据源：endHoles。handNo 对不上（startHand 已清）→ 空集，
+    // 走 p.hole 兜底（与权威端同口径——好友端 p.hole 也含自己座位重映射后的牌）。
+    const endHolesOk = this.remoteMode && this._endHoles &&
+      (this._endHoleHandNo === (game && game.handNo));
     const rows = game.players
       .filter(p => p.committed > 0 || res.winners.indexOf(p.seat) !== -1)
       .map(p => {
@@ -3947,15 +3989,32 @@ Page({
           .filter(Boolean);
         // 上帝视角降级构建：非摊牌玩家的 hole 用引擎残留数据拼迷你牌面，
         // hi 不标（没有 showdownReveal 的最佳成手依据，瞎标会误导）。
-        if (!cards.length && revealAll && p.hole && p.hole.length === 2) {
-          cards = p.hole.map((id, ci) => {
-            const d = this.cardData(id, ci);
-            d.degraded = true;   // 盖牌：UI 可弱化（透明度/斜体）
-            return d;
-          }).filter(Boolean);
+        // 镜像端（G6）：p.hole 在好友端仅装自己的牌（他人被快照协议滤掉）——
+        // 此时从 _endHoles 反查：本座位本地坐号 → 房主坐号 → endHoles[房主坐号]。
+        if (!cards.length && revealAll) {
+          let holeIds = (p.hole && p.hole.length === 2) ? p.hole : null;
+          if (!holeIds && endHolesOk && this._endHoles) {
+            const roomSeat = this._localToRoom ? this._localToRoom[p.seat] : undefined;
+            const codes = (roomSeat !== undefined) ? this._endHoles[roomSeat] : null;
+            if (codes && codes.length === 2) {
+              holeIds = codes.map(c => P.codeToCard(c)).filter(id => id >= 0);
+            }
+          }
+          if (holeIds && holeIds.length === 2) {
+            cards = holeIds.map((id, ci) => {
+              const d = this.cardData(id, ci);
+              d.degraded = true;   // 盖牌：UI 可弱化（透明度/斜体）
+              return d;
+            }).filter(Boolean);
+          }
         }
-        // 盖牌标注：仅在降级构建时追加，不覆盖摊牌/弃牌/未入池的正常文案
-        const mucked = !rv && p.hole && p.hole.length === 2 && revealAll && p.folded;
+        // 盖牌标注：仅在降级构建时追加，不覆盖摊牌/弃牌/未入池的正常文案。
+        // holeTxt 无 rv 时正常拼 p.hole——镜像端该座位 p.hole 为空 → holeTxt 空串，
+        // 此处改用 cards 拼回的机读码来显示盖牌内容。
+        const mucked = !rv && cards.length === 2 && cards[0].degraded && p.folded;
+        const muckedTxt = mucked
+          ? cards.map(c => c.rank + c.suit).join(' ')
+          : (p.hole && p.hole.length === 2 ? holeTxt : '');
         return {
           seat: p.seat,
           name: p.name,
@@ -3965,7 +4024,7 @@ Page({
           bestIds,                  // 该玩家参与最佳成手的牌 id 集——G2 公共牌行按行高亮
           // 结算条胶囊用的短文本：摊牌显示牌型名；上帝视角降级构建标「（盖牌）」；
           // 普通弃牌/未摊牌给状态文案
-          short: rv ? rv.name : (mucked ? holeTxt + '（盖牌）' : (p.folded ? '弃牌' : (holeTxt || '未摊牌'))),
+          short: rv ? rv.name : (mucked ? muckedTxt + '（盖牌）' : (p.folded ? '弃牌' : (holeTxt || '未摊牌'))),
           committed: p.committed,   // 本手总投入（飞筹动画的筹码量）
           isMe: p.seat === this.mySeat,   // 结算弹窗高亮我的行
           win,
@@ -5067,14 +5126,14 @@ Page({
   },
 
   /**
-   * 结算弹窗「看全桌牌」开关（P1-5，玩家审视 2026-10-17）：
-   * 真实牌桌你可以要求看——数据本就在权威端 p.hole 里，只是默认按 muck 礼仪不亮。
-   * 开关只触发局部 setData 重建弹窗 rows，不走全局渲染指纹（弹窗开时 render 已停、
-   * 弹窗 rows 不在 _lastRenderFp 主路径）。镜像端直接隐藏按钮——好友快照不含
-   * 未摊牌玩家 hole，本地无数据可降级。
+   * 结算弹窗「看全桌牌」开关（P1-5/G6，玩家审视 2026-10-17）：
+   * 真实牌桌你可以要求看——权威端数据在 p.hole（手结束不清）；镜像端（G6）
+   * 数据在 writePlayState 手结束时一次性透传的 _endHoles（生命周期限结算期，
+   * startHand 清空）。开关只触发局部 setData 重建弹窗 rows，不走全局渲染指纹
+   * （弹窗开时 render 已停、弹窗 rows 不在 _lastRenderFp 主路径）。
+   * 默认关是 muck 礼仪——玩家主动点才看。
    */
   onToggleGodView() {
-    if (this.remoteMode) return;
     if (!game || !game.result || !this.data.resultModal) return;
     const next = !this.data.resultGodView;
     this.setData({

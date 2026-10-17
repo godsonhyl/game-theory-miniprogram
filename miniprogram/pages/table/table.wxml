@@ -521,9 +521,9 @@
         <button class="btn-ghost sbtn" bindtap="onReplayTap" wx:if="{{!remoteMode}}">复盘</button>
         <!-- 非摊牌赢池自愿亮牌（muck 礼仪之外的选择权，仅 fold 结算获胜者可见） -->
         <button class="btn-ghost sbtn" bindtap="onShowMyCards" wx:if="{{canDisclose}}">亮一手</button>
-        <!-- 上帝视角（P1-5）：真实牌桌「你可以要求看」，默认关（muck 礼仪）。
-             镜像端无未摊牌玩家 hole 不显示。 -->
-        <button class="btn-ghost sbtn" bindtap="onToggleGodView" wx:if="{{!remoteMode}}">{{resultGodView ? '隐藏全桌牌' : '看全桌牌'}}</button>
+        <!-- 上帝视角（P1-5/G6）：真实牌桌「你可以要求看」，默认关（muck 礼仪）。
+             权威端从 p.hole、镜像端从 G6 透传的 endHoles 降级构建盖牌展示。 -->
+        <button class="btn-ghost sbtn" bindtap="onToggleGodView">{{resultGodView ? '隐藏全桌牌' : '看全桌牌'}}</button>
         <!-- 批⑦：高光分享入口（有高光存档时显示） -->
         <button class="btn-ghost sbtn" bindtap="onShareCardShow">分享高光</button>
         <!-- G5：本手分享（结算弹窗内成行即可分享；分享复用 G7/P1-6 高光卡弹层，

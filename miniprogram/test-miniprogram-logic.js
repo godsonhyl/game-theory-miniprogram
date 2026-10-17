@@ -2298,6 +2298,15 @@ while (guard++ < 400) {
       'WXML 用街分桶渲染公共牌条（sr-bucket/sr-bl + item.boardBuckets）');
     ok(wxssSrc.indexOf('.sr-bucket') >= 0 && wxssSrc.indexOf('.sr-bl') >= 0,
       'WXSS 街分桶样式齐备（.sr-bucket/.sr-bl）');
+    // G6（2026-10-17）：好友端上帝视角——endHoles 透传 + 镜像端降级构建
+    ok(tableSrc.indexOf('endHoles') >= 0 && tableSrc.indexOf('_endHoleHandNo') >= 0,
+      'writePlayState/enterRemote 两端 endHoles + _endHoleHandNo 字段齐备');
+    ok(tableSrc.indexOf('_localToRoom') >= 0 && /endHolesOk = this\.remoteMode && this\._endHoles/.test(tableSrc),
+      'buildResult 镜像端从 _endHoles 反查降级构建（_localToRoom + endHolesOk 锚定 handNo）');
+    ok(!/onToggleGodView\(\) \{\s*if \(this\.remoteMode\) return;/.test(tableSrc),
+      'onToggleGodView 不再 hard reject 镜像端（G6 后镜像端也有数据可降级）');
+    ok(!/btn-ghost sbtn" bindtap="onToggleGodView" wx:if="\{\{!remoteMode\}\}"/.test(wxmlSrc),
+      '结算弹窗「看全桌牌」按钮对镜像端可见（G6 后数据源已齐）');
     ok(wxmlSrc.indexOf('wx:elif="{{result}}"') >= 0,
       '结算摘要条与就绪条互斥切换（亮牌期不出现逐人盈亏胶囊）');
   }
