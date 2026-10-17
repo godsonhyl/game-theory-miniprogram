@@ -2758,8 +2758,8 @@ while (guard++ < 400) {
       'onShowMyCards 穿透渲染指纹（reveal 派生 seats[].hole/结算行，否则跳过分支吞掉亮牌）');
     ok(/onShowMyCards\(\)\s*\{[\s\S]{0,1000}?forcePublish\(\)/.test(tableSrc),
       'onShowMyCards 房主端 forcePublish（写库指纹穿透，亮牌随下一帧广播）');
-    ok(/if \(this\.data\.canDisclose\) this\.setData\(\{ resultModal: null, canDisclose: false \}\);/.test(tableSrc),
-      'closeResultModal 关弹窗时复位 canDisclose（防下一手残显按钮）');
+    ok(/if \(this\.data\.canDisclose\) this\.setData\(\{ resultModal: null, canDisclose: false, replayDate: 0 \}\);/.test(tableSrc),
+      'closeResultModal 关弹窗时复位 canDisclose + replayDate（防下一手残显按钮/残留跳错局）');
     ok(/bindtap="onShowMyCards" wx:if="\{\{canDisclose\}\}"/.test(wxmlSrc),
       'WXML 有「亮一手」按钮且由 canDisclose 门控');
   }

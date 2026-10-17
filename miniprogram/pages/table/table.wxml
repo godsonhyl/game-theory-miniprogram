@@ -505,6 +505,11 @@
           <text class="sr-net {{item.net > 0 ? 'up' : (item.net < 0 ? 'down' : '')}}">
             {{item.net > 0 ? '+' + item.net : (item.net < 0 ? item.net : '±0')}}
           </text>
+          <!-- G3：弃牌行短文本区在回放日期就位时附「复盘看牌」链接——
+               用户痛点最直接：「我弃了，对手到底是什么牌」。镜像端（remoteMode）/
+               摊牌行 不显示（前者无 replay 缓存，后者摊牌本就看得到）。 -->
+          <button class="slink" wx:if="{{!remoteMode && replayDate > 0 && !item.win && item.short === '弃牌'}}"
+                  bindtap="onRowReplayTap" data-date="{{replayDate}}">复盘看牌 ›</button>
         </view>
       </view>
 
@@ -517,6 +522,9 @@
         <button class="btn-ghost sbtn" bindtap="onToggleGodView" wx:if="{{!remoteMode}}">{{resultGodView ? '隐藏全桌牌' : '看全桌牌'}}</button>
         <!-- 批⑦：高光分享入口（有高光存档时显示） -->
         <button class="btn-ghost sbtn" bindtap="onShareCardShow">分享高光</button>
+        <!-- G5：本手分享（结算弹窗内成行即可分享；分享复用 G7/P1-6 高光卡弹层，
+             但内容来自本手 share 字段，不强制要求达高光条） -->
+        <button class="btn-ghost sbtn" bindtap="onShareCardShow" wx:if="{{resultModal && resultModal.share}}">分享本手</button>
         <button class="btn-primary sbtn" bindtap="onResultNext">{{remoteMode || readyPhase ? '知道了' : '下一手'}}</button>
       </view>
     </view>

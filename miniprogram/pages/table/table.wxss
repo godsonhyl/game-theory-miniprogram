@@ -981,6 +981,16 @@
 .sr-net { font-size: calc(3.4 * var(--uh)); font-weight: 800; color: #cfe0d9; flex: none; min-width: 96rpx; text-align: right; }
 .sr-net.up { color: #ff6b5a; }
 .sr-net.down { color: #4caf7d; }
+/* G3：弃牌行「复盘看牌」小链接——文字级（非按钮实底），与 sr-net 金数额视觉
+   平衡互不抢占，仅在回放日期就位 + 弃牌行时才渲染 */
+.slink {
+  font-size: calc(2.3 * var(--uh)); color: var(--gold); opacity: .85;
+  flex: none; padding: 0 calc(0.8 * var(--uw));
+  background: none; border: none; line-height: calc(3.6 * var(--uh));
+  text-decoration: underline;
+  margin: 0;
+}
+.slink::after { border: none; }
 .summary-my {
   display: flex; align-items: center; justify-content: space-between;
   margin-top: calc(1.4 * var(--uh)); padding-top: calc(1.4 * var(--uh));

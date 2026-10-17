@@ -192,8 +192,16 @@ const DEFAULT_BUY_IN = 1000;
  *
  * render 按 game.street 重建 raisePresets（g.street 已入渲染指纹，切街必重算）。
  */
-const RAISE_PRESET_BB = { bb25: 2.5, bb30: 3, bb40: 4 };
 const RAISE_PRESET_PCT = { p33: 1 / 3, p50: 0.5, p67: 2 / 3, p100: 1 };
+// BB 档：2.5bb / 3bb / 4bb 三档——open 最常用的三个尺度，4bb 以上是 3bet 领域（
+// 对面注已经抬起来后，BB 档语义就退化为 min，仍保留按钮只是视觉提示历史档位）
+const RAISE_PRESET_BB = { bb25: 2.5, bb30: 3, bb40: 4 };
+
+/** G5：分享卡摘要文案——只露「盈亏语气」不露桌码/对手名（与高光分享同口径） */
+function netTextSharedOf(res, myGain, myLost, won) {
+  if (won) return '我在「博弈论」赢了 ' + myGain + ' 筹码！';
+  return '这手我输了 ' + myLost + ' 筹码，再接再厉';
+}
 /** 翻前 6 档：最小 / 2.5bb / 3bb / 4bb / 全下 / 自定义（BB 语言） */
 const PRESETS_PREFLOP = [
   { k: 'min', t: '最小' },
@@ -286,6 +294,8 @@ Page({
     result: null,
     resultModal: null,    // 单手结算弹窗（每人净盈亏）：亮牌展示后弹出
     canDisclose: false,   // 非摊牌赢池「亮一手」入口（仅 fold 结算的获胜者·权威端）
+    resultGodView: false, // P1-5：「看全桌牌」开关（默认关，muck 礼仪）
+    replayDate: 0,        // G3：结算弹窗弃牌行跳复盘的 replay-store date（0=不可用）
 
     // 等待室（好友房）：创建房间后为空房间，好友坐下、房主点开始才发牌
     phase: 'playing',     // 'waiting'（空房间）| 'playing'（牌桌）；initGame/等待室会显式设定
@@ -3898,6 +3908,7 @@ Page({
     this.setData({ coachShow: false });
   },
 
+  /** G5：分享卡摘要文案——只露「盈亏语气」不露桌码/对手名（与高光分享同口径） */
   buildResult(res, opts) {
     // 结算行覆盖「所有投入过筹码的人」：含弃牌者（他们输掉的盲注/下注也要显示），
     // 每人给出净盈亏 net = 赢得 - 投入，输赢一目了然。
@@ -3999,7 +4010,15 @@ Page({
     return {
       title: res.type === 'showdown' ? '摊牌结算' : '牌局结束',
       rows,
-      netText: won ? '你赢得 ' + myGain + ' 筹码' : '你输掉 ' + myLost + ' 筹码'
+      netText: won ? '你赢得 ' + myGain + ' 筹码' : '你输掉 ' + myLost + ' 筹码',
+      // G5（2026-10-17）：分享卡数据——与 highlight-store 同口径但标量级小，
+      // 弃牌行也能分享（弃牌无 handName 时由调用方兜底「本手回顾」）。
+      share: {
+        handName: (game.showdownReveal[this.mySeat] && game.showdownReveal[this.mySeat].name) || '',
+        summary: netTextSharedOf(res, myGain, myLost, won),
+        myHole: me ? me.hole.map((c, i) => this.cardData(c, i)) : [],
+        board: (game.board || []).map((c, i) => this.cardData(c, i + 200))   // +200 避开 hc/bc 段缓存 key
+      }
     };
   },
 
@@ -4433,8 +4452,13 @@ Page({
         });
       }
     }
+    // G3：replay-store 最新条对得上本手（handNo 匹配）→ 塞上 replayDate 供弃牌行
+    // 「复盘看牌」点击导航；对不上（快照缓存挤掉/本局未收割）置 0，WXML 隐藏入口。
+    const latestReplay = replayStore.latest();
+    const replayDate = (latestReplay && game && latestReplay.handNo === game.handNo)
+      ? latestReplay.date : 0;
     // 上帝视角（P1-5）默认关：muck 礼仪——每手新开结算弹窗都回到「只看摊牌」
-    this.setData({ resultModal: this.data.result, resultGodView: false });
+    this.setData({ resultModal: this.data.result, resultGodView: false, replayDate });
     this.clearResultModalTimer();
     this.resultModalTimer = setTimeout(() => {
       this.resultModalTimer = null;
@@ -4459,9 +4483,27 @@ Page({
     this.clearResultTimer();
     this.clearResultModalTimer();
     // 亮牌入口随弹窗收起复位（下一手 showResultModal 会按新局面重算）
-    if (this.data.canDisclose) this.setData({ resultModal: null, canDisclose: false });
-    else if (this.data.resultModal) this.setData({ resultModal: null });
+    // G3：replayDate 一并清掉——跨手不得残留上一手的复盘跳转目标
+    if (this.data.canDisclose) this.setData({ resultModal: null, canDisclose: false, replayDate: 0 });
+    else if (this.data.resultModal) this.setData({ resultModal: null, replayDate: 0 });
     if (proceed && !this.remoteMode && !this.data.readyPhase) this.enterReadyPhase();
+  },
+
+  /**
+   * G3（2026-10-17）：结算弹窗弃牌行跳转同手复盘。
+   * 用户痛点最直接——「我弃了，对手到底什么牌」。数据在 replayStore 的
+   * 本手收割记录里；justNow=true 时双条件确认（handNo 匹配 且 与结算时间差小）
+   * 防「上一局结算弹窗已点开但还没关、新局已打完」的错位跳错局。
+   */
+  onRowReplayTap(e) {
+    const date = Number((e && e.currentTarget && e.currentTarget.dataset) ? e.currentTarget.dataset.date : 0);
+    if (!date) return;
+    const rec = replayStore.findByDate(date);
+    if (!rec || rec.handNo !== (game ? game.handNo : -1)) {
+      wx.showToast({ title: '本手复盘未缓存', icon: 'none' });
+      return;
+    }
+    wx.navigateTo({ url: '/pages/replay/replay?date=' + date });
   },
 
   /** 「查看结算」入口（结算摘要条 / 就绪条上的按钮）：手动打开结算弹窗 */
@@ -4489,28 +4531,46 @@ Page({
    * 零 canvas 硬约束下，微信生图唯一途径（canvas）不可用，故定为「分享卡预览弹层
    * + 截图引导 + onShareAppMessage title 摘要」：弹层纯 WXML+WXSS 精美排版高光信息，
    * 引导用户「长按截图可保存到相册」，open-type="share" 按钮带高光摘要 title。
-   * 数据来源：highlightStore.latest() 取最近高光，解码手牌/公共牌/牌型名。
+   * 数据来源：highlightStore/latest() 取最近高光，解码手牌/公共牌/牌型名。
+   * G5（2026-10-17）：同弹层也承担「本手分享」——buildResult 注入的 share 字段
+   * 随结算弹窗成行即可点。优先用本手 share（结算行占有率 100%），只在手动点
+   * 「分享高光」入口且本手无 share 时回退 highlightStore（G7/P1-6 老链路存留）。
    */
   onShareCardShow() {
-    const rec = highlightStore.latest();
-    if (!rec) {
-      wx.showToast({ title: '还没有高光时刻', icon: 'none' });
+    const share = (this.data.result && this.data.result.share) || null;
+    if (!share) {
+      const rec = highlightStore.latest();
+      if (!rec) {
+        wx.showToast({ title: '还没有高光时刻', icon: 'none' });
+        return;
+      }
+      const evals = (rec.result && rec.result.evals) || {};
+      const me = evals[rec.mySeat];
+      const handName = (me && me.name) || highlightStore.summarize(rec, rec.type);
+      const myHole = (rec.myHole || []).map((c, i) => this.cardData(c, i));
+      const board = (rec.board || []).map((c, i) => this.cardData(c, i));
+      this._shareHighlightTitle = '我在「博弈论」打出了' + (rec.summary || handName) + '！';
+      this.setData({
+        shareCardShow: true,
+        shareCardData: {
+          handName: handName,
+          summary: rec.summary || handName,
+          myHole: myHole,
+          board: board,
+          mode: rec.mode || 'ai'
+        }
+      });
       return;
     }
-    const evals = (rec.result && rec.result.evals) || {};
-    const me = evals[rec.mySeat];
-    const handName = (me && me.name) || highlightStore.summarize(rec, rec.type);
-    const myHole = (rec.myHole || []).map((c, i) => this.cardData(c, i));
-    const board = (rec.board || []).map((c, i) => this.cardData(c, i));
-    this._shareHighlightTitle = '我在「博弈论」打出了' + (rec.summary || handName) + '！';
+    this._shareHighlightTitle = '我在「博弈论」' + (share.handName ? '打出了' + share.handName + '，' : '') + share.summary;
     this.setData({
       shareCardShow: true,
       shareCardData: {
-        handName: handName,
-        summary: rec.summary || handName,
-        myHole: myHole,
-        board: board,
-        mode: rec.mode || 'ai'
+        handName: share.handName || '本手回顾',
+        summary: share.summary,
+        myHole: share.myHole,
+        board: share.board,
+        mode: this.mode || 'ai'
       }
     });
   },
