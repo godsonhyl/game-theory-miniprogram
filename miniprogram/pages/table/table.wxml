@@ -289,6 +289,9 @@
         </view>
       </view>
 
+      <view class="actbar add-bot-bar" wx:if="{{isOwner && mode === 'friend' && !myStanding}}">
+        <button class="ab ab-addbot" bindtap="addBot">添加电脑玩家</button>
+      </view>
       <!-- 行动条：三个大按钮，间距拉大避免误触；最后 5s 整条紧迫脉冲提示 -->
       <view class="actbar {{myTimerUrgent ? 'urgent' : ''}}">
         <button class="ab ab-fold {{foldConfirm ? 'confirm' : ''}}" bindtap="onFold" disabled="{{!isMyTurn}}">{{foldConfirm ? '再点弃牌' : '弃牌'}}</button>

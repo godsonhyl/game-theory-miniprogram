@@ -1799,13 +1799,32 @@ Page({
     this.onBack();
   },
 
-  /** 房主添加电脑玩家，模拟好友进入并坐下 */
+  /** 房主添加电脑玩家，模拟好友进入并坐下。
+   *  等待室：直接占 waitSeats 空位 + 广播 waiting 布局。
+   *  进行中（好友房房主）：走 pendingBotSeat 下一手插入，与 AI/SNG 点空位补 bot
+   *  同一套 applyPendingSeats ③ 落位口径——插入后随下一手 startHand 的
+   *  forcePublish 广播，镜像端 loadSnapshot 重映射自动容纳新座位。为何好友房
+   *  需要这个：好友人数不够时房主可中途补 bot 凑桌，不必退回等待室。 */
   addBot() {
-    if (this.data.phase !== 'waiting') return;
     if (!this.isOwner) {
       wx.showToast({ title: '仅房主可添加玩家', icon: 'none' });
       return;
     }
+    // 进行中：好友房房主中途补 bot（pendingBotSeat → 下一手 applyPendingSeats ③ 插入）
+    if (this.data.phase === 'playing' && this.mode === 'friend' && !this.remoteMode && game) {
+      // 找空位：maxSeats 范围内未被 game.players 占用的座位（含 sittingOut 者仍占座）
+      const occupied = {};
+      game.players.forEach(p => { occupied[p.seat] = true; });
+      let seat = -1;
+      for (let i = 0; i < this.maxSeats; i++) {
+        if (!occupied[i]) { seat = i; break; }
+      }
+      if (seat < 0) { wx.showToast({ title: '房间已满', icon: 'none' }); return; }
+      this.pendingBotSeat = seat;
+      wx.showToast({ title: '下一手安排电脑玩家入座', icon: 'none' });
+      return;
+    }
+    if (this.data.phase !== 'waiting') return;
     const seats = this.data.waitSeats.slice();
     if (seats.filter(s => s.occupied).length >= this.maxSeats) {
       wx.showToast({ title: '已达限定人数', icon: 'none' }); return;

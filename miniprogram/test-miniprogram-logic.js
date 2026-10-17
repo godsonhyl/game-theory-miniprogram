@@ -3415,6 +3415,24 @@ while (guard++ < 400) {
     ok(/sngShow/.test(idxWxml), 'index.wxml 含 sngShow 弹窗（SNG 配置）');
     ok(/sngMax/.test(idxWxml), 'index.wxml SNG 弹窗用 sngMax（人数显示与步进）');
     ok(/onSngConfigTap/.test(idxWxml), 'index.wxml SNG 入口绑 onSngConfigTap（先配置再选难度）');
+
+    // ---- 好友房进行中补 bot（用户反馈「邀请机器人进房间但坐不下/很快退出」）----
+    // 病根：addBot 原有 phase!=='waiting' 守卫，进行中点按钮直接 return →
+    // 好友不够时房主无法中途凑桌。改为进行中走 pendingBotSeat → 下一手
+    // applyPendingSeats ③ 插入，与 AI/SNG 点空位补 bot 同口径。
+    ok(/addBot\(\)\s*\{[\s\S]{0,400}?phase === 'playing' && this\.mode === 'friend' && !this\.remoteMode/.test(tableSrc),
+      'table.js addBot 进行中分支守卫 friend 房主非镜像（放开 phase 守卫给好友房中途补 bot）');
+    ok(/addBot[\s\S]{0,800}?pendingBotSeat\s*=\s*seat/.test(tableSrc),
+      'table.js addBot 进行中走 pendingBotSeat（下一手 applyPendingSeats ③ 落位）');
+    // 镜像端 addBot 必须短路：好友端不跑引擎，pendingBotSeat 会空插不广播
+    ok(/addBot\(\)\s*\{[\s\S]{0,120}!this\.isOwner\)\s*\{[\s\S]{0,80}?仅房主可添加玩家/.test(tableSrc),
+      'table.js addBot 仅房主守卫仍在（镜像端好友点按钮被拦）');
+    // WXML：进行中行动条上方出现「添加电脑玩家」按钮
+    ok(/add-bot-bar/.test(tableWxml) && /ab-addbot/.test(tableWxml),
+      'table.wxml 进行中含 add-bot-bar / ab-addbot（房主中途补 bot 入口）');
+    ok(/bindtap="addBot"[\s\S]{0,200}?添加电脑玩家/.test(tableWxml) ||
+       /添加电脑玩家[\s\S]{0,60}?bindtap="addBot"/.test(tableWxml),
+      'table.wxml 进行中「添加电脑玩家」按钮绑 addBot');
   }
 
   /**
@@ -3681,6 +3699,45 @@ while (guard++ < 400) {
     ok((dataStore.readyList || []).every(r => r.seat !== 0),
       '站起后我已被移出就绪名单（只剩电脑玩家，此时绝不能开局）');
     pageCtx.clearReadyClock();
+  }
+
+  /* ---------- 好友房进行中补 bot（用户反馈「邀请机器人进房间但坐不下/很快退出」）----------
+   * 病根：addBot 原有 `if (phase !== 'waiting') return` 守卫 → 牌局进行中
+   * 房主点「添加电脑玩家」直接被拦。好友不够时无法中途凑桌，只能退回等待室。
+   * 修复：进行中（friend 房主、非镜像）走 pendingBotSeat，下一手 applyPendingSeats ③
+   * 把 bot 插进 game.players，随 startHand 的 forcePublish 广播，镜像端 loadSnapshot
+   * 重映射自动容纳新座位。
+   */
+  {
+    pageCtx.onLoad({ room: '777888', own: '1' });   // 好友房房主
+    ok(pageCtx.mode === 'friend', '好友房补 bot 前置：mode=friend');
+    pageCtx.addBot();                               // 等待室先加一个 bot
+    ok((dataStore.waitSeats || []).filter(s => s.occupied).length === 2,
+      '等待室 addBot 仍正常占座（房主+1bot=2），实际 ' +
+      (dataStore.waitSeats || []).filter(s => s.occupied).length);
+    pageCtx.startGame();
+    ok(dataStore.phase === 'playing', '好友房补 bot 前置：已开局（phase=playing）');
+    const before = (pageCtx.requireGame() && pageCtx.requireGame().players || []).length;
+    pageCtx.addBot();                               // 进行中再点「添加电脑玩家」
+    ok(pageCtx.pendingBotSeat !== null && pageCtx.pendingBotSeat !== undefined,
+      '★ 进行中 addBot 置 pendingBotSeat（下一手插入），实际 pendingBotSeat=' +
+      pageCtx.pendingBotSeat);
+    // 触发下一手落位：手动调 applyPendingSeats（startHand 路径里的落位函数）
+    pageCtx.applyPendingSeats();
+    const after = (pageCtx.requireGame() && pageCtx.requireGame().players || []).length;
+    ok(after === before + 1,
+      '★ applyPendingSeats 后 bot 落位（players +1，' + before + '→' + after + '）');
+    ok(pageCtx.pendingBotSeat === null || pageCtx.pendingBotSeat === undefined,
+      '落位后 pendingBotSeat 清空（不重复插入）');
+    const newBot = (pageCtx.requireGame() && pageCtx.requireGame().players || []).filter(p => !p.isHuman);
+    ok(newBot.length >= 2, '在座 bot ≥2（等待室 1 + 进行中补 1），实际 ' + newBot.length);
+    // 镜像端守卫：remoteMode 时 addBot 不应走 pendingBotSeat（不跑引擎，插了不广播）
+    pageCtx.remoteMode = true;
+    pageCtx.pendingBotSeat = null;
+    pageCtx.addBot();
+    ok(pageCtx.pendingBotSeat === null || pageCtx.pendingBotSeat === undefined,
+      '★ 镜像端 addBot 不置 pendingBotSeat（不跑引擎，避免空插不广播）');
+    pageCtx.remoteMode = false;
   }
 
   /* ---------- 输出 ---------- */
