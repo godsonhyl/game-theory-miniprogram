@@ -175,8 +175,8 @@
         <button class="rb-btn ghost" wx:if="{{myStanding && !mySeated}}" bindtap="onMenuSit">坐下加入游戏</button>
         <!-- P0-1：AI 「真枪实弹」我输光后，本桌结束，仅留「再来一桌」出口（引擎其余玩家继续打完后排就绪） -->
         <button class="rb-btn" wx:if="{{myAIBusted}}" bindtap="restartGame">再来一桌</button>
-        <!-- 快进：一键就绪立即发下一手（手感调优：跳过 3s 自动代点等待） -->
-        <button class="rb-btn" wx:if="{{mySeated && !myReady && !myAIBusted}}" bindtap="onFastForward">继续 ▶</button>
+        <!-- 「继续 ▶」已移除（2026-10-17 用户反馈：与「准备就绪」冗余）。
+             自动代点 READY_AUTO_SEC=3s 已足够快，跳过等待由自动路径承担。 -->
         <!-- 就绪按钮：点完就地变灰禁用（不再消失成一行小字），
              否则按钮消失会让右侧布局跳动，且用户看不出「我已就绪」的确定状态 -->
         <button class="rb-btn {{myReady ? 'done' : ''}}" wx:if="{{mySeated && !myAIBusted}}"
@@ -200,8 +200,6 @@
         <button class="rb-btn ghost" bindtap="onShowResult">查看结算</button>
         <!-- P0-1：AI 「真枪实弹」我输光后，本桌结束，仅留「再来一桌」出口 -->
         <button class="rb-btn" wx:if="{{myAIBusted}}" bindtap="restartGame">再来一桌</button>
-        <!-- 快进：看完牌一键进就绪 + 替我点就绪（跳过 3s 亮牌展示等待） -->
-        <button class="rb-btn" wx:if="{{mySeated && !myAIBusted}}" bindtap="onFastForward">继续 ▶</button>
       </view>
     </view>
   </view>

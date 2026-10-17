@@ -4912,25 +4912,8 @@ Page({
     this.markReady(this.mySeat, true);
   },
 
-  /**
-   * 「继续 ▶」快进（手感调优 2026-10-17）：亮牌展示期/就绪期内一键跳过剩余等待。
-   * - 亮牌展示期（result 存在、尚未 readyPhase）：作废展示定时器 + 直接进就绪阶段
-   *   并替我点就绪——等价于「我看完牌了，马上发下一手」。
-   * - 就绪期：等价于手动点「准备就绪」，幂等复用 onReadyTap。
-   * 镜像端：就绪以房主广播为准，这里只做我自己的就绪上行（onReadyTap 已处理）。
-   */
-  onFastForward() {
-    if (this.data.myReady) return;   // 已就绪，无需快进
-    if (!this.data.readyPhase && !this.data.result) return;
-    if (this.data.soundOn) sfx.play('click');
-    this.clearResultTimer();
-    if (!this.data.readyPhase && !this.remoteMode) {
-      this.autoReadyNext = true;   // 进就绪阶段后立即替我调一次 onReadyTap
-      this.enterReadyPhase();
-      return;
-    }
-    this.onReadyTap();
-  },
+  // 「继续 ▶」onFastForward 已移除（2026-10-17 用户反馈与「准备就绪」冗余）。
+  // 亮牌/就绪期的等待由 READY_AUTO_SEC=3s 自动代点承担，无需手动快进。
 
   scheduleAI() {
     const seat = game.actionSeat;
