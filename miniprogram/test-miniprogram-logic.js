@@ -2290,9 +2290,10 @@ while (guard++ < 400) {
       'buildResult 给每行派生 bestIds（参与最佳成手 5 张的 id 集，供公共牌行高亮）');
     ok(wxmlSrc.indexOf('item.board') >= 0,
       'WXML 用 item.board 渲染公共牌条（每行随底牌块同行展示）');
-    // G4（2026-10-17）：公共牌条按街分桶——翻牌/转牌/河牌三段带前置标签
-    ok(tableSrc.indexOf('boardBuckets') >= 0 && tableSrc.indexOf("['翻牌', '转牌', '河牌']") >= 0,
-      'buildResult 派生 boardBuckets（三段街分桶，标签翻牌/转牌/河牌）');
+    // G4（2026-10-17）：公共牌条按街分桶；标签 2026-10-17 布局收口改为单字
+    // （翻/转/河）——摊牌行要按列对齐，双字标签把公共牌条撑到弹窗放不下。
+    ok(tableSrc.indexOf('boardBuckets') >= 0 && tableSrc.indexOf("['翻', '转', '河']") >= 0,
+      'buildResult 派生 boardBuckets（三段街分桶，标签单字 翻/转/河）');
     ok(wxmlSrc.indexOf('sr-bucket') >= 0 && wxmlSrc.indexOf('sr-bl') >= 0 &&
       wxmlSrc.indexOf('item.boardBuckets') >= 0,
       'WXML 用街分桶渲染公共牌条（sr-bucket/sr-bl + item.boardBuckets）');
@@ -2777,8 +2778,8 @@ while (guard++ < 400) {
       'onShowMyCards 房主端 forcePublish（写库指纹穿透，亮牌随下一帧广播）');
     ok(/if \(this\.data\.canDisclose\) this\.setData\(\{ resultModal: null, canDisclose: false, replayDate: 0 \}\);/.test(tableSrc),
       'closeResultModal 关弹窗时复位 canDisclose + replayDate（防下一手残显按钮/残留跳错局）');
-    ok(/bindtap="onShowMyCards" wx:if="\{\{canDisclose\}\}"/.test(wxmlSrc),
-      'WXML 有「亮一手」按钮且由 canDisclose 门控');
+    ok(/bindtap="onPanelDisclose" wx:if="\{\{canDisclose\}\}"/.test(wxmlSrc),
+      'WXML 有「亮一手」入口且由 canDisclose 门控（高光时刻面板内，2026-10-17 收口）');
   }
 
   function guardTimerUrgent(tableSrc, wxmlSrc, wxssSrc) {

@@ -922,8 +922,10 @@
    之间时，给 main 一个最小宽度让 board 自然占中间空白，否则公共牌被压到边缘 */
 .sr-main { flex: 0 0 auto; display: flex; align-items: center; min-width: 0; }
 .sr-rank { width: calc(5.6 * var(--uh)); font-size: calc(2.9 * var(--uh)); color: var(--mut); font-weight: 700; flex: none; }
-.sr-namewrap { flex: 1; display: flex; align-items: center; overflow: hidden; margin-right: calc(1 * var(--uw)); }
-.sr-name { flex: 1; font-size: calc(3.2 * var(--uh)); color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: calc(14 * var(--uh)); }
+/* 摊牌行按列对齐（2026-10-17）：名字列**钉死宽度**，否则名字长短不同会把
+   右侧底牌/公共牌/牌型/盈亏四列整体推得每行不一样，看着就是「乱」。 */
+.sr-namewrap { flex: none; width: calc(16 * var(--uh)); display: flex; align-items: center; overflow: hidden; margin-right: calc(1 * var(--uw)); }
+.sr-name { flex: 1; font-size: calc(3.2 * var(--uh)); color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* 中途离场标记：人不出单（统计覆盖所有人），但一眼可辨谁没打到底 */
 .sr-left {
   flex: none; font-size: calc(2.2 * var(--uh)); color: var(--mut);
@@ -940,9 +942,10 @@
 .sh-num { width: calc(7.6 * var(--uh)); text-align: right; font-size: calc(2.6 * var(--uh)); color: var(--mut); flex: none; margin: 0 calc(1.4 * var(--uw)); }
 .sh-net { min-width: 96rpx; text-align: right; font-size: calc(2.6 * var(--uh)); color: var(--mut); flex: none; }
 /* 单手结算弹窗：牌型/状态列（摊牌=牌型名，弃牌=「弃牌」） */
+/* 牌型列固定宽（右对齐）：与名字列同理，宽度随内容变会让整行参差 */
 .sr-hand {
   font-size: calc(2.8 * var(--uh)); color: var(--mut); flex: none;
-  margin: 0 calc(1.6 * var(--uw)); max-width: 190rpx;
+  margin: 0 calc(1.6 * var(--uw)); width: calc(22 * var(--uh));
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 /* 摊牌手牌（迷你牌面）：亮牌者显示两张底牌，弃牌者 cards 为空 →
@@ -971,14 +974,18 @@
    （提示「这是台面，不是他的底牌」），hi 金边与底牌同口径保持「参与成手 = 高亮」
    的全局一致性。桶内 3 段之间空开（桶标签「翻牌/转牌/河牌」前置），读牌者一眼
    区分每张牌是哪一街发出来的——新手常把 5 张搅成一锅。 */
-.sr-board { flex: 1; display: flex; align-items: center; justify-content: flex-start;
-  gap: calc(1.2 * var(--uw)); margin: 0 calc(1.2 * var(--uw)); min-width: 0; overflow: hidden; }
+/* 公共牌条固定宽（不 flex:1）：无论这行有没有公共牌，底牌/牌型/盈亏三列
+   的起始位置都钉在同一条竖线上，纵向扫一眼就能对上每个人的牌。 */
+.sr-board { flex: none; width: calc(46 * var(--uh)); display: flex; align-items: center;
+  justify-content: flex-start; gap: calc(1.2 * var(--uw));
+  margin: 0 calc(1.2 * var(--uw)); min-width: 0; overflow: hidden; }
 .sr-bucket { display: flex; align-items: center; gap: calc(0.5 * var(--uw)); flex: none; }
+/* 街标签精简为单字（翻/转/河）——双字标签把公共牌条撑得太宽，弹窗内放不下 */
 .sr-bl {
   font-size: calc(2.0 * var(--uh)); color: var(--mut); opacity: .85;
-  letter-spacing: calc(0.06 * var(--uh)); flex: none;
+  letter-spacing: 0; flex: none;
   /* 与 hc 居中对齐——hc 高度 ~5uh，sr-bl 单行 ~2uh，自然垂直居中 */
-  padding: calc(0.4 * var(--uh)) calc(0.6 * var(--uw));
+  padding: calc(0.3 * var(--uh)) calc(0.4 * var(--uw));
   background: rgba(255,255,255,.05); border-radius: calc(0.4 * var(--uh));
 }
 .sr-board .hc.bc { background: linear-gradient(160deg, #f5f0e2, #dcd4be); }
@@ -1347,3 +1354,14 @@
 .no-anim .fly-chip,
 .no-anim .emote-wheel { animation: none !important; }
 .no-anim .spark { display: none; }
+
+/* ---------- 高光时刻面板（结算弹窗查看/分享类功能的二级收口，2026-10-17） ---------- */
+.hl-panel .hl-item {
+  margin-top: calc(1.4 * var(--uh));
+  padding: calc(1.6 * var(--uh)) calc(2.4 * var(--uw));
+  background: rgba(255,255,255,.05); border: 1rpx solid rgba(232,163,61,.3);
+  border-radius: calc(1.6 * var(--uh)); color: #ffd98a;
+  font-size: calc(3.1 * var(--uh)); font-weight: 600; text-align: left; line-height: 1.3;
+}
+.hl-panel .hl-item::after { border: none; }
+.hl-panel .hl-item:active { background: rgba(232,163,61,.16); }

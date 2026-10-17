@@ -515,20 +515,25 @@
         </view>
       </view>
 
+      <!-- 按钮区收敛（2026-10-17 用户反馈：一排查看类按钮乱）。
+           主行只留两颗：高光时刻（二级面板收纳复盘/看全桌牌/分享/亮一手）+ 主操作。
+           「看全桌牌」「亮一手」是即时开关/动作，点完关面板回到牌桌。 -->
       <view class="summary-btns">
-        <button class="btn-ghost sbtn" bindtap="onReplayTap" wx:if="{{!remoteMode}}">复盘</button>
-        <!-- 非摊牌赢池自愿亮牌（muck 礼仪之外的选择权，仅 fold 结算获胜者可见） -->
-        <button class="btn-ghost sbtn" bindtap="onShowMyCards" wx:if="{{canDisclose}}">亮一手</button>
-        <!-- 上帝视角（P1-5/G6）：真实牌桌「你可以要求看」，默认关（muck 礼仪）。
-             权威端从 p.hole、镜像端从 G6 透传的 endHoles 降级构建盖牌展示。 -->
-        <button class="btn-ghost sbtn" bindtap="onToggleGodView">{{resultGodView ? '隐藏全桌牌' : '看全桌牌'}}</button>
-        <!-- 批⑦：高光分享入口（有高光存档时显示） -->
-        <button class="btn-ghost sbtn" bindtap="onShareCardShow">分享高光</button>
-        <!-- G5：本手分享（结算弹窗内成行即可分享；分享复用 G7/P1-6 高光卡弹层，
-             但内容来自本手 share 字段，不强制要求达高光条） -->
-        <button class="btn-ghost sbtn" bindtap="onShareCardShow" wx:if="{{resultModal && resultModal.share}}">分享本手</button>
+        <button class="btn-ghost sbtn hl-entry" bindtap="onHlPanelOpen">高光时刻 ›</button>
         <button class="btn-primary sbtn" bindtap="onResultNext">{{remoteMode || readyPhase ? '知道了' : '下一手'}}</button>
       </view>
+    </view>
+  </view>
+
+  <!-- 高光时刻面板：结算弹窗查看/分享类功能的二级收口（2026-10-17）。
+       点任一项先关面板再执行原动作——看全桌牌要回到牌桌看，复盘/分享有自己的弹层。 -->
+  <view class="help-mask" wx:if="{{hlPanelShow}}" bindtap="onHlPanelClose">
+    <view class="help-dialog hl-panel" catchtap="onBlockTap">
+      <text class="help-title">高光时刻</text>
+      <button class="hl-item" wx:if="{{!remoteMode}}" bindtap="onPanelReplay">复盘这手牌 ›</button>
+      <button class="hl-item" bindtap="onPanelGodView">{{resultGodView ? '隐藏全桌牌' : '看全桌牌 ›'}}</button>
+      <button class="hl-item" bindtap="onPanelShare">分享高光 ›</button>
+      <button class="hl-item" bindtap="onPanelDisclose" wx:if="{{canDisclose}}">亮一手 ›</button>
     </view>
   </view>
 

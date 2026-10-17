@@ -411,6 +411,7 @@ Page({
     // 批⑦：高光分享卡片弹层（非 canvas 预览弹层）——独立 modal toggle，不进三道指纹
     shareCardShow: false,
     shareCardData: null,    // { handName, summary, myHole, board, mode }
+    hlPanelShow: false,     // 高光时刻面板（结算弹窗查看/分享类功能的二级收口）
     helpRows: [
       { name: '翻牌前', desc: '每人两张底牌，大小盲先行下注' },
       { name: '翻牌', desc: '发出 3 张公共牌，开始第二轮下注' },
@@ -4082,7 +4083,9 @@ Page({
     // 的 5 张常分不清「转牌发的是哪一张」（而读牌故事恰恰靠讲街次）。桶标签只在
     // 确有该街时加入（翻前无人看牌 board 为空 → 三桶均空 → WXML 整段不渲染）。
     const boardIds = (game.board || []);
-    const streetLabels = ['翻牌', '转牌', '河牌'];
+    // 单字标签（翻/转/河）：摊牌行要按列对齐，双字标签会把公共牌条撑到
+    // 弹窗放不下（2026-10-17 布局收口）。街次语义靠顺序固定，单字足够。
+    const streetLabels = ['翻', '转', '河'];
     // 每街的切片区间（闭区间末端）：flop=[0,3) turn=[3,4) river=[4,5)
     const streetRanges = [[0, 3], [3, 4], [4, 5]];
     rows.forEach(r => {
@@ -4567,7 +4570,8 @@ Page({
     const replayDate = (latestReplay && game && latestReplay.handNo === game.handNo)
       ? latestReplay.date : 0;
     // 上帝视角（P1-5）默认关：muck 礼仪——每手新开结算弹窗都回到「只看摊牌」
-    this.setData({ resultModal: this.data.result, resultGodView: false, replayDate });
+    // 高光面板同复位：每手新开弹窗不残留上一手的面板展开态
+    this.setData({ resultModal: this.data.result, resultGodView: false, replayDate, hlPanelShow: false });
     this.clearResultModalTimer();
     this.resultModalTimer = setTimeout(() => {
       this.resultModalTimer = null;
@@ -4591,6 +4595,8 @@ Page({
   closeResultModal(proceed) {
     this.clearResultTimer();
     this.clearResultModalTimer();
+    // 高光面板随弹窗收起（面板挂在结算弹窗生命周期内，跨手不得残留）
+    if (this.data.hlPanelShow) this.setData({ hlPanelShow: false });
     // 亮牌入口随弹窗收起复位（下一手 showResultModal 会按新局面重算）
     // G3：replayDate 一并清掉——跨手不得残留上一手的复盘跳转目标
     if (this.data.canDisclose) this.setData({ resultModal: null, canDisclose: false, replayDate: 0 });
@@ -4686,6 +4692,40 @@ Page({
 
   onShareCardClose() {
     if (this.data.shareCardShow) this.setData({ shareCardShow: false });
+  },
+
+  // ---------- 高光时刻面板（结算弹窗查看/分享类功能的二级收口，2026-10-17） ----------
+  // 用户反馈结算弹窗一排按钮乱 → 收敛为「高光时刻 ›」+ 主操作两颗，
+  // 查看类功能进面板。点任一项先关面板再执行：看全桌牌要回到牌桌看，
+  // 复盘/分享有自己的弹层（层级高于本面板，关掉避免遮挡歧义）。
+
+  onHlPanelOpen() {
+    if (this.data.soundOn) sfx.play('click');
+    this.setData({ hlPanelShow: true });
+  },
+
+  onHlPanelClose() {
+    if (this.data.hlPanelShow) this.setData({ hlPanelShow: false });
+  },
+
+  onPanelReplay() {
+    this.setData({ hlPanelShow: false });
+    this.onReplayTap();
+  },
+
+  onPanelGodView() {
+    this.setData({ hlPanelShow: false });
+    this.onToggleGodView();
+  },
+
+  onPanelShare() {
+    this.setData({ hlPanelShow: false });
+    this.onShareCardShow();
+  },
+
+  onPanelDisclose() {
+    this.setData({ hlPanelShow: false });
+    this.onShowMyCards();
   },
 
   // ---------- 就绪阶段：所有人准备就绪后才发下一手 ----------
