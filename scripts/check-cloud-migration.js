@@ -19,6 +19,16 @@ const fs = require('fs');
 const path = require('path');
 
 const ROOT = path.join(__dirname, '..');
+
+// 云端应用 ID 不写死：cloud.js 的 publishableKey 形如 wbpk_<appId>_<secret>。
+// 应用被整体替换过一次（2026-10-17），写死会让本脚本打印的验证 SQL 一直指向
+// 已废弃的旧应用 —— 对着错的应用验证，结论再漂亮也是假的。
+const cloudSrc = (() => {
+  try { return fs.readFileSync(path.join(ROOT, 'miniprogram/utils/cloud.js'), 'utf8'); }
+  catch (e) { return ''; }
+})();
+const APP_ID = (cloudSrc.match(/wbpk_([A-Za-z0-9]+)_/) || [])[1] || '';
+
 const failures = [];
 let passes = 0;
 const ok = (cond, label) => { if (cond) passes++; else failures.push(label); };
@@ -81,7 +91,8 @@ const showSql = process.argv.includes('--sql');
 if (showSql) {
   const fns = [...new Set(called)].sort();
   console.log('\n' + '-'.repeat(62));
-  console.log('待在云端执行的验证 SQL（应用 wbapp_2qkKI2ZGSh13zUKRFfD8Cm）');
+  console.log('待在云端执行的验证 SQL（应用 ' +
+    (APP_ID || '见 miniprogram/utils/cloud.js 的 publishableKey') + '）');
   console.log('-'.repeat(62));
   console.log('\n-- 1) 函数是否真的存在（应看到 ' + fns.length + ' 行，prosecdef 全 true）');
   console.log("SELECT p.proname AS fn, pg_get_function_identity_arguments(p.oid) AS args,");
