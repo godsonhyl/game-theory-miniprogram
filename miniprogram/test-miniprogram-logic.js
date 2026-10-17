@@ -740,6 +740,23 @@ while (guard++ < 400) {
     'autoStandUnready 里有「唯一真人站起则不自动开局」的判断（锁结构不锁数值）');
   pageCtx.clearReadyClock();      // 清理电脑玩家的自动就绪定时器，避免干扰后续断言
 
+  /* ---------- 单机自动续局宽限（玩家审视 2026-10-17）----------
+   * AI/SNG 桌每手必须手动点「准备就绪」是连续对局的纯摩擦。宽限 = READY_AUTO_SEC
+   * 后自动替我代点一次就绪（onReadyTap 同一路径），30s 真超时站起口径不动。
+   * 行为级：宽限期到 → 我被代点就绪；手点在前 → 定时器幂等不重复代点。 */
+  ok(/const READY_AUTO_SEC = 8;/.test(tableSrcReady.replace(/\r/g, '')),
+    '单机自动续局宽限常量 READY_AUTO_SEC=8s');
+  ok(/if \(this\.mode !== 'friend' && this\.seatedOf\(this\.mySeat\)\)/.test(tableSrcReady),
+    '自动续局宽限只挂单机在座（好友房多人节奏由各真人自己掌控）');
+  ok(/this\.autoReadyTimer = setTimeout/.test(tableSrcReady) &&
+    /if \(this\.data\.readyPhase && !this\.data\.myReady\) this\.onReadyTap\(\);/.test(tableSrcReady),
+    '宽限代点走 onReadyTap 同一路径（与手点计票等价，幂等不重复）');
+  ok(/if \(this\.autoReadyTimer\) \{ clearTimeout\(this\.autoReadyTimer\); this\.autoReadyTimer = null; \}/.test(tableSrcReady),
+    'autoReadyTimer 在 clearReadyClock 配对清理（防泄漏/防跨手误触发）');
+  pageCtx.autoReadyTimer = setTimeout(() => {}, 99999);   // 挂一个真实句柄
+  pageCtx.clearReadyClock();
+  ok(pageCtx.autoReadyTimer === null, 'clearReadyClock 清掉 autoReadyTimer（句柄复位为 null）');
+
   /* ---------- 「站起退出本局」入口可见性（WXML 静态检查） ---------- */
   const wxmlSrc = require('fs').readFileSync(
     path.join(__dirname, 'pages', 'table', 'table.wxml'), 'utf8');

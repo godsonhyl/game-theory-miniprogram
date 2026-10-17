@@ -143,6 +143,19 @@ const IDLE_WARN_MS = 5 * 60 * 1000;
 const READY_TIMEOUT_SEC = 30;
 
 /**
+ * 单机自动续局宽限（秒）：AI/SNG 桌「准备就绪」挂起 READY-auto_Sec 后
+ * 自动替我点一次就绪——去掉每手一次的手动点击（连续对局的纯摩擦，玩家
+ * 审视 2026-10-17）。30s 真超时（站起退出）的硬口径不动：宽限只是一次
+ * 代点，被代点后我仍在座、照常发牌，与真人点按完全同路径。
+ * 用户 2026-10-16 反馈「未点准备就绪却自动下一局」的语义不冲突：那次
+ * 问题是**我超时被站起后**剩下纯 bot 照常开局（观战态被硬开局）；
+ * 本宽限是我**仍在座**时的代点，finishReadyPhase 的真人就绪断言
+ * （双保险）仍以 readyMap 计票为准。好友房（remote/房主多人）不适用：
+ * 多人节奏该由每个真人自己掌控。
+ */
+const READY_AUTO_SEC = 8;
+
+/**
  * 结算展示时序（毫秒）：一手结束（摊牌亮牌）后，先在牌桌上停留亮牌
  * RESULT_SHOW_MS ≈ 5 秒（看各家底牌与赢家），随后**直接进就绪阶段**——
  * 「每人盈亏」结算弹窗不自动弹出，由用户点「查看结算」主动打开
@@ -4334,6 +4347,18 @@ Page({
       const delay = 1500 + Math.random() * 2500;
       this.botReadyTimers.push(setTimeout(() => this.markReady(x.seat, true), delay));
     });
+
+    // 单机自动续局宽限：AI/SNG 桌我在座时，READY_AUTO_SEC 后自动替我点一次
+    // 「准备就绪」（连续对局去每手点击摩擦）。此前无论 bot 多快就绪，都必须
+    // 等真人手点才能发下一手。宽限只是代点——我仍在座、走 onReadyTap 同一路径
+    // 计票；30s 真超时自动站起的硬口径与 finishReadyPhase 的真人就绪断言不动。
+    // 好友房（房主多人/镜像端）不挂：多人节奏由每个真人自己掌控。
+    if (this.mode !== 'friend' && this.seatedOf(this.mySeat)) {
+      this.autoReadyTimer = setTimeout(() => {
+        this.autoReadyTimer = null;
+        if (this.data.readyPhase && !this.data.myReady) this.onReadyTap();
+      }, READY_AUTO_SEC * 1000);
+    }
   },
 
   /** 标记某人已准备 / 未准备，并在齐人后立即发下一手 */
@@ -4374,7 +4399,9 @@ Page({
     // AI 对战（单机）：下一手必须由真人明确点「准备就绪」才发——绝不自动开局。
     // 即使其余电脑玩家都已就绪，只要真人没点，就停在就绪阶段等真人入局。
     // 用户 2026-10-16 反馈：未点准备就绪却自动下一局，这里兜底拦截。
-    // （checkAllReady 已要求全员就绪，此处再显式确认真人就绪，双保险。）
+    // （checkAllReady 已要求全员就绪，此处再显式确认真人就绪，双保险。
+    //   自动续局宽限的代点走的也是真人计票路径——readyMap 里我就绪后才可能
+    //   走到这里，语义与手点等价，不妨碍这条断言。）
     if (this.mode !== 'friend' && !(this.data.readyList || []).some(x => x.isMe && this.readyMap[x.seat])) {
       this.renderReady();
       this.setData({ readyHint: '请点「准备就绪」继续' });
@@ -4404,6 +4431,8 @@ Page({
     if (readyTimer) { clearInterval(readyTimer); readyTimer = null; }
     (this.botReadyTimers || []).forEach(t => clearTimeout(t));
     this.botReadyTimers = [];
+    // 单机自动续局宽限的代点定时器一并配对清理（finishReadyPhase/切后台都要能取消）
+    if (this.autoReadyTimer) { clearTimeout(this.autoReadyTimer); this.autoReadyTimer = null; }
   },
 
   /**
