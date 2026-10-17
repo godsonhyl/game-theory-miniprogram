@@ -116,7 +116,7 @@
         <view class="seat-win" wx:if="{{item.win && item.winGain}}">🏆 +{{item.winGain}}</view>
 
         <!-- 对手底牌：摊牌时亮出；未摊牌且未弃牌时显示两张小牌背（仍在手） -->
-        <view class="seat-cards" wx:if="{{item.showCards}}">
+        <view class="seat-cards show" wx:if="{{item.showCards}}">
           <view class="card card-xs {{c.cls}} {{c.hi ? 'hi' : ''}}" wx:for="{{item.hole}}" wx:for-item="c" wx:key="idx">
             <text class="r">{{c.rank}}</text>
             <text class="s">{{c.suit}}</text>
@@ -143,7 +143,7 @@
         </block>
 
         <!-- 等待室：空座位上的「坐下」按钮 -->
-        <view class="sit-btn" wx:if="{{item.empty}}">坐下</view>
+        <view class="sit-btn" wx:if="{{item.empty}}">{{item.sitText}}</view>
         <!-- 房主可请出电脑玩家（仅等待室） -->
         <text class="wtag kick" wx:elif="{{item.isBot && isOwner && phase === 'waiting'}}" catchtap="kickBot" data-seat="{{item.seat}}">请出</text>
         <text class="wtag owner" wx:elif="{{mode === 'friend' && (item.isOwner || (item.isMe && isOwner))}}">房主</text>

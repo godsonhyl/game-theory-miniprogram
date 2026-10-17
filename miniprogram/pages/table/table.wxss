@@ -238,6 +238,20 @@
 .seat.folded { opacity: .38; }
 .seat.standing { opacity: .42; }
 
+/* 大桌（7 座及以上）紧凑模式：座位块整体缩一档，8~9 人桌环上不致挤成一团。
+   只缩视觉尺寸，交互目标（头像/按钮）仍可点；小桌完全不受影响。 */
+.seat.tight { width: 92rpx; }
+.seat.tight .avatar {
+  width: calc(7.2 * var(--uh)); height: calc(7.2 * var(--uh));
+  font-size: calc(3.2 * var(--uh));
+}
+.seat.tight .seat-meta { max-width: 92rpx; }
+.seat.tight .seat-name { font-size: calc(2.6 * var(--uh)); max-width: 56rpx; }
+.seat.tight .seat-stack { font-size: calc(2.4 * var(--uh)); }
+.seat.tight .card-xs { width: calc(5.6 * var(--uh)); height: calc(7.8 * var(--uh)); }
+.seat.tight .card-xs .r { font-size: calc(2.6 * var(--uh)); }
+.seat.tight .card-xs .s { font-size: calc(2.1 * var(--uh)); }
+
 /* 座位号（WPK 式：每个座位标位号，便于好友按号入座） */
 .seat-no {
   position: absolute; top: calc(-2.2 * var(--uh)); left: calc(-3.4 * var(--uh));
@@ -328,7 +342,7 @@
   line-height: calc(3.4 * var(--uh)); flex: none;
 }
 .pos-tag.d { background: linear-gradient(160deg, #f4d78a, #d9a441); color: #1a1a1a; border-color: #fff; }
-/* 座位手牌：紧凑叠放（第二张压在第一张上，只露右侧一条）。
+/* 座位手牌：暗牌态紧凑叠放（第二张压在第一张上，只露右侧一条）。
    病根是原版把两张牌并排且排在名牌下方 —— 座位块向下延伸约 130px，
    顶/中座位的手牌正好压住 `top:24%` 的底池和 `top:48%` 的公共牌。
    改为叠放后块高从 ~24uh 降到 ~14uh，且 z-index 低于中央盘面，
@@ -336,6 +350,23 @@
 .seat-cards { display: flex; margin-top: calc(0.4 * var(--uh)); position: relative; z-index: 1; }
 .seat-cards .card-xs { margin-right: calc(0.8 * var(--uw)); }
 .seat-cards .card-xs + .card-xs { margin-left: calc(-4.6 * var(--uw)); margin-right: 0; }
+
+/* 摊牌：两张牌改为并排、完整露出来。
+   摊牌是全场最该看清的一刻，叠放（-4.6uw）会让第一张被盖掉大半，
+   真机上就是「 everyone 只看到一张牌，另一张被挡住」。
+   摊牌时通常只剩 2~3 家没弃牌，横向空间够，不必再省那一叠。
+   牌面缩小一档（-0.8uh）保证两张并排不把座位块撑太宽。 */
+.seat-cards.show { z-index: 6; }
+.seat-cards.show .card-xs {
+  width: calc(6.2 * var(--uh)); height: calc(8.6 * var(--uh));
+  border-radius: calc(1.2 * var(--uh));
+}
+.seat-cards.show .card-xs + .card-xs { margin-left: calc(0.6 * var(--uw)); margin-right: 0; }
+.seat-cards.show .card-xs .r { font-size: calc(3 * var(--uh)); }
+.seat-cards.show .card-xs .s { font-size: calc(2.4 * var(--uh)); }
+/* 摊牌座位整块浮到最上层：否则相邻座位的名牌/筹码堆仍会压在刚亮出的牌上，
+   等于亮了还是看不清（摊牌座位才提层，平时不动，避免打乱原有层序）。 */
+.seat.reveal { z-index: 8; }
 
 .act-bubble {
   position: absolute; bottom: calc(-1 * var(--uh)); left: 50%; transform: translateX(-50%);

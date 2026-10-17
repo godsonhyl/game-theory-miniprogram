@@ -147,7 +147,11 @@ pageCtx.onBack();
 ok(global.__reLaunched || global.__navBack, '返回动作触发 navigateBack 或兜底 reLaunch');
 pageCtx.startGame();
 ok(dataStore.phase === 'playing', '房主点开始后进入牌桌');
-ok(dataStore.seats.length === 2, '2 人局：2 个座位都在牌桌环上（含我），实际 ' + dataStore.seats.length);
+// 座位环按房间座位数铺满：桌上有几个位就画几个位，没坐满的那几个显示为空位。
+// 旧断言只数「在座人数」，改铺满后应为 6 个位（其中 2 个位有人）。
+ok(dataStore.seats.length === 6, '2 人局：座位环按房间 6 个位铺满（含 4 个空位），实际 ' + dataStore.seats.length);
+ok(dataStore.seats.filter(s => !s.empty).length === 2,
+  '2 个在座的人都在环上（含我），实际 ' + dataStore.seats.filter(s => !s.empty).length);
 ok(dataStore.myCards.length === 2, '我的两张底牌已在 myzone 渲染，实际 ' + dataStore.myCards.length);
 ok(dataStore.pot === 30, '开局底池 30（盲注 10+20），实际 ' + dataStore.pot);
 
@@ -214,7 +218,9 @@ ok(!!global.__lastModal && global.__lastModal.title === '继续上一局？', '�
 ok(!!global.__lastModal && global.__lastModal.confirmText === '继续' && global.__lastModal.cancelText === '重开',
   '续局确认按钮：继续 / 重开');
 ok(dataStore.phase === 'playing', '选择「继续」后回到牌桌');
-ok(dataStore.seats.length === 2, '续局保留原座位数（2 个座位都在环上），实际 ' + dataStore.seats.length);
+ok(dataStore.seats.length === 6, '续局保留房间座位数（6 个位都在环上），实际 ' + dataStore.seats.length);
+ok(dataStore.seats.filter(s => !s.empty).length === 2,
+  '续局 2 个在座者仍在环上，实际 ' + dataStore.seats.filter(s => !s.empty).length);
 ok(dataStore.handNo === handBefore, '续局从第 ' + handBefore + ' 手继续，实际 ' + dataStore.handNo);
 ok(toasts.indexOf('已回到房间 · 第 ' + handBefore + ' 手') >= 0, '续局提示文案正确: ' + toasts.slice(-1)[0]);
 
@@ -273,7 +279,10 @@ pageCtx.addBot();
 pageCtx.startGame();
 ok(dataStore.phase === 'playing', '带时长的房间开局进入牌桌');
 ok(dataStore.remainSec === 1800, '开局倒计时 1800 秒，实际 ' + dataStore.remainSec);
-ok(dataStore.seats.length === 2, '4 人桌 2 人入局（2 个座位都在环上），实际 ' + dataStore.seats.length);
+// 4 人桌只坐了 2 人：环上依然是 4 个位，空着的那 2 个位可点「入座」加入
+ok(dataStore.seats.length === 4, '4 人桌座位环按 4 个位铺满，实际 ' + dataStore.seats.length);
+ok(dataStore.seats.filter(s => !s.empty).length === 2,
+  '4 人桌 2 人入局（2 个在座者在环上），实际 ' + dataStore.seats.filter(s => !s.empty).length);
 pageCtx.endGame();
 ok(dataStore.timeUp === true, '到点后置 timeUp');
 ok(!!dataStore.summary && dataStore.summary.title.indexOf('时长已到') > 0, '生成结束结算面板');
@@ -295,6 +304,28 @@ ok(dataStore.summary.rows.filter(r => r.isMe).length === 1, '结算标出我自�
   const row2 = dataStore.summary.rows.filter(r => r.seat === probe.seat)[0];
   eq(row2.net, 0, '无起始记录的座位盈亏记 0（不再按常数 1000 算假盈亏）');
   pageCtx.startStacks = savedSs;   // 还原记账，后续流程不受影响
+}
+/* ---------- 中途加入 / 换座：N 人桌没坐满时，中途还能进人 ----------
+   真机场景：8 人房开局只来 5 人，剩下的 3 个位必须看得见、点得进去。 */
+{
+  const gA = pageCtx.requireGame();
+  const cntA = gA.players.length;
+  // 房主端消化好友的「中途加入」动作：当手不插人，下一手才落座
+  pageCtx.applyFriendAction({ type: 'join', seat: 2, rowSeat: 2 });
+  ok(pageCtx.requireGame().players.length === cntA,
+    '中途加入当手不插人（不打断进行中的这一手），实际 ' + pageCtx.requireGame().players.length);
+  pageCtx.startHand();
+  const gB = pageCtx.requireGame();
+  ok(gB.players.length === cntA + 1, '中途加入：下一手座位 2 正式入局，实际 ' + gB.players.length);
+  ok(!!gB.seatOf(2), '中途加入者落在他选的座位上');
+  ok(pageCtx.startStacks[2] !== undefined, '中途加入者的带入额已记账（结算单盈亏有基准）');
+  // 换座：我在座时点另一个空位 → 下一手挪过去，记账跟着座位走
+  const myStackBefore = pageCtx.startStacks[pageCtx.mySeat];
+  pageCtx.pendingMove = { from: pageCtx.mySeat, to: 3 };
+  pageCtx.startHand();
+  ok(pageCtx.mySeat === 3, '换座：下一手我已在新座位，实际 ' + pageCtx.mySeat);
+  ok(pageCtx.startStacks[3] === myStackBefore, '换座后起始筹码记账跟着座位迁移（盈亏口径不漂移）');
+  ok(!!pageCtx.requireGame().seatOf(3), '换座后新座位上有人');
 }
 // timeUp 后不再接受行动
 const stackBefore = dataStore.myStack;
@@ -2203,6 +2234,22 @@ while (guard++ < 400) {
     ok(/\.seat-no\s*\{/.test(wxssSrc), 'WXSS：存在座位号样式 .seat-no');
     ok(/ab-fold\.confirm/.test(wxssSrc), 'WXSS：存在弃牌确认态样式 .ab-fold.confirm');
 
+    // ④ 桌上 N 个位常显：座位环按房间座位数铺满，没坐满时那几个位照样画出来
+    //    （旧版只画在座者 → 8 人房 5 人开局时看不到还能再进 3 个人）
+    ok(/for \(let si = 0; si < this\.maxSeats; si\+\+\) allSeats\.push\(si\)/.test(tableSrc),
+      'render 按房间座位数铺满座位环（N 人桌就画 N 个位）');
+    ok(/function emptySeat\(/.test(tableSrc) && /if \(!p\) return emptySeat\(/.test(tableSrc),
+      '座位环上无人之位渲染成空位条目（不是直接跳过不画）');
+    ok(/\.seat-cards \{[\s\S]{0,200}?margin-left: calc\(-4\.6 \* var\(--uw\)\)/.test(wxssSrc),
+      '暗牌态仍是紧凑叠放（未摊牌时省空间）');
+
+    // ⑤ 摊牌：两张牌必须都看得清（真机反馈「只能看清一张，另一张被遮挡」）
+    ok(/class="seat-cards show"/.test(wxmlSrc), 'WXML：摊牌卡片容器带 show 类（走并排样式）');
+    ok(/\.seat-cards\.show \.card-xs \+ \.card-xs \{ margin-left: calc\(0\.6 \* var\(--uw\)\)/.test(wxssSrc),
+      '摊牌时两张牌并排（不再 -4.6uw 叠放遮挡第一张）');
+    ok(/\.seat\.reveal \{ z-index: 8; \}/.test(wxssSrc),
+      '摊牌座位整块浮到最上层（不被邻座名牌/筹码压住）');
+
     // ④ 弃牌二次确认逻辑
     ok(/onFold\(\)\s*\{[\s\S]*foldConfirm/.test(tableSrc), 'onFold 实现弃牌二次确认（首次进入确认态）');
     ok(/clearFoldTimer\(\)/.test(tableSrc), '存在弃牌确认计时器清理 clearFoldTimer');
@@ -2422,7 +2469,8 @@ while (guard++ < 400) {
   function guardSeatCardNoOverlap(tableSrc, wxmlSrc, wxssSrc) {
     const feltSrc = tableSrc;
     const cy = Number((feltSrc.match(/cy = (\d+)/) || [0, 0])[1]);
-    const ry = Number((feltSrc.match(/ry = (\d+)/) || [0, 0])[1]);
+    // ry 支持两种写法：定值（ry = 27）与按人数自适应的三元（ry = big ? 25 : 27）
+    const ry = Number((feltSrc.match(/ry = (?:big \? )?(\d+)/) || [0, 0])[1]);
     ok(cy > 0 && ry > 0, 'ringPositions 椭圆参数可解析 cy=' + cy + ' ry=' + ry);
     ok(cy - ry >= 10, '座位带最低点 ' + (cy - ry) + '% （≥10%，留出块延伸空间）');
     const yMax = Number((feltSrc.match(/y = Math\.max\(\d+, Math\.min\((\d+)/) || [0, 999])[1]);
