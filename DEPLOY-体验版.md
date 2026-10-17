@@ -10,7 +10,7 @@
 |---|---|
 | `project.config.json` | ✅ `appid: touristappid`、`miniprogramRoot: miniprogram/`、`libVersion: 3.5.5` |
 | `packOptions.ignore` | ✅ 已排除测试文件 / package*.json / node_modules / dist |
-| 云 SDK 构建产物 | ✅ `miniprogram_npm/@tencent-ai/workbuddy-cloud-sdk/miniprogram.js`（519KB 就位） |
+| 云 SDK | ✅ 构建产物内联在 `miniprogram/utils/vendor/workbuddy-cloud-sdk.js`（2026-10-17 起，无需「构建 npm」/npm install） |
 | 云环境配置 | ✅ `endpoint: mp-api.app.workbuddy.host`，应用 `wbapp_2qkKI2ZGSh13zUKRFfD8Cm` |
 | 页面声明 | ✅ 3 页，单主包无分包 |
 

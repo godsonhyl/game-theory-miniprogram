@@ -1,8 +1,11 @@
 /**
- * 验证云 SDK 的小程序子路径可正常加载
+ * 验证云 SDK 的小程序产物可正常加载
  * （只验证模块解析与导出形状，不发起真实网络请求）
+ *
+ * 2026-10-17 起 SDK 以构建产物内联（miniprogram/utils/vendor/workbuddy-cloud-sdk.js），
+ * 与小程序运行时加载的是同一份文件——不再依赖 node_modules / 「构建 npm」。
  */
-const SDK = '@tencent-ai/workbuddy-cloud-sdk/miniprogram';
+const SDK = './miniprogram/utils/vendor/workbuddy-cloud-sdk';
 let pass = 0;
 const fails = [];
 function ok(c, l) { if (c) pass++; else fails.push(l); }

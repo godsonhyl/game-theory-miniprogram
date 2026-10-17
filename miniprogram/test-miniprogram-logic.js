@@ -2142,6 +2142,9 @@ while (guard++ < 400) {
     // 微信小程序没有 process 全局对象（Node 测试里一切正常）——一旦源码里
     // 残留 process.env 调试语句，真机上直接 ReferenceError，且往往发生在
     // render 等关键链路上，全局回退等待室。此处静态扫描运行时源码防复发。
+    // 豁免 utils/vendor/：内联的第三方构建产物（云 SDK），其 process 引用
+    // 是「var process = globalThis2.process; ... process && process.versions」
+    // 形式的环境探测，自带防御，真机安全。
     const fs = require('fs');
     const scanDirs = ['pages', 'utils', 'core', 'components'];
     const bad = [];
@@ -2150,16 +2153,26 @@ while (guard++ < 400) {
       try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch (e) { return; }
       entries.forEach(en => {
         const p = path.join(dir, en.name);
+        // dir 由 path.join(__dirname, d) 传入，是绝对路径——相对判断一律走 rel
+        const rel = path.relative(__dirname, p).split(path.sep).join('/');
         if (en.isDirectory()) walk(p);
         else if (/\.js$/.test(en.name) && en.name.indexOf('test-') !== 0) {
+          if (rel.indexOf('utils/vendor/') === 0) return;
           const src = fs.readFileSync(p, 'utf8');
-          if (/(^|[^\w.])process\s*\./.test(src)) bad.push(path.relative(__dirname, p));
+          if (/(^|[^\w.])process\s*\./.test(src)) bad.push(rel);
         }
       });
     };
     scanDirs.forEach(d => walk(path.join(__dirname, d)));
     ok(bad.length === 0, '小程序运行时源码无裸 process 引用（真机无 process 全局）' +
       (bad.length ? '，违规文件: ' + bad.join(', ') : ''));
+    // 云 SDK 内联产物就位：cloud.js 以相对路径 require 它，文件缺失 = 全局登录/同步失效
+    ok(fs.existsSync(path.join(__dirname, 'utils/vendor/workbuddy-cloud-sdk.js')),
+      '云 SDK 内联产物就位（utils/vendor/workbuddy-cloud-sdk.js）');
+    ok(fs.existsSync(path.join(__dirname, 'utils/cloud.js')) &&
+      fs.readFileSync(path.join(__dirname, 'utils/cloud.js'), 'utf8')
+        .indexOf("require('./vendor/workbuddy-cloud-sdk')") >= 0,
+      'cloud.js 引用内联 SDK（不再依赖 node_modules / 「构建 npm」）');
   }
 
   function guardResultShowPhase(tableSrc, wxmlSrc, wxssSrc) {
