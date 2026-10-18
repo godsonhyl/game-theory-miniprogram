@@ -2158,6 +2158,23 @@ Page({
         source = Object.keys(bySeat).map(k => bySeat[k])
           .sort((a, b) => Number(a.seat) - Number(b.seat));
       }
+      // 本人（房主 / AI·SNG 本人）尚未落座时，自动占第一个空位入局——
+      // 否则会开成「自己观战 bot 互打」的畸形局：mePlayer 缺失使 mySeat 仍指向
+      // game 里不存在的座位，就绪阶段 readyList 不含我，「准备就绪」按钮看似可点
+      // 实则点了无反应（myReady 不变、无提示）。SNG 本就是本人参赛的淘汰赛，
+      // 不该出现「本人不在局内」的开局（2026-10-18 复现：repro-sng-noseat.js）。
+      // 好友房本人入座由云端 roomSync 保证，此处跳过。
+      if (this.mode !== 'friend' && !source.some(s => s.isMe)) {
+        const empty = source.find(s => !s.occupied);
+        if (empty) {
+          empty.occupied = true;
+          empty.isMe = true;
+          empty.isOwner = this.isOwner;
+          empty.name = this.meLabel(this.isOwner);
+          empty.stack = this.buyInStack[empty.seat] || DEFAULT_BUY_IN;
+          if (this.isOwner) { this.mySeat = empty.seat; this.roomSeat = empty.seat; }
+        }
+      }
       let players = source.filter(s => s.occupied).map(toPlayer);
       // 兜底：云端布局异常（如 state 残留 playing 导致机器人丢失）→ 用本地布局重试
       if (players.length < 2) {
