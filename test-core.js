@@ -1153,6 +1153,56 @@ console.log('\n【9.5】AI 决策可复现性 + 下注尺度因子（玩家审�
   }
 }
 
+/* ⑦ 慢打必须带无风险前置（2026-10-19 资深玩家 review 第五轮）。
+ *
+ * 病根：旧实现只要价值档够高就按 slowplay 概率过牌，不看牌面是否已成、
+ * 也不看还有没有后续街。实测「慢打高手」周叙（slowplay=0.35）在四条 A
+ * （equity=1.000）的**河牌**仍有 35% 概率过牌 —— 河牌过牌等于直接放弃
+ * 摊牌价值，没有任何「诱敌」可言（对手跟不动了，也不再有下一张牌）。
+ *
+ * 现只有同时满足「牌面坚果化 equity ≥ 0.95」+「还有后续街」才慢打。 */
+{
+  const cc = (r, s) => (r << 2) | s;
+  const flop4 = [cc(12, 1), cc(12, 2), cc(7, 0)];
+  const turn4 = flop4.concat([cc(9, 1)]);
+  const river4 = turn4.concat([cc(3, 2)]);
+  const holeAA = [cc(12, 0), cc(12, 3)];     // 四条 A
+  const slowStyle = { aggro: 0.45, tight: 0.58, bluffFreq: 0.2, bluffSize: 0.45, heroCall: 0.15, slowplay: 0.35 };
+  const betRate = function (board, tag) {
+    let bet = 0, n = 300;
+    for (let i = 0; i < n; i++) {
+      const d = P.aiDecide({
+        hole: holeAA, board, pot: 100, toCall: 0, stack: 1000, currentBet: 0,
+        numActive: 2, positionFactor: 0.5, style: slowStyle,
+        minRaiseTo: 0, maxRaiseTo: 1000, canRaise: true, bb: 20,
+        rng: P.createRng('sp-' + tag + '-' + i)
+      });
+      if (d.action !== 'check') bet++;
+    }
+    return bet / n;
+  };
+  const riverRate = betRate(river4, 'river');
+  ok(riverRate === 1,
+    '河牌坚果牌 100% 主动下注（不再慢打放弃摊牌价值），实际 ' + (riverRate * 100).toFixed(0) + '%');
+  const flopRate = betRate(flop4, 'flop');
+  ok(flopRate > 0.5 && flopRate < 1.0,
+    '翻牌坚果牌多数下注、少数慢打（保留「挖坑」人设但不白送），实际下注 ' + (flopRate * 100).toFixed(0) + '%');
+  // 非坚果牌（equity 不够 0.95）绝不允许慢打
+  const weakBoard = [cc(12, 0), cc(11, 0), cc(2, 1)];
+  const weakHole = [cc(12, 2), cc(3, 1)];    // 顶对弱踢 ≈0.82，不到坚果线
+  let weakCheckSlow = 0;
+  for (let i = 0; i < 300; i++) {
+    const d = P.aiDecide({
+      hole: weakHole, board: weakBoard, pot: 100, toCall: 0, stack: 1000, currentBet: 0,
+      numActive: 2, positionFactor: 0.5, style: slowStyle,
+      minRaiseTo: 0, maxRaiseTo: 1000, canRaise: true, bb: 20,
+      rng: P.createRng('spw-' + i)
+    });
+    if (d.action === 'check' && d.reason === '慢打诱敌') weakCheckSlow++;
+  }
+  ok(weakCheckSlow === 0, '非坚果牌（顶对）绝不触发慢打，实际 ' + weakCheckSlow + '/300');
+}
+
 console.log('\n【10】行动建议模块');
 const ga = P.createGame({ players: [mkPlayer(0, 1000, true), mkPlayer(1, 1000)], sb: 10, bb: 20, dealerSeat: 0, seed: 'adv' });
 ga.startHand();

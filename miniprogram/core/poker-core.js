@@ -826,17 +826,35 @@
       //   ③ currentBet + toCall + pot*frac              → 220% 池，超池重锤
       // 根因：pot 已经包含对手这一注（toCall 在池内），再叠加 currentBet/toCall
       // 就是重复计算。正确口径只看「当前底池」，加注到池的 (1+frac) 倍：
-      //   frac 0.5 → 加注到 1.5 池（薄价值）  0.75 → 1.75 池  1.2 → 2.2 池（超强）
+      //   frac 0.40 → 加注到 1.4 池（薄价值） 0.70 → 1.7 池  1.00 → 2.0 池（超强）
       // 下限保「至少合法加注」，上限由 raiseDecision 夹到 maxRaiseTo。
-      return Math.max(Math.round(pot * (1 + tierFrac)), currentBet + toCall);
+      const want = Math.max(Math.round(pot * (1 + tierFrac)), currentBet + toCall);
+      // 筹码保护（2026-10-19）：底池膨胀后 pot*(1+frac) 很容易超过手上筹码，
+      // raiseDecision 随即把它转成全下（实测全下频率 5%，真人约 1~2%）。
+      // 除非真是超强档，否则把加注压到筹码的 60% 以内——留出被打时撤退的余地，
+      // 也避免中等牌在深底池里被迫「要么全下要么弃」的两极选择。
+      const cap = valueTier >= 3 ? stack : Math.floor(stack * 0.6);
+      return Math.min(want, Math.max(cap, currentBet + toCall));
     };
 
     if (toCall === 0) {
       if (valueTier > 0 || (draw.outs >= 8 && equity > 0.42)) {
-        // 慢打诱敌：强牌按概率过牌喂对手一手，诱其下注后再反加。仅可过牌时触发
-        // （toCall===0，否则在跟注/加注分支）。默认 slowplay=0 永不触发，行为不变。
-        // 慢打只对「超强」档开放——中等牌慢打等于免费送对手看下一张。
-        if (valueTier >= 3 && rndFloat() < slowplay) return { action: ACTION.CHECK, amount: 0, reason: '慢打诱敌' };
+        // 慢打诱敌：强牌按概率过牌喂对手一手，诱其下注后再反加。
+        // ⚠️ 必须带「无风险」前置条件（2026-10-19 资深玩家 review）：
+        // 旧实现只要 valueTier>=3 就按 slowplay 概率过牌，不看牌面是否已成、
+        // 也不看对手会不会下注。实测「慢打高手」周叙（slowplay=0.35）在四条 A
+        // （equity=1.000）的翻牌有 28% 概率过牌 —— 白白送对手一张免费牌，
+        // 而 turn/river 还会继续慢打，价值大量流失。这正是五人格同桌对打时
+        // 周叙每百手亏 1682 的主因（别人都在正常收价值）。
+        // 现在只有同时满足两条才慢打：
+        //   ① 牌面已成「坚果级」（equity ≥ 0.95），对手几乎没有反超可能；
+        //   ② 还有后续街可打（river 上过牌就是放弃摊牌价值，没有「诱敌」可言）。
+        // 即便如此仍按 slowplay 概率打折，保留人设的「挖坑」手感。
+        const nutted = equity >= 0.95;
+        const streetsLeft = board.length < 5;
+        if (nutted && streetsLeft && rndFloat() < slowplay) {
+          return { action: ACTION.CHECK, amount: 0, reason: '慢打诱敌' };
+        }
         // 主动下注无 currentBet（=0）时，用底池比例直接下注
         return raiseDecision(
           valueTier > 0 ? Math.round(pot * tierFrac) : Math.round(pot * (0.5 + aggressive * 0.35)),
