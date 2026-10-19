@@ -934,6 +934,41 @@ console.log('\n【9.5】AI 决策可复现性 + 下注尺度因子（玩家审�
   }
 }
 
+// ③ 翻前调参回归（A5+D1，2026-10-17）：threshold 23（原 26）、加注锋线 bar+7
+//    （原 +12）。中位风格下：AQ/TT 等中高对必须进入加注区（原值只有 AA/KK 加注、
+//    全桌 limp），边缘手（KQo 以内的 66/A5o）只跟不加，垃圾牌（72o）仍然全弃。
+//    每手牌用独立 rng 种子抽样 60 次出动作分布——加注/弃牌是确定区，不赌概率。
+{
+  const pfCtx = (hole, tag) => ({
+    hole, board: [], pot: 30, toCall: 20, stack: 1000, currentBet: 20, numActive: 3,
+    style: { aggro: 0.5, tight: 0.5, bluffFreq: 0, heroCall: 0, slowplay: 0 },
+    minRaiseTo: 60, maxRaiseTo: 1000, canRaise: true, bb: 20, positionFactor: 0,
+    rng: P.createRng('pf-' + tag)
+  });
+  const dist = (hole, tag) => {
+    let raise = 0, fold = 0;
+    for (let i = 0; i < 60; i++) {
+      const r = P.aiDecide(pfCtx(hole, tag + '-' + i));
+      if (r.action === 'raise' || r.action === 'allin') raise++;
+      else if (r.action === 'fold') fold++;
+    }
+    return { raise, fold };
+  };
+  // AQs / TT：加注锋线以内（score ≥ bar+7）——加注率必须拉满
+  const aq = dist([c(12, 0), c(10, 0)], 'aqs');
+  ok(aq.raise === 60, 'A5+D1 调参：AQs 翻前加注率 100%（原值只有 AA/KK 加注），实际 ' + (aq.raise / 60 * 100).toFixed(0) + '%');
+  const tt = dist([c(8, 3), c(8, 2)], 'tt');
+  ok(tt.raise === 60, 'A5+D1 调参：TT 翻前加注率 100%，实际 ' + (tt.raise / 60 * 100).toFixed(0) + '%');
+  // 边缘带：66 / A5o 在锋线外、入池线内——可以跟但不允许加注
+  const s6 = dist([c(4, 3), c(4, 2)], '66');
+  ok(s6.raise === 0, '边缘手 66 不越加注锋线（bar+7），实际加注 ' + s6.raise + '/60');
+  const a5 = dist([c(12, 0), c(3, 1)], 'a5o');
+  ok(a5.raise === 0, '边缘手 A5o 不越加注锋线，实际加注 ' + a5.raise + '/60');
+  // 垃圾牌仍然全弃
+  const t7 = dist([c(5, 1), c(0, 2)], '72o');
+  ok(t7.fold === 60, '垃圾牌 72o 翻前全弃，实际弃牌 ' + t7.fold + '/60');
+}
+
 console.log('\n【10】行动建议模块');
 const ga = P.createGame({ players: [mkPlayer(0, 1000, true), mkPlayer(1, 1000)], sb: 10, bb: 20, dealerSeat: 0, seed: 'adv' });
 ga.startHand();
