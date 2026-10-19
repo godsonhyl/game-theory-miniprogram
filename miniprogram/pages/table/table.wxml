@@ -358,7 +358,9 @@
   <view class="help-mask" wx:if="{{rebuyShow}}" bindtap="cancelRebuy">
     <view class="buyin-dialog" catchtap="onBlockTap">
       <text class="buyin-title">{{rebuyCancelMode ? '已申请补筹' : '补筹'}}</text>
-      <text class="buyin-sub">{{rebuyCancelMode ? '已申请 +' + rebuyValue + ' · 下一局开局生效' : '当前 ' + myStack + ' · 补后不超 5000 · 下一局生效'}}</text>
+      <!-- P3（评审 2026-10-19）：申请口径是「下一局开局到账」，副标题必须写清
+           「补后」= 补筹到账后的总额上限，而不是此刻就变；已申请态回显待补额。 -->
+      <text class="buyin-sub">{{rebuyCancelMode ? '已申请 +' + rebuyValue + ' · 下一局开局到账' : '当前 ' + myStack + ' · 补后总额上限 5000（下一局开局到账）'}}</text>
       <view class="buyin-opts" wx:if="{{!rebuyCancelMode}}">
         <view class="bopt {{rebuyValue === item.v ? 'on' : ''}}" wx:for="{{rebuyOptions}}" wx:key="v"
               data-v="{{item.v}}" bindtap="onRebuyPick">{{item.t}}</view>
