@@ -399,6 +399,46 @@ eq(d.desc, '顺子', '已成牌时描述为牌型名');
 d = P.detectDraws([H.HA, H.HQ], [H.HJ, H.HT, H.C9, H.H2, H.S3]);
 eq(d.outs, 0, '河牌圈不输出听牌');
 
+// —— 对子补牌（D2，2026-10-17 评审：原先只算同花/顺子，一对永远「无听牌」）——
+// 纯口袋对 in 8♣8♦ + K♠7♣2♣ 落面：自点数剩 2 张 → 听三条 2 outs
+// （8♣8♦ 不在 H 常量表内，直接用 c() 组牌）
+d = P.detectDraws([c(6, 1), c(6, 2)], [H.SK, H.C7, H.C2]);
+eq(d.outs, 2, '口袋对 88 落面 → 听三条 2 outs');
+ok(/口袋对/.test(d.desc), '描述含口袋对：' + d.desc);
+
+// 底对（一张底牌与公共牌成对）：A♠K♠ in A♣7♦2♣ →
+// 底对 A：剩 2 张 A（三条）+ K 踢脚 3 张（两对）＝ 5 outs
+d = P.detectDraws([H.SA, H.SK], [H.CA, c(5, 2), H.C2]);
+eq(d.outs, 5, '底对 A 带踢脚 K → 两对/三条 5 outs');
+ok(/底对/.test(d.desc), '描述含底对：' + d.desc);
+
+// 对子补牌不得越 15 cap：底对 + 同花听叠加时 outs 上限仍生效
+// A♥7♥ in A♣9♣5♥ → 底对 A（2 张 A）+ 7 踢脚（3 张）= 5 outs（红花仅 3 张不成听）
+d = P.detectDraws([H.HA, H.H7], [H.CA, H.C9, H.H5]);
+ok(d.outs >= 5 && d.outs <= 15, '底对 + 同花听复合 outs 落在 [5,15] 区间，实际 ' + d.outs);
+
+// ——————————————————————————————————————————————
+// D3（2026-10-17 评审）：lastAggressor 必须「只在真实超额加注时」指向加注者
+// ——跟注/弃牌/盲注不改写，换街重置为 null（供当街 c-bet 判断参考）。
+{
+  const g3 = P.createGame({ players: [mkPlayer(0, 1000), mkPlayer(1, 1000), mkPlayer(2, 1000)], sb: 10, bb: 20, dealerSeat: 0, seed: 'agg' });
+  g3.startHand();
+  strictEq(g3.lastAggressor, null, '盲注入池不算侵略者');
+  g3.act(1, 'raise', 60);
+  strictEq(g3.lastAggressor, 1, '翻前加注者 = lastAggressor（真实超额）');
+  g3.act(2, 'call', 0);
+  strictEq(g3.lastAggressor, 1, '跟注不改写 lastAggressor');
+  g3.act(0, 'raise', 100);
+  strictEq(g3.lastAggressor, 0, '再度加注改写 lastAggressor 为新加注者');
+  g3.act(1, 'call', 0);
+  g3.act(2, 'fold', 0);
+  ok(g3.street === P.STREET.FLOP && g3.lastAggressor === null,
+    '换街重置 lastAggressor 为 null');
+  // 翻后下注 → lastAggressor 换指下注者
+  g3.act(0, 'raise', 40);       // 翻后首家（按钮左一）下注 40
+  strictEq(g3.lastAggressor, 0, '翻后下注者改写 lastAggressor');
+}
+
 console.log('\n【7】压力测试：2000 手全自动对局');
 // ——AI 决策健全性（评审 2026-10-15 MEDIUM 回归）——
 // 1) preflopScore 排位正确：A 是 rank 12 不是 0，历史版本 AA<KK<QQ 曾成立过
