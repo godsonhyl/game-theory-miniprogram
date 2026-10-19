@@ -4871,7 +4871,28 @@ Page({
         if (!legal) return;
 
         const seats = game.inHandPlayers().map(x => x.seat);
-        const pf = (seats.indexOf(seat) - seats.indexOf(game.dealerSeat) + seats.length) % seats.length;
+        // B1（玩家审视 2026-10-17）：位置因子改「行动序位」口径。
+        // 旧算法 pf = (actIdx - dealerIdx) 混入了空座位/离座者（inHandPlayers
+        // 含所有未 sittingOut 的座位，人数随中途加入波动），且把「按钮后第一个
+        // 行动」判成最晚位（实际最先行动 = 最差位）。新口径：按距按钮的顺时针
+        // 行动序排位，rank 0 = 按钮左一（最先行动/最差位），n-1 = 按钮（最后行动/
+        // 最好位），lateness = rank/(n-1) 归一到 [0,1]。HU（n=2）翻前行动顺序
+        // 由大盲先手（按钮=小盲），引擎内部处理；此处只在翻后把按钮判为最好位，
+        // 翻前给两座位固定中值 0.5（与 test-core.js 压力测试同口径）——
+        // 序位只对「多人且行动顺序稳定」的街才有意义。
+        let positionFactor = 0;
+        const n = seats.length;
+        const actIdx = seats.indexOf(seat);
+        const dlrIdx = seats.indexOf(game.dealerSeat);
+        const rank = (actIdx - dlrIdx + n) % n;   // 0 = 按钮左一
+        if (n === 2) {
+          positionFactor = game.board.length === 0 ? 0.5 : (rank === 0 ? 0 : 0.9);
+          // HU 翻后：按钮后行动 = 位置优势（rank 1 → 0.9）；按钮左一其实不存在
+          // 于 2 人局（rank 只能 0/1，rank 0 = 按钮本人外那家，先行动）。
+        } else if (n > 2) {
+          const lateness = rank / (n - 1);
+          positionFactor = lateness >= 0.99 ? 0.9 : (lateness > 0.5 ? 0.4 : 0);
+        }
         // 批⑨：AI 读人反制——expert 难度下，按人类玩家滚动 VPIP 调整 bot 的 tight。
         // 人类松（高 VPIP）→ bot 收紧（多弃牌不陪松玩家）；人类紧（低 VPIP）→ bot 放松
         // （多偷池）。用 Object.assign 副本注入，不碰 p.style 原对象。零引擎改动：
@@ -4889,7 +4910,7 @@ Page({
           stack: p.stack,
           currentBet: game.currentBet,
           numActive: game.activePlayers().length,
-          positionFactor: pf <= 1 ? 0.9 : (pf <= 3 ? 0.4 : 0),
+          positionFactor,
           style: aiStyle,
           minRaiseTo: legal.minRaiseTo,
           maxRaiseTo: legal.maxRaiseTo,

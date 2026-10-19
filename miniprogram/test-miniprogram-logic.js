@@ -1807,12 +1807,17 @@ while (guard++ < 400) {
         const legal = g.legalActions(seat);
         if (!legal) { g.advance(); continue; }
         const seats = g.inHandPlayers().map(x => x.seat);
-        const pf = (seats.indexOf(seat) - seats.indexOf(g.dealerSeat) + seats.length) % seats.length;
+        // B1 行动序位口径（与 table.js scheduleAI 同步）：rank 0 = 按钮左一，
+        // lateness 归一 [0,1]；本测试仅驱动牌局走完，具体分布断言在 test-core.js。
+        const nSeats = seats.length;
+        const rank = (seats.indexOf(seat) - seats.indexOf(g.dealerSeat) + nSeats) % nSeats;
+        const lateness = nSeats > 1 ? rank / (nSeats - 1) : 0;
+        const pf = lateness >= 0.99 ? 0.9 : (lateness > 0.5 ? 0.4 : 0);
         const d = P.aiDecide({
           hole: p.hole, board: g.board, pot: g.potTotal(),
           toCall: legal.toCall, stack: p.stack, currentBet: g.currentBet,
           numActive: g.activePlayers().length,
-          positionFactor: pf <= 1 ? 0.9 : (pf <= 3 ? 0.4 : 0),
+          positionFactor: pf,
           style: p.style, minRaiseTo: legal.minRaiseTo, maxRaiseTo: legal.maxRaiseTo,
           canRaise: legal.canRaise, bb: g.bb,
           rng: P.createRng('mp-' + g.handNo + '-' + seat + '-' + (step++))
@@ -3758,6 +3763,17 @@ while (guard++ < 400) {
       'table.js scheduleAI 用 _adjustTightByVpip 构造 aiStyle');
     ok(/style:\s*aiStyle/.test(tableSrc),
       'table.js scheduleAI 传 style: aiStyle（不碰 p.style 原对象）');
+
+    // ---- B1 位置因子行动序位（玩家审视 2026-10-17）----
+    // 静态守卫：旧口径（seat 序差直接映射）必须退役，新口径走 rank/lateness 归一。
+    ok(/const rank = \(actIdx - dlrIdx \+ n\) % n;/.test(tableSrc),
+      'scheduleAI B1：位置按行动序位 rank 计算（0 = 按钮左一）');
+    ok(/const lateness = rank \/ \(n - 1\);/.test(tableSrc),
+      'scheduleAI B1：rank 归一为 lateness（[0,1]）');
+    ok(tableSrc.indexOf('pf <= 1 ? 0.9') === -1,
+      'scheduleAI B1：旧位置映射 pf<=1→0.9 已退役（空座位混入的旧口径）');
+    ok(/n === 2/.test(tableSrc),
+      'scheduleAI B1：HU 局单独分支（翻前给固定 0.5）');
   }
 
   /* ---------- 回归：AI 对战「还没点准备就绪，牌局就自己开始了」 ----------
