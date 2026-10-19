@@ -834,10 +834,17 @@
 .back-ico, .inv-ico { width: calc(2.6 * var(--uh)); height: calc(2.6 * var(--uh)); margin-right: calc(1.1 * var(--uw)); flex: none; }
 
 /* ---------- 牌桌动画 ---------- */
+/* ⚠️ betIn 必须保留 translateX(-50%)（2026-10-19 评审修复）。
+ * 病根：.seat-bet 用 left:50% + transform:translateX(-50%) 做水平居中，而
+ * betIn 的终帧写的是 `transform: none`；`animation-fill-mode: both` 让终帧
+ * 常驻，于是动画一结束 translateX(-50%) 就被覆盖 —— 胶囊右移自身宽度的一半
+ * （三位数金额约偏 5% 屏宽），且**只有开启动画时偏**：.no-anim 下 animation:none
+ * 反而恢复居中。这种「关掉特效才正常」的缺陷最容易被忽略。
+ * 两个 keyframes 都带 translateX(-50%)，缩放与居中各司其职。 */
 .seat-bet { animation: betIn .3s cubic-bezier(.2,.9,.3,1.2) both; }
 @keyframes betIn {
-  from { transform: scale(.6); opacity: 0; }
-  to   { transform: none; opacity: 1; }
+  from { transform: translateX(-50%) scale(.6); opacity: 0; }
+  to   { transform: translateX(-50%) scale(1); opacity: 1; }
 }
 .pot-pill.live { animation: potPulse 2.6s ease-in-out infinite; }
 @keyframes potPulse {

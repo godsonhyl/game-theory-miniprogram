@@ -2980,6 +2980,16 @@ while (guard++ < 400) {
       ok(/betCls: 'seat-bet ' \+ \(isMe \? 'bet-me' : 'bet-in'\)/.test(tableSrc) &&
         /class="\{\{item\.betCls\}\}"/.test(wxmlSrc),
         '座位对象按 isMe 派发 betCls（我的=bet-me / 对手=bet-in），WXML 用 item.betCls');
+      /* betIn 终帧必须保留 translateX(-50%)（2026-10-19 评审修复）。
+       * .seat-bet 用 left:50% + translateX(-50%) 居中，而 betIn 带
+       * animation-fill-mode: both，终帧的 transform 会常驻——若终帧写
+       * `transform: none` 就覆盖掉居中，胶囊右移半个自身宽度（三位数金额约偏
+       * 5% 屏宽），且**只有开动画时才偏**（.no-anim 下 animation:none 反而正常）。
+       * 「关掉特效才正常」这类回归在真机上极难联想到原因，必须用断言钉住。 */
+      ok(/@keyframes betIn \{[\s\S]{0,240}?to\s*\{[^}]*translateX\(-50%\)/.test(wxssSrc),
+        'betIn 终帧保留 translateX(-50%)（否则动画结束后下注胶囊右偏半个宽度）');
+      ok(!/@keyframes betIn \{[\s\S]{0,240}?transform:\s*none/.test(wxssSrc),
+        'betIn 不出现 transform: none（会覆盖 .seat-bet 的水平居中）');
       // down 排布已删：不再有down class / 判型残留（防后人按失效注释再抄回来）
       ok(!/\.seat\.down \{/.test(wxssSrc) && !/__layout\.tight/.test(feltSrc) && !/'down'/.test(feltSrc),
         'down 排布（不可达的窄视口兜底）已连根拔除，仅存于注释的推导记录');
