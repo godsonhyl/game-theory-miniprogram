@@ -969,6 +969,89 @@ console.log('\n【9.5】AI 决策可复现性 + 下注尺度因子（玩家审�
   ok(t7.fold === 60, '垃圾牌 72o 翻前全弃，实际弃牌 ' + t7.fold + '/60');
 }
 
+/* ④ tight 方向性（2026-10-19 资深玩家 review 后的回归）。
+ *
+ * 这里补的是**维度空白**而不是某个数值：旧实现 threshold = 23 - tight*10，
+ * tight 越大门槛越低 → 「紧」的 bot 反而打得更松。五个 bot 人格的打法与
+ * 其文案完全相反（陈默「专等好牌」tight=0.72 入池率 ≈90%，是全场最松的），
+ * 连带《专家难度读人反制》的意图也翻了过来（玩家越松 bot 越送）。
+ *
+ * 旧测试只测了 tight=0.5 这一个点的绝对行为（AQ 加注 / 72o 弃牌都过），
+ * 所以方向反了也全绿。此处用「同一批随机起手牌 × 不同 tight」测单调性：
+ * 入池率与加注率都必须随 tight **单调不增**，且两端要有显著落差。 */
+{
+  const dirN = 6000;
+  const vpipOfTight = function (tight, tag) {
+    const rng = P.createRng('dir-' + tag);
+    let cont = 0, raised = 0;
+    for (let i = 0; i < dirN; i++) {
+      const a = Math.floor(rng.float() * 52);
+      let b = Math.floor(rng.float() * 52);
+      while (b === a) b = Math.floor(rng.float() * 52);
+      const d = P.aiDecide({
+        hole: [a, b], board: [], pot: 30, toCall: 20, stack: 1000, currentBet: 20,
+        numActive: 3, positionFactor: 0.5,
+        style: { aggro: 0.5, tight: tight, bluffFreq: 0, heroCall: 0, slowplay: 0 },
+        minRaiseTo: 40, maxRaiseTo: 1000, canRaise: true, bb: 20,
+        rng: P.createRng('dir-' + tag + '-' + i)
+      });
+      if (d.action !== 'fold') { cont++; if (d.action === 'raise') raised++; }
+    }
+    return { vpip: cont / dirN, raise: raised / dirN };
+  };
+  const grid = [0, 0.2, 0.5, 0.72, 1].map(t => ({ t, ...vpipOfTight(t, 't' + t) }));
+  const desc = grid.map(g => g.t.toFixed(2) + '→' + (g.vpip * 100).toFixed(1) + '%').join(' ');
+  let monotone = true;
+  for (let i = 1; i < grid.length; i++) if (grid[i].vpip > grid[i - 1].vpip + 0.005) monotone = false;
+  ok(monotone, 'tight 越大入池率越低（单调不增），实际 ' + desc);
+  let raiseMonotone = true;
+  for (let i = 1; i < grid.length; i++) if (grid[i].raise > grid[i - 1].raise + 0.005) raiseMonotone = false;
+  ok(raiseMonotone, 'tight 越大翻前加注率越低（单调不增）');
+  // 两端落差要显著：否则「方向对了但没手感」，人设依旧读不出来
+  const lo = grid[0].vpip, hi = grid[grid.length - 1].vpip;
+  ok(lo - hi > 0.20, '极松与极紧入池率落差 > 20 个百分点（实际 ' + ((lo - hi) * 100).toFixed(1) + '%），人设可辨');
+  // 中位锚定：tight=0.5 必须仍落在调参原值附近，保证「纠正方向 + 加栈压」这一轮
+  // 不顺手改了 A5+D1 那轮定下的中位手感。
+  // 口径变化说明：stackPressure 项（跟注占筹码比）让中位从 ~83% 降到 ~78.6%，
+  // 这是有意的（短码/大注面前不再无脑跟），故锚定区间同步下移到 78.5%±5%。
+  ok(Math.abs(grid[2].vpip - 0.785) < 0.05,
+    '中位风格（tight=0.5）入池率锚定在 ~78.5%（含栈压修正后的新口径），实际 ' + (grid[2].vpip * 100).toFixed(1) + '%');
+}
+
+/* ⑤ 筹码深度敏感度（2026-10-19 资深玩家 review）。
+ *
+ * 病根：旧实现只看 potOdds（跟注/底池），完全不看「这笔钱占我筹码多少」。
+ * 实测 3bb 短码与 50bb 深码在同样要跟 20 时，入池率几乎一样（53.5% vs 53.3%）
+ * —— 短码拿垃圾牌跟注，实战等于白送。现加 stackPressure 项：要跟的钱
+ * 占筹码越多，门槛越高。此守卫确保「筹码越浅 → 入池率越低」这个方向成立。 */
+{
+  const deepVpip = function (stack) {
+    const n = 6000;
+    let cont = 0;
+    const rng = P.createRng('stk-' + stack);
+    for (let i = 0; i < n; i++) {
+      const a = Math.floor(rng.float() * 52);
+      let b = Math.floor(rng.float() * 52);
+      while (b === a) b = Math.floor(rng.float() * 52);
+      const d = P.aiDecide({
+        hole: [a, b], board: [], pot: 30, toCall: 20, stack: stack, currentBet: 20,
+        numActive: 3, positionFactor: 0.5,
+        style: { aggro: 0.5, tight: 0.5, bluffFreq: 0, heroCall: 0, slowplay: 0 },
+        minRaiseTo: 40, maxRaiseTo: stack, canRaise: true, bb: 20,
+        rng: P.createRng('stk-' + stack + '-' + i)
+      });
+      if (d.action !== 'fold') cont++;
+    }
+    return cont / n;
+  };
+  const deep = deepVpip(1000), mid = deepVpip(200), short = deepVpip(60);
+  const desc = '1000→' + (deep * 100).toFixed(1) + '% 200→' + (mid * 100).toFixed(1) + '% 60→' + (short * 100).toFixed(1) + '%';
+  ok(deep >= mid - 0.005 && mid >= short - 0.005,
+    '筹码越浅入池越紧（50bb ≥ 10bb ≥ 3bb 单调不增），实际 ' + desc);
+  ok(deep - short > 0.15,
+    '深码与 3bb 短码入池率落差 > 15 个百分点（短码不再拿垃圾牌跟注），实际 ' + ((deep - short) * 100).toFixed(1) + '%');
+}
+
 console.log('\n【10】行动建议模块');
 const ga = P.createGame({ players: [mkPlayer(0, 1000, true), mkPlayer(1, 1000)], sb: 10, bb: 20, dealerSeat: 0, seed: 'adv' });
 ga.startHand();

@@ -714,9 +714,28 @@
     // ---- 翻牌前 ----
     if (board.length === 0) {
       // 阈值 23（原 26）：原值下中位风格 VPIP 不足两成，全员 limp 观感「机器人」。
-      const threshold = 23 - tight * 10;
+      //
+      // ⚠️⚠️ 方向曾经写反（2026-10-19 资深玩家 review 发现）：旧式子是
+      //     threshold = 23 - tight * 10
+      // tight 越大门槛越低 → 「紧」的 bot 反而打得更松，五个 bot 人格
+      // （陈默「专等好牌」tight=0.72 入池 ≈90%）与实际打法完全相反；
+      // 连带把《专家难度读人反制》的意图也翻了过来（玩家越松 bot 越送）。
+      // 现改为 13 + tight * 10 —— **锚定在 tight=0.5 仍是 18/23 的原值不变**，
+      // 只把 tight 的影响方向纠正过来：
+      //   tight=0.0 → 13（松，宽入池） 0.5 → 18（中位，调参原值） 1.0 → 23（紧）
+      // 同时 bar 有下限 6：极松人格在小底池里不会因 potOdds 系数把门槛压到
+      // 负数（负门槛会让「任何两张都加注」，那就不是打牌了）。
+      const threshold = 13 + tight * 10;
       const potOdds = toCall > 0 ? toCall / (pot + toCall) : 0;
-      const bar = threshold * (1 - potOdds * 0.45);
+      // 跟注占筹码比例的压力项（2026-10-19 资深玩家 review）。
+      // 病根：旧实现只看 potOdds，而 potOdds 是「跟注 / 底池」——底池一旦被
+      // 前面的人做大（实测 pot>320 时约占 20% 的翻前决策），potOdds 反而变小、
+      // 门槛被压低，AI 弃牌率从 ~26% 掉到 7%，拿任何两张都跟。真人不会这样：
+      // 要跟 400 才能看翻牌和要跟 20，凭的是「这笔钱占我筹码多少」。
+      // 故叠加 stackPressure = toCall / stack（0.04 → 无压力，0.25 → 极限），
+      // 把门槛抬到最多 +6 分：短码/大注面前必须真是好牌才跟。
+      const stackPressure = (toCall > 0 && stack > 0) ? Math.min(1, toCall / stack / 0.25) : 0;
+      const bar = Math.max(6, threshold * (1 - potOdds * 0.45) + stackPressure * 6);
 
       // 加注锋线 bar+7（原 +12）：原锋线高于 AA/KK 之外的一切起手分（QQ/AK 全 limp），
       // 收窄至 +7 让中高对与 AK 进入价值加注区（2026-10-17 评审调参）。
@@ -736,6 +755,10 @@
         return { action: ACTION.CALL, amount: toCall, reason: '价格可接受，跟注' };
       }
       if (toCall === 0) return { action: ACTION.CHECK, amount: 0, reason: '过牌看翻牌' };
+      // 大盲便宜防守：跟随额 ≤ 池 12%。⚠️ 实测该分支在当前底池结构下**几乎never触发**
+      // （BB 跟 20 进 30 的池 → 20 > 3.6，条件就不成立），所以入池率并不受它的宽容带
+      // 影响 —— 之前把这里从 -9 改成随 tight 收窄，实测数值一格没动，已回滚保持原样。
+      // 真正决定入池率的是上面的 threshold 与 bar。
       if (toCall <= pot * 0.12 && holeStrength >= bar - 9) {
         return { action: ACTION.CALL, amount: toCall, reason: '大盲便宜防守' };
       }
