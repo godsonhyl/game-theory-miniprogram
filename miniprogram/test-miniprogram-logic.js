@@ -1346,6 +1346,12 @@ while (guard++ < 400) {
     guardSidePotElig(tableSrc, wxmlSrc, wxssSrc);
   }
 
+  /* ---------- #14 批一：座位筹码高对比显示（金色+700 字重+筹码图标+万位紧凑）---------- */
+  {
+    guardStackClarity(tableSrc, wxmlSrc, wxssSrc);
+    assertStackTextResolved(pageCtx, dataStore);   // 行为级：fmtStack + render 落值
+  }
+
   /* ---------- 非摊牌赢池自愿亮牌「亮一手」（玩家审视 2026-10-17）---------- */
   {
     guardDisclose(tableSrc, wxmlSrc);
@@ -2804,6 +2810,52 @@ while (guard++ < 400) {
       'C5 飞出/收池动画落点都走 POT_ANCHOR（不再硬编码 50,32）');
     ok(/top: 22%/.test(wxssSrc) && /POT_ANCHOR\.y 同步/.test(tableSrc + wxssSrc),
       'C5 .pot-row top:22% 与 wxss 注释标明与 POT_ANCHOR.y 同步');
+  }
+
+  /* #14 批一守卫：筹码量与下注额的可读性（病根：座位筹码曾是弱化灰 var(--mut)，
+   * 比昵称还暗，桌面距离不可读；stack 原样直塞长数字会挤爆 104rpx 座位卡）。
+   * fmtStack 万位紧凑格式 + 金色 700 字重 + 筹码图标，三端（座位环/等待室/myzone）同口径。 */
+  function guardStackClarity(tableSrc, wxmlSrc, wxssSrc) {
+    ok(/fmtStack\(n\) \{/.test(tableSrc) &&
+      /Math\.abs\(n\) < 10000/.test(tableSrc) && /\+ '万'/.test(tableSrc),
+      '#14-1 fmtStack 纯函数（<1万原样，>=1万折万位去尾零）');
+    ok(/stack: this\.fmtStack\(p\.stack\)/.test(tableSrc),
+      '#14-1 牌局中座位筹码走 fmtStack');
+    ok(/stack: empty \? '' : this\.fmtStack\(Number\(s\.stack\) \|\| DEFAULT_BUY_IN\)/.test(tableSrc),
+      '#14-1 等待室座位筹码同口径 fmtStack（两态一致）');
+    ok(/myStackText: meP \? this\.fmtStack\(meP\.stack\) : ''/.test(tableSrc) &&
+      /\{\{myStackText\}\}/.test(wxmlSrc),
+      '#14-1 myzone 显示用 myStackText（myStack 保持数字供数值口径）');
+    // 注意：wxss 里单行紧缩覆盖块（.seat.tight .seat-stack）排在主块之前，
+    // 主块匹配必须锚定换行块体（`\n` 紧跟 `{`）
+    const stackBlock = (wxssSrc.match(/\.seat-stack \{[\s\S]{0,400}?#ffd98a[\s\S]*?\n\}/) || [''])[0];
+    ok(/#ffd98a/.test(stackBlock) && /font-weight: 700/.test(stackBlock),
+      '#14-1 座位筹码金色+700 字重（弱化灰 var(--mut) 退役）');
+    ok(/\.stack-chip \{/.test(wxssSrc) && /stack-chip/.test(wxmlSrc),
+      '#14-1 筹码图标节点 .stack-chip（金色筹码语义锚）');
+    // 注意：wxss 里 `.seat-bet {` 首个匹配是单行 .seat.tight 覆盖块，主块必须
+    // 从「带 font-size 块体」的完整定义里取（锚定主块开头再截到下一个 \n}）
+    const betMain = (wxssSrc.match(/\.seat-bet \{\n[\s\S]*?\n\}/) || [''])[0];
+    ok(/font-weight: 700/.test(betMain) && /calc\(3 \* var\(--uh\)\)/.test(betMain),
+      '#14-1 本轮下注气泡 700 字重 + 字号升 3uh（tight 桌单独回缩）');
+    // 回归红线：.bet-chip/.pot-chip 类名不可重命名（历史守卫）
+    ok(wxssSrc.indexOf('.bet-chip') >= 0 && wxssSrc.indexOf('.pot-chip') >= 0,
+      '#14-1（回归）.bet-chip/.pot-chip 类名未重命名');
+  }
+
+  /* #14 批一行为级：fmtStack 数值口径 + render 后座位/myzone 筹码文案落值 */
+  function assertStackTextResolved(pageCtx, dataStore) {
+    eq(pageCtx.fmtStack(1000), '1000', '#14-1 fmtStack 千位原样');
+    eq(pageCtx.fmtStack(9900), '9900', '#14-1 fmtStack 临界以下不折');
+    eq(pageCtx.fmtStack(25000), '2.5万', '#14-1 fmtStack 万位 1 位小数');
+    eq(pageCtx.fmtStack(100000), '10万', '#14-1 fmtStack 整万去尾零');
+    eq(pageCtx.fmtStack(''), '', '#14-1 fmtStack 空值原样返回（空位语义）');
+    // render 派生链：座位 stack 与 myzone myStackText 都是 fmtStack 输出
+    const seat2 = (dataStore.seats || []).filter(s => s.seat === 2)[0];
+    ok(seat2 && typeof seat2.stack === 'string' && seat2.stack.length > 0,
+      '#14-1 座位筹码文案为非空字符串（fmtStack 输出）');
+    ok(typeof dataStore.myStackText === 'string',
+      '#14-1 myzone myStackText 落值（字符串口径）');
   }
 
   /* C2/C3/C4 UI 批守卫（玩家审视 2026-10-17）：

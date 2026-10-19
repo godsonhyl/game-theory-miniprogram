@@ -819,8 +819,8 @@ Page({
         isBot: !!s.isBot,
         name: empty ? '' : name,
         initial: empty ? '' : (name ? name.slice(0, 1) : '?'),
-        // 等待室展示买入额（机器人与未指定者回落到默认买入）
-        stack: empty ? '' : (Number(s.stack) || DEFAULT_BUY_IN),
+        // 等待室展示买入额（机器人与未指定者回落到默认买入），与牌局中同格式口径
+        stack: empty ? '' : this.fmtStack(Number(s.stack) || DEFAULT_BUY_IN),
         // 以下字段游戏中才用，其余给安全默认值避免渲染异常
         bet: 0, folded: false, active: false, win: false, standing: false, allIn: false,
         isDealer: false, isSB: false, isBB: false,
@@ -2538,6 +2538,19 @@ Page({
   },
 
   /**
+   * 筹码量紧凑文案（#14 批一）：座位环/myzone 共用。
+   * 一万以下原样显示；一万以上折「X.X万」（去尾零：2.5万 / 1万）——
+   * 补筹封顶 5000 的常规局只在好友房堆大额时才触发，座位卡 104rpx 宽
+   * 撑不下 6 位数字。非数字/空原样返回（空位 stack='' 的 wx:if 语义保持）。
+   */
+  fmtStack(n) {
+    if (typeof n !== 'number' || !isFinite(n)) return n;
+    if (Math.abs(n) < 10000) return String(n);
+    const wan = Math.round(n / 1000) / 10;   // 万位保留 1 位小数
+    return (wan % 1 === 0 ? String(Math.round(wan)) : String(wan)) + '万';
+  },
+
+  /**
    * 游戏时长倒计时：到点自动结束本局并统计盈亏（0 = 不限时，不启动）
    * @param {number} [fromSec] 续局时传入剩余秒数，接着上次继续倒数
    */
@@ -3433,7 +3446,8 @@ Page({
           initial: name.slice(0, 1),
           x: pp.x,
           y: pp.y,
-          stack: p.stack,
+          // #14 批一：筹码文案走紧凑格式（>=1万折「万」），显示层统一口径
+          stack: this.fmtStack(p.stack),
           bet: readyPhase ? 0 : p.bet,
           allIn: readyPhase ? false : p.allIn,
           folded: isFolded,
@@ -3665,6 +3679,9 @@ Page({
         // 我的区域（底部）
         myCards,
         myStack: meP ? meP.stack : 0,
+        // myzone 显示用紧凑格式（与座位环同口径）。myStack 保持数字——
+        // 结算/补筹等数值口径照旧读 myStack，不受显示格式影响。
+        myStackText: meP ? this.fmtStack(meP.stack) : '',
         // 实时盈亏面板（菜单「我的筹码」）：带入 / 剩余 / 盈亏三项，随每帧渲染刷新
         myBuyIn: myBuyIn,
         myNetLive: myNetLive,

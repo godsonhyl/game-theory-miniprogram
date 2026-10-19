@@ -99,7 +99,11 @@
 
         <view class="seat-meta">
           <text class="seat-name">{{item.empty ? '空位' : item.name}}</text>
-          <text class="seat-stack" wx:if="{{!item.empty && item.stack !== '' && item.stack !== undefined}}">{{item.stack}}</text>
+          <!-- #14 批一：筹码高对比显示——金色+700 字重+筹码图标（旧样式弱化灰比昵称还暗） -->
+          <view class="seat-stack" wx:if="{{!item.empty && item.stack !== '' && item.stack !== undefined}}">
+            <view class="stack-chip"></view>
+            <text class="stack-num">{{item.stack}}</text>
+          </view>
           <text class="seat-standing" wx:if="{{item.standing}}">观战</text>
           <text class="seat-eliminated" wx:if="{{item.eliminated}}">{{item.placeText}}</text>
         </view>
@@ -305,7 +309,7 @@
             <text class="pos-tag" wx:if="{{mySB}}">SB</text>
             <text class="pos-tag" wx:if="{{myBB}}">BB</text>
           </view>
-          <text class="ms-v">{{myStack}}</text>
+          <text class="ms-v">{{myStackText}}</text>
           <text class="ms-l">筹码</text>
           <!-- P1-7：滚动 VPIP 小字（仅 AI 局进指纹）。样本不足显示「--」——
                VPIP 1~2 手方差太大，数据不足时宁空不误导。 -->
