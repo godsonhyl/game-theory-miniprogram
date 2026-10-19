@@ -3544,6 +3544,23 @@ while (guard++ < 400) {
     ok(/\(this\.mode\s*===\s*['"]ai['"]\s*\|\|\s*this\.mode\s*===\s*['"]sng['"]\)\s*&&\s*seated/.test(tableSrc),
       'table.js joinMidGame 分支 ③ 守卫含 (ai||sng)&&seated（SNG 中途补 bot）');
 
+    // ---- B2 涨盲封顶（玩家审视 2026-10-17）----
+    ok(/const bbCapOf/.test(tableSrc), 'table.js 定义 bbCapOf（涨盲封顶基准）');
+    ok(/_bbCap\s*=\s*bbCapOf/.test(tableSrc), 'table.js startBlindTimer 记录 _bbCap');
+    ok(/nextBb\s*>\s*this\._bbCap/.test(tableSrc), 'table.js 涨盲前比对 cap（nextBb > _bbCap 拦截）');
+    ok(/_bbCapToastShown/.test(tableSrc), 'table.js 封顶提示只播一次（_bbCapToastShown）');
+    ok(tableSrc.indexOf('game.bb = game.bb * 2;') > -1 &&
+      tableSrc.indexOf('nextBb = game.bb * 2') > -1,
+      'table.js 翻倍逻辑仍保留（封顶只是收窄可达区间）');
+
+    // ---- B4 SNG 统一起始筹码 + 禁中途加入（玩家审视 2026-10-17）----
+    ok(/const SNG_START_STACK = 2000;/.test(tableSrc), 'table.js 定义 SNG_START_STACK=2000');
+    ok(/buyInOf\(this\.mode/.test(tableSrc), 'table.js confirmBuyIn 走 buyInOf 统一取值口');
+    ok(/this\.mode === 'sng' \? SNG_START_STACK : DEFAULT_BUY_IN/.test(tableSrc),
+      'table.js bot 等码 SNG 2000 / 其余 DEFAULT_BUY_IN（fillBots 系）');
+    ok(/淘汰赛进行中，不可中途加入/.test(tableSrc),
+      'table.js chooseSeat 拦 SNG 中途加入（phase=playing 时 toast）');
+
     // ---- 批⑤补丁：SNG 桌型可选（onSngMode 带 max=，首页弹人数选择） ----
     ok(/sngShow/.test(idxSrc), 'index.js data 含 sngShow（SNG 配置弹窗 toggle）');
     ok(/sngMax/.test(idxSrc), 'index.js data 含 sngMax（SNG 桌型人数）');

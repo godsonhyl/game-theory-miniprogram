@@ -180,6 +180,30 @@ const RESULT_MODAL_MS = 10000;
 const DEFAULT_BUY_IN = 1000;
 
 /**
+ * B4（玩家审视 2026-10-17）：SNG 起始筹码统一常量。
+ * 淘汰赛必须全员同起点（公平性底线）：原先各处 DEFAULT_BUY_IN 兜底，
+ * 理论上同为一档、但任何一处改动漂移都会造成「有人 1000 有人 2000」的
+ * 隐性不公平。SNG 与 AI 好友桌买入解耦，SNG 固定 2000（10 档涨盲空间，
+ * 初始 bb=20 时 50BB 起步、可撑 4 档涨盲到封顶）。
+ */
+const SNG_START_STACK = 2000;
+
+/** 买入额统一取值口：SNG 固定 2000，其余模式用玩家选的（或默认）买入额 */
+const buyInOf = (mode, picked) => (mode === 'sng' ? SNG_START_STACK : (picked || DEFAULT_BUY_IN));
+
+/**
+ * B2（玩家审视 2026-10-17）：涨盲封顶（大盲上限）。
+ * 原实现 sb/bb 每 blindIntervalMin 分钟无限翻倍——长局会涨到数千/万级，
+ * 与「买入几百到 10 万」的常客筹码完全不匹配（少于一个盲注即判死的荒诞局）。
+ * cap 取 min(初始 bb × 16, DEFAULT_BUY_IN / 2)：
+ *   - 默认初始 bb=20 → 320；买入 1000 → 500；两者取小 = 320（4 档涨盲到顶）。
+ *   - 初始 bb 更小的房间 cap 同比例收缩，bb≥63（如 80/160 房）由买入半数封顶。
+ * 到顶后不再翻倍，只toast 一次「盲注已达本房封顶」提示后静默——每分钟重复
+ * 提示纯属骚扰。涨盲的本意是逼僵局推进，bb 到买入一半时该淘汰的早淘汰了。
+ */
+const bbCapOf = initBb => Math.max((initBb || 20), Math.min((initBb || 20) * 16, DEFAULT_BUY_IN / 2));
+
+/**
  * 加注档位（sizing chips）分两街口径（资深玩家评审 2026-10-17 的「档位说错了扑克的语言」）：
  *
  *   翻前 —— BB 倍数语言。open sizing 的行话是「开 2.5bb / 3bb」，池比例在
@@ -590,7 +614,7 @@ Page({
       empty.occupied = true;
       empty.isBot = true;
       empty.name = this.botLabel(botNo);
-      empty.stack = DEFAULT_BUY_IN;
+      empty.stack = this.mode === 'sng' ? SNG_START_STACK : DEFAULT_BUY_IN;
       botNo++;
     }
     this.setData({
@@ -824,7 +848,7 @@ Page({
       empty.occupied = true;
       empty.isBot = true;
       empty.name = this.botLabel(botNo);
-      empty.stack = DEFAULT_BUY_IN;
+      empty.stack = this.mode === 'sng' ? SNG_START_STACK : DEFAULT_BUY_IN;
       botNo++;
     }
     this.setData({
@@ -1088,11 +1112,18 @@ Page({
     const seat = Number(e.currentTarget.dataset.seat);
     if (isNaN(seat)) return;
     // 等待室：原流程（选买入额 → 落座，开局才发牌）
+    // B4：SNG 起始筹码全员统一 2000，不弹买入选择（弹了也不许改）。
     if (this.data.phase === 'waiting') {
       const source = (this.data.waitSeats || []);
       const target = source.filter(s => s.seat === seat)[0];
       if (!target) return;
       if (target.occupied && !target.isMe) { wx.showToast({ title: '该座已有人', icon: 'none' }); return; }
+      if (this.mode === 'sng') {
+        this.setData({ buyInSeat: seat });
+        this.sitSeat(seat, SNG_START_STACK);
+        wx.showToast({ title: '淘汰赛统一 2000 筹码开局', icon: 'none' });
+        return;
+      }
       this.setData({
         buyInShow: true,
         buyInSeat: seat,
@@ -1102,6 +1133,12 @@ Page({
     }
     // 游戏中（含就绪阶段）：桌上有 N 个位，没坐满时那几个位照样能点。
     // 只拦「正坐着人」的位——站起观战者（sittingOut）不算占座，可以让位给新来的人。
+    // B4（2026-10-17）：SNG 淘汰赛禁中途加入——半路用任意筹码入局会直接
+    // 破坏名次公平性（先淘汰者反而可能被后来者「顶掉」最终名次）。
+    if (this.mode === 'sng' && this.data.phase === 'playing') {
+      wx.showToast({ title: '淘汰赛进行中，不可中途加入', icon: 'none' });
+      return;
+    }
     const occupant = game ? game.seatOf(seat) : null;
     if (occupant && !occupant.sittingOut) {
       wx.showToast({ title: '该座已有人', icon: 'none' }); return;
@@ -1128,7 +1165,8 @@ Page({
   /** 确认入座：记录买入额 → 本地即时反馈 → 同步云端（RLS 只能改自己的行） */
   confirmBuyIn() {
     const seat = this.data.buyInSeat;
-    const buyIn = Number(this.data.buyInValue) || DEFAULT_BUY_IN;
+    // B4：SNG 统一 2000 起始（等待室入口已绕过弹窗，此处兜底游戏中重新入座）
+    const buyIn = buyInOf(this.mode, Number(this.data.buyInValue) || DEFAULT_BUY_IN);
     if (seat < 0) { this.setData({ buyInShow: false }); return; }
     this.setData({ buyInShow: false, buyInSeat: -1 });
     // 等待室：直接落座，开局发牌；游戏中：下一手才入局（不插当前手）
@@ -1281,14 +1319,14 @@ Page({
         const botNo = game.players.filter(x => !x.isHuman).length;
         game.players.push({
           id: 'bot' + seat + '-' + Date.now(), name: this.botLabel(botNo), seat,
-          stack: DEFAULT_BUY_IN, isHuman: false,
+          stack: this.mode === 'sng' ? SNG_START_STACK : DEFAULT_BUY_IN, isHuman: false,
           style: botProfiles.styleFor(botNo, (this.mode === 'ai' || this.mode === 'sng') ? this.level : 'advanced'),
           hole: [], folded: false, allIn: false,
           bet: 0, committed: 0, actedBet: null, canRaise: true, sittingOut: false,
           hands: 0, net: 0
         });
         this.botSeats[seat] = true;
-        this.startStacks[seat] = DEFAULT_BUY_IN;
+        this.startStacks[seat] = this.mode === 'sng' ? SNG_START_STACK : DEFAULT_BUY_IN;
       }
     }
     // ④ 进行中踢 bot：把目标 bot 移出 game.players 并留档 leftPlayers。
@@ -2229,8 +2267,37 @@ Page({
     this.clearBlindTimer();
     if (!this.blindIntervalMin || !game) return;
     const ms = this.blindIntervalMin * 60 * 1000;
+    // B2 封顶基准：以引擎当前 bb 为「初始 bb」（startBlindTimer 只在开局调一次，
+    // 此刻 game.bb 即本局起始盲注级；续局恢复的房间以恢复级为基准）。
+    this._bbCap = bbCapOf(game ? game.bb : 20);
+    this._bbCapToastShown = false;
     blindTimer = setInterval(() => {
       if (!game || game.result) return;
+      // B2（2026-10-17）：封顶后不再翻倍。到达下一次翻倍就超 cap 时先钳到 cap，
+      // 完全到顶则静默（提示只播一次，见 _bbCapToastShown）。
+      const nextBb = game.bb * 2;
+      if (nextBb > this._bbCap) {
+        if (nextBb !== game.bb && game.bb < this._bbCap) {
+          // 半路截断：bb 还没到 cap，但翻倍会跳过 cap → 钳到 cap
+          game.sb = this._bbCap / 2;
+          game.bb = this._bbCap;
+          game.minRaise = game.bb;
+          this._lastPlayFp = null;
+          this._lastRenderFp = null;
+          this.setData({
+            blindLevel: game.bb,
+            blindText: this.fmtBlind(game.sb, game.bb)
+          });
+          if (this.data.soundOn) sfx.play('blind');
+          wx.showToast({ title: '盲注已达本房封顶 ' + this.fmtBlind(game.sb, game.bb), icon: 'none' });
+          this._bbCapToastShown = true;
+        } else if (!this._bbCapToastShown) {
+          // 已在封顶：只提示一次
+          wx.showToast({ title: '盲注已达本房封顶', icon: 'none' });
+          this._bbCapToastShown = true;
+        }
+        return;
+      }
       // 翻倍 sb/bb（引擎下一手 postBlind 自然取新值，不新增引擎字段）
       game.sb = game.sb * 2;
       game.bb = game.bb * 2;
