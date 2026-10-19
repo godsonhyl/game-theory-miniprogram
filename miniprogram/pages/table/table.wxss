@@ -130,24 +130,28 @@
 }
 @keyframes glowBreath { 0%, 100% { opacity: .45; } 50% { opacity: .9; } }
 
-/* 底池 */
 /* ---------- 中央盘面（底池 / 公共牌） ----------
- * z-index 5 高于 .seat(3)：中央是决策核心，牌背压上来时让中央压住牌背，
- * 而不是反过来把底池和公共牌糊掉（用户反馈：牌挡住底池与公共牌）。
- * ::before 是不透明底盘 —— 椭圆牌桌中央偏深，底盘同样用深色，
- * 保证即使重叠也是「中央清晰、牌背被盖」，且不会透出底下的牌背花纹。 */
+ * z-index 5 高于 .seat(3)：两侧座位的手牌压上来时让中央压住牌背。
+ *
+ * ⚠️ 纵向位置（2026-10-19 布局改造）：底池原固定在 top:22%，而顶排座位块是
+ * 「锚点向下延伸」的——实测块底到 y≈30%≈113px，底池实心盘从 70px 就开始画，
+ * 两者在 70~113px 这段必然重叠，被压住的正是最该读的「筹码 / 本轮下注」。
+ * 现在底池下移到公共牌正上方（top:35%），与公共牌组成一块中央盘面，
+ * 座位带（≤31%）整个让给座位。筹码飞行动画落点 POT_ANCHOR 同步改到 35。
+ * 数值依据见 table.js 的 SEAT_H_PX_UH 注释（块底 30.5% vs 底池上沿 31.6%）。 */
 .pot-row {
   /* ⚠️ top 必须与 table.js 的 POT_ANCHOR.y 同步（C5 2026-10-17）：
    * 底池中心坐标是筹码飞行动画的落点，两处数值不一致会出现「筹码飞进
    * 池下方」的错觉。改这里必须同步改 POT_ANCHOR。 */
-  position: absolute; top: 22%; left: 50%; transform: translate(-50%, -50%);
+  position: absolute; top: 35%; left: 50%; transform: translate(-50%, -50%);
   display: flex; flex-direction: column; align-items: center; z-index: 5;
 }
 .pot-row::before, .board-row::before {
   content: ''; position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
   border-radius: calc(2.4 * var(--uh)); z-index: -1;
 }
-.pot-row::before { width: 150%; height: calc(7 * var(--uh)); background: rgba(8,26,21,.82); }
+/* 底盘高度收到与胶囊同高（原 7uh 有 3.5uh 向上溢出，正好探进座位带） */
+.pot-row::before { width: 150%; height: calc(4.6 * var(--uh)); background: rgba(8,26,21,.82); }
 .pot-pill {
   display: flex; align-items: baseline;
   background: rgba(5,16,13,.86); border: 1rpx solid rgba(232,163,61,.42);
@@ -236,10 +240,14 @@
 
 /* ---------- 座位（仅对手） ---------- */
 .seat {
+  /* 锚点默认是块中心（pie）：x/y 落在座位块中间，块向四外延伸。
+     down 排布（紧凑视口）改锚点为块顶，整块只向下延伸——见下方 .seat.down。 */
   position: absolute; transform: translate(-50%, -50%);
   width: 104rpx; display: flex; flex-direction: column; align-items: center;
   z-index: 3;
 }
+/* down 排布：锚点 = 块顶 */
+.seat.down { transform: translate(-50%, 0); }
 .seat.folded { opacity: .38; }
 .seat.standing { opacity: .42; }
 /* 批⑤：SNG 淘汰——声明在 folded/standing 之后，灰显+去色覆盖二者；
@@ -272,13 +280,20 @@
   font-size: calc(2.6 * var(--uh)); color: rgba(255,255,255,.62); z-index: 5; flex-shrink: 0;
 }
 
+/* 本轮下注胶囊 —— 2026-10-19 布局改造（B）：
+ * 默认（pie 环）浮在锚点「上方」：座位块以锚点为中心，下注若挂在块底会继续
+ * 向下延伸，把顶排块底再推低 ~4uh，正好撞上底池。浮到上方后不参与下方高度，
+ * 且「钱在桌上、朝桌心方向」的观感更符合真实牌桌。
+ * down 排布（.seat.down）另见文件后半段：改为压在同一名字名牌下沿。 */
 .seat-bet {
   /* #14 批一：本轮下注额加一档可读性（700 字重+字号 2.8→3uh）——过程数字与
      筹码同读性；tight 桌单独回缩防 8/9 人桌溢出 */
   font-size: calc(3 * var(--uh)); font-weight: 700; color: #ffd98a; background: rgba(5,16,13,.9);
   padding: calc(0.2 * var(--uh)) calc(2 * var(--uw)); border-radius: 999rpx;
   border: 1rpx solid rgba(232,163,61,.38); white-space: nowrap; z-index: 4;
-  margin-bottom: calc(0.4 * var(--uh));
+  /* 浮到锚点上方：absolute 不占文档流，座位块因此少 ~4uh 向下延伸。
+     水平居中于座位块（.seat 本身是 flex column + align-items:center）。 */
+  position: absolute; left: 50%; bottom: calc(100% + 0.6 * var(--uh)); transform: translateX(-50%);
 }
 
 .avatar {
@@ -377,10 +392,15 @@
 }
 .pos-tag.d { background: linear-gradient(160deg, #f4d78a, #d9a441); color: #1a1a1a; border-color: #fff; }
 /* 座位手牌：暗牌态紧凑叠放（第二张压在第一张上，只露右侧一条）。
-   病根是原版把两张牌并排且排在名牌下方 —— 座位块向下延伸约 130px，
-   顶/中座位的手牌正好压住 `top:24%` 的底池和 `top:48%` 的公共牌。
-   改为叠放后块高从 ~24uh 降到 ~14uh，且 z-index 低于中央盘面，
-   即使仍轻微重叠也一定是「牌背被底池盘面盖住」而不是反过来。 */
+   病根是原版把两张牌并排且完整排开 —— 座位块向下延伸约 130px，
+   顶/中座位的手牌正好压住底池和公共牌。改为叠放后块高从 ~24uh 降到 ~14uh。
+   2026-10-19 布局改造后底池已下移到公共牌上方（不再落在座位带里），
+   这里的层序保留，作为「两侧座位偶尔轻微压到牌背」时的兜底。
+   ⚠️ 牌是座位壳（.seat）的直接子元素，而 .seat 自带 z-index:3 会建出
+   stacking context —— 这里的 z-index 只在座位壳内部有效，压不过
+   z-index:5 的底池/公共牌。真正的隔离靠「块不进底池带」（见 down 排布）。
+   ⚠️ 仍须显式 z-index:1：在 .seat 的层叠上下文里，z-index:auto 的定位元素
+   会被 .act-bubble(z-index:4) 压下去——行动气泡会盖住亮出的牌。 */
 .seat-cards { display: flex; margin-top: calc(0.4 * var(--uh)); position: relative; z-index: 1; }
 .seat-cards .card-xs { margin-right: calc(0.8 * var(--uw)); }
 .seat-cards .card-xs + .card-xs { margin-left: calc(-4.6 * var(--uw)); margin-right: 0; }
@@ -411,6 +431,22 @@
 .act-f { background: #5b6470; }
 .act-r { background: linear-gradient(160deg, #c98a2a, #a76d15); }
 .act-a { background: linear-gradient(160deg, #e56a58, #c44a3a); }
+
+/* ---------- down 排布（紧凑视口 · table.js ringPositions 判型） ----------
+ * 触发条件：视口太矮/座位块占比过大，pie 环怎么摆都塞不进顶部留白
+ * （顶排块底会侵入底池盘面）。此时顶排锚点 = 块「顶」，整块只向下延伸，
+ * 永远不进底池带；下注胶囊改为压在名牌下沿——钱和名字绑在一起，
+ * 视觉上仍是「这一位押了多少」。我只（底部中央）不启用，保持 pie。
+ *
+ * 块高预算：头像 8.6 + 名牌 3.6 + SB/BB 3.9 + 牌背 10.3 ≈ 26.4uh（tight ≈ 22.4uh），
+ * 与 table.js 的 SEAT_H_PX_UH / SEAT_H_PX_UH_TIGHT 同源——改这里的尺寸必须同步常量。 */
+.seat.down .seat-bet {
+  bottom: auto; top: calc(100% - 0.2 * var(--uh));
+  font-size: calc(2.6 * var(--uh));
+}
+.seat.down.tight .seat-bet { font-size: calc(2.4 * var(--uh)); }
+/* 行动气泡在 down 排布里改挂块顶（块底已贴到下带，再往下会压住公共牌） */
+.seat.down .act-bubble { bottom: auto; top: calc(-1.6 * var(--uh)); }
 
 /* ---------- 就绪条（牌桌下沿 · 文档流 · 约 12uh） ----------
  * 结算摘要条同样走文档流；每人盈亏明细改为独立结算弹窗（resultModal），

@@ -39,28 +39,60 @@ const SYNC_FAIL_TOAST_MS = 10000;
  *     绝不下探到下半区，避免与 myzone / 行动按钮堆叠。
  * 按相对座位号（顺时针从我左侧起）排序，牌桌左右邻接关系符合直觉。
  * 等待室与游戏中共用同一套坐标 → 点「开始游戏」瞬间所有座位位置完全连续、无跳变。
+ *
+ * 两种排布（2026-10-19，实测底池被顶排筹码/下注遮挡后引入）：
+ *   ① 宽松视口（块高塞得进顶部留白）→ 「pie 环」：座位块仍以锚点为中心，
+ *      但「本轮下注胶囊」浮到锚点上方（.seat-bet），块体整体压在上带里。
+ *   ② 紧凑视口（横屏小机、块高挤不下）→ 顶排改「down」排布：锚点落在块顶，
+ *      整块只向下延伸，永远不侵入底池/公共牌；下注胶囊改为压在名牌下沿
+ *      （.seat-bet.down，与钱绑在名字旁）。
+ * 判型只按几何算（视口 uh + 人数），不按机型写死——同一机型改布局设置也能自适应。
  */
-function ringPositions(seatSet, mySeat) {
+function ringPositions(seatSet, mySeat, uhPx) {
   const arr = seatSet.slice().sort((a, b) => a - b);
-  // 模块级缓存：座位坐标是纯函数（seatSet + mySeat 唯一决定），座位组合有限
-  // （≤9 座位），命中即返回同一对象，省去每帧重算三角函数。键含排序后座位与 mySeat。
-  const cacheKey = arr.join(',') + ':' + mySeat;
+  // 模块级缓存：座位坐标是纯函数（seatSet + mySeat + 视口唯一决定），座位组合有限
+  // （≤9 座位），命中即返回同一对象，省去每帧重算三角函数。键含排序后座位、mySeat 与视口。
+  const uhKey = uhPx > 0 ? Math.round(uhPx * 10) / 10 : 0;   // 0 = 视口未知（首帧/测试）
+  const cacheKey = arr.join(',') + ':' + mySeat + ':' + uhKey;
   if (_ringCache[cacheKey]) return _ringCache[cacheKey];
   const total = arr.length;
   if (total === 0) return {};
   const idxMe = Math.max(0, arr.indexOf(mySeat));
   // 椭圆参数收紧：cy/ry 决定对手座位带的最低点。
-  // 座位块是「锚点向下延伸」的（头像 + 名牌 + SB/BB + 两张牌 ≈ 24uh ≈ 86px），
-  // 锚点若压到 y=15%，牌就正好落在 top:22% 的底池上。
-  // 现取 cy=42 / ry=27 → 座位带最低 15%，块底约 27.6%，仍需靠 z-index 与底盘兜底，
-  // 但顶/中座位不再直接骑在公共牌（top:46%）上。
   // 大桌（7 座及以上）把椭圆撑宽压扁：座位越多弧上越挤，不加宽的话
   // 8~9 人桌两侧座位会叠在一起（配合 .seat.tight 缩小座位块）。
   const big = total >= 7;
   const cx = 50, cy = 42, rx = big ? 46 : 43, ry = big ? 25 : 27;
+  // 判型：块高（uh）在牌桌高度（=100uh）上的百分比。
+  // 底池胶囊上沿 = POT_ANCHOR.y - POT_PILL_H/2（下面所有计算都以它为下界）。
+  const blockUh = big ? SEAT_H_PX_UH_TIGHT : SEAT_H_PX_UH;
+  const potTop = POT_ANCHOR.y - POT_PILL_H / 2;
+  // 坐姿判型（pie / down）。
+  // pie：块以锚点为中心、下注浮在锚点上方 → 中心上限 = potTop - 块高/2。
+  // down：块顶即锚点、下注再压 3.4uh → 上限 = potTop - (块高 + 下注)。
+  // 选型：pie 要求「块顶（中心-块高/2）不下探出桌沿」→ 中心上限必须 ≥ 块高/2。
+  // ⚠️ 这里踩过两次坑，判据要写清：
+  //   ① 最初写成 pieMaxY < RING_TOP_MIN + 1（potTop=18.6、块高26.4 时 5.4>4.4）
+  //      → 误判 pie，锚点钉在 5.4，块顶 -7.8% 顶出屏幕、块底压着底池上沿。
+  //   ② 改成 < RING_TOP_MIN 只是把「差 1」的偶然掩盖掉，物理含义仍然错
+  //      （4.4 与「块顶是否溢出」无关）。
+  //   正确判据：块高的上下对折后仍塞得进上带 → 才用 pie。
+  const halfUh = blockUh / 2;
+  const pieMaxY = potTop - halfUh;
+  const downMaxY = potTop - blockUh - SEAT_BET_EXTRA_UH;
+  const tight = pieMaxY < halfUh;
+  const ceilTop = tight ? Math.max(RING_TOP_MIN, Math.min(RING_DOWN_MAX, downMaxY))
+    : Math.max(RING_TOP_MIN, Math.min(RING_TOP_MAX, pieMaxY));
+  const layout = {
+    tight: tight,
+    blockPct: Math.round(blockUh * 10) / 10,
+    ceilTop: Math.round(ceilTop * 10) / 10
+  };
   const pos = {};
   if (total === 1) {
     pos[arr[0]] = { x: 50, y: 82 };
+    pos.__layout = layout;
+    _ringCache[cacheKey] = pos;
     return pos;
   }
   // 锚点（我）固定在底部中央
@@ -76,10 +108,12 @@ function ringPositions(seatSet, mySeat) {
     let x = cx + rx * Math.cos(rad);
     let y = cy + ry * Math.sin(rad);        // 上方半圆：sin<0 → y<cy
     x = Math.max(10, Math.min(90, +x.toFixed(1)));
-    // 上界 74：座位块向下延伸，锚点再低就会骑到公共牌（top:46%）上。
-    y = Math.max(10, Math.min(74, +y.toFixed(1)));
+    // 上界 ceilTop：pie 按「块下半截仍在上带内」、down 按「整块 + 下注全在上带内」，
+    // 两种排布都保证顶/中座位不骑到底池/公共牌上。
+    y = Math.max(RING_TOP_MIN, Math.min(ceilTop, +y.toFixed(1)));
     pos[s] = { x, y };
   });
+  pos.__layout = layout;
   _ringCache[cacheKey] = pos;
   return pos;
 }
@@ -95,8 +129,11 @@ const _ringCache = {};
  * 靠 empty 让 .sit-btn 显形、其余元素自然不渲染。
  */
 function emptySeat(seat, pp, inGame) {
+  // pp 可能带 __layout（ringPositions 的排布标记）→ down 排布时空位也要跟着改排布，
+  // 否则顶排出现「真人 down、空位 pie」的错位
+  const tight = !!(pp && pp.__layout && pp.__layout.tight);
   return {
-    seat, seatNo: seat + 1, cls: 'seat empty', name: '', initial: '', empty: true,
+    seat, seatNo: seat + 1, cls: 'seat empty' + (tight ? ' down' : ''), name: '', initial: '', empty: true,
     // 牌桌上的空位文案跟着阶段走：等待室是「坐下」，牌局中是「入座」
     // （按钮文案一律在 JS 里算好，WXML 只取值——三元表达式放进 wxml 会编译失败）
     sitText: inGame ? '入座' : '坐下',
@@ -133,7 +170,34 @@ const CHAT_QUEUE_MAX = 8;
  * 硬编码 (50,32)、wxss 是 22%，飞进底池的筹码视觉上落在池下方一截
  * （「筹码没进池」的错觉）。改任何一处必须同步另一处（两侧注释均已标注）。
  */
-const POT_ANCHOR = { x: 50, y: 22 };
+const POT_ANCHOR = { x: 50, y: 35 };
+
+/**
+ * 座位块几何预算（pie/down 两种排布的切换阈值）。
+ *
+ * 实测病根（2026-10-19）：顶排座位块是「锚点向下延伸」的——头像 + 名牌 +
+ * SB/BB + 两张牌背，逐项按 WXSS 折算 = 8.6+3.6+3.88+10.28 ≈ 26.4%（牌桌高
+ * = 100uh）；下注胶囊（down 排布）再压到块底下方 ≈ 3.4% → 块底 ≈ 30.5%。
+ * 而底池胶囊从 29.6% 就开始画 → 无论怎么挪锚点都差 2.5%，被压住的恰恰是
+ * 玩家最需要读的「筹码 / 本轮下注」。纯升 z-index 救不了「自己被盖」。
+ *
+ * 方案：底池下移到 35%（POT_ANCHOR 同源），顶排改「块顶锚定」（down），
+ * 可用纵向空间 = 35% - 3.4%/2(底池上沿) - 2.5%(座位号/庄家溢出) ≈ 30.8% > 30.5%，
+ * 刚好塞下且有余量；pie 排布（宽视口）下注胶囊浮到锚点上方，块底 ≈ 26.4%
+ * + 半块 13.2% → 锚点到 13.2% 即可，空间更宽松。
+ */
+const SEAT_H_PX_UH = 26.4;        // 座位主体块高（uh 单位 = 牌桌百分比）
+const SEAT_H_PX_UH_TIGHT = 22.4;  // 7 座以上紧凑模式
+/** 下注胶囊压在块底下方时额外占用的高度（down 排布）。 */
+const SEAT_BET_EXTRA_UH = 3.4;
+/** 顶排可用纵向空间（百分比）：座位号徽章与庄家 D 的溢出 ≈ -2.2uh。 */
+const RING_TOP_MIN = 3.4;
+const RING_TOP_MAX = 31;
+/** down 排布锚点（= 块顶）上限：再往上块底吃进底池盘面。 */
+const RING_DOWN_MAX = 31;
+/** 底池胶囊高度（uh）：pot-amount 4.8uh × 行高约1.2 + 上下内边距 1.0。 */
+const POT_PILL_H = 6.8;
+
 
 /** 花色配色（四色牌）：0♠ 黑 / 1♣ 绿 / 2♦ 蓝 / 3♥ 红 */
 const SUIT_CLS = ['s-spade', 's-club', 's-diamond', 's-heart'];
@@ -794,6 +858,8 @@ Page({
     if (!w || !h) return;
     const uw = w / 100;
     const uh = Math.min(w, h) / 100;
+    // 几何判型（ringPositions 双排布）要用：缓存到实例上，转屏/改分屏后随之更新
+    this._uhPx = uh;
     this.setData({
       rootStyle: '--uh:' + uh.toFixed(3) + 'px;--uw:' + uw.toFixed(3) + 'px;'
     });
@@ -817,9 +883,14 @@ Page({
     // 锚定座位：我若已入座则以我的座位为底部中央，否则用房主位（稳定布局）
     const anchor = this.roomSeat >= 0 ? this.roomSeat
       : (this.isOwner ? this.data.ownerSeat : 0);
-    const pos = ringPositions(list.map(s => s.seat), anchor);
+    const pos = ringPositions(list.map(s => s.seat), anchor, this._uhPx);
+    // down 排布（紧凑视口）：顶排锚点 = 块顶，下注胶囊改挂名牌下沿。
+    // 等待室同样生效，保证开局瞬间不跳变。
+    const band = pos.__layout || {};
     return list.map(s => {
       const p = pos[s.seat] || { x: 50, y: 20 };
+      // 我（底部中央）在两种排布里都保持 pie：头像在下、下注在上，与 myzone 不挤
+      const down = !!band.tight && s.seat !== anchor;
       const empty = !s.occupied;
       const name = s.isMe ? this.meLabel(s.isOwner) : (s.name || '');
       return {
@@ -827,7 +898,7 @@ Page({
         seatNo: s.seat + 1,
         // cls 此前只有游戏态在构造，等待室这里漏了 → class 为空 → 座位拿不到
         // .seat 的绝对定位，与游戏中共用的座位环位置对不上。补齐后两态一致。
-        cls: ['seat', list.length >= 7 ? 'tight' : '', empty ? 'empty' : '', s.isMe ? 'self' : ''].filter(Boolean).join(' '),
+        cls: ['seat', list.length >= 7 ? 'tight' : '', empty ? 'empty' : '', s.isMe ? 'self' : '', down ? 'down' : ''].filter(Boolean).join(' '),
         sitText: '坐下',
         x: p.x, y: p.y,
         empty,
@@ -3599,7 +3670,7 @@ Page({
       // 也要进环——宁可多画一个位，不能让某个玩家在牌桌上凭空消失。
       game.players.forEach(p => { if (allSeats.indexOf(p.seat) < 0) allSeats.push(p.seat); });
       allSeats.sort((a, b) => a - b);
-      const pos = ringPositions(allSeats, this.mySeat);
+      const pos = ringPositions(allSeats, this.mySeat, this._uhPx);
       const seats = allSeats.map(si => {
         const p = game.seatOf(si);
         if (!p) {
@@ -3652,6 +3723,8 @@ Page({
         const cls = [
           'seat',
           allSeats.length >= 7 ? 'tight' : '',   // 大桌紧凑模式：8~9 人不挤成一团
+          // down 排布（紧凑视口）：顶排锚点=块顶、下注胶囊挂名牌下沿（见 ringPositions）
+          (!pos.__layout || !pos.__layout.tight || isMe) ? '' : 'down',
           p.stack === undefined || p.name === '' ? 'empty' : '',   // 空位（等待室无人）
           isMe ? 'self' : '',
           isFolded ? 'folded' : '',
@@ -4099,7 +4172,7 @@ Page({
    *  落点常量 POT_ANCHOR 见文件头（C5：与 .pot-row top 同源）。 */
   _fxPos(seat) {
     const allSeats = game.players.map(p => p.seat);
-    const pos = ringPositions(allSeats, this.mySeat);
+    const pos = ringPositions(allSeats, this.mySeat, this._uhPx);
     const pp = pos[seat] || { x: 50, y: 40 };
     return pp;
   },

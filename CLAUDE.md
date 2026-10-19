@@ -49,6 +49,7 @@ npm run preview                 # 仅生成预览包，不上传
 - **AI 对战 / 好友房房主端**：引擎跑在本机（权威端）。
 - **好友房好友端（remoteMode）**：不跑引擎，把房主广播的快照镜像成本地 game 对象，按「我 = 本地 0 号位」重映射座位，复用同一套渲染与操作逻辑；动作经 room-sync 上行，房主消化后随下一帧广播。
 - 座位环用统一的 `ringPositions()`（我固定底部中央，其余铺上方半圆），等待室与游戏中共用坐标（开局无跳变）。
+- **座位块/中央盘面的纵向隔离（2026-10-19，用户反馈「顶排筹码被底池遮挡」）**：座位块是「锚点向下延伸」的，块高 ≈26.4%（uh 与牌桌高同尺度）；下注胶囊浮到锚点上方（`.seat-bet` absolute + `bottom:100%`）不占块底。底池 `top:35%`（`POT_ANCHOR.y` 必须同步）→ 底池上沿 31.6%，顶排块底 ≤31.6% 即让开。几何常量集中在 `SEAT_H_PX_UH`/`POT_PILL_H`/`RING_TOP_*`，`test-miniprogram-logic.js` 的 `guardSeatCardNoOverlap` 会抠出 `ringPositions` 真跑 20 种「人数×视口」组合断言不侵入底池带——**改任何一处块尺寸都必须同步这些常量与 WXSS 的 down 段注释，否则测试会红**。窄视口兜底是 `.seat.down`（锚点=块顶、下注挂名牌下沿），当前 375/320/280px 视口下均未触发。
 - 音效走 `utils/sfx.js` 的 WebAudio 实时合成（14 个 PRESETS 音色，零资源文件），`drainSfx()` 300ms 事件泵轮询 `game.events`（`sfxSeq` 游标）；提示音（倒计时警告/限时局/被动代弃/收到消息）挂在 startTimer/startClock/autoStandUnready/pushChat，全部 `soundOn` 门控，`unlock()` 必须在用户手势栈内（`onFirstTouch`）调用一次。
 
 ### 渲染脏检查指纹（三处，改动 render/sync 前必读）
