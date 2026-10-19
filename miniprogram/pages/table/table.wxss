@@ -161,11 +161,43 @@
   font-size: calc(4.8 * var(--uh)); font-weight: 800; color: var(--gold);
   text-shadow: 0 0 calc(2.6 * var(--uh)) rgba(232,163,61,.35);
 }
-.side-pots { display: flex; flex-direction: row; align-items: center; margin-top: calc(0.8 * var(--uh)); }
+/* 边池：绝对定位挂在底池胶囊下方，**脱离 .pot-row 的 flex 流**
+ * （2026-10-19 评审修复：多路全下时顶排座位被底池压住）。
+ *
+ * 病根：.side-pots 原先在 .pot-row（flex column + translate(-50%,-50%)）内部，
+ * 一出现就把整个 .pot-row 撑高一行（margin-top 0.8 + 行高约 4.0 ≈ 4.8uh）。
+ * 容器是 -50% 垂直居中，变高会**向上下同时延伸**：
+ *     无边池：上沿 31.20% / 下沿 38.80%
+ *     有边池：上沿 28.75% / 下沿 41.20%
+ * 下沿距公共牌顶 42.75% 还有 1.55%，不压牌；但上沿 28.75% 已侵入顶排座位带
+ * ——顶排块底固定 30.60%（ringPositions 的 pieMaxY 按 potTop=31.20 算出），
+ * 重叠 1.85%，正好把 ad41992 刚修好的「顶排不被底池遮挡」在边池场景下退回。
+ *
+ * 修法：边池脱出文档流，绝对定位在胶囊正下方。.pot-row 高度恒为胶囊高度，
+ * translate(-50%,-50%) 的基准不变，ringPositions 的 potTop 计算继续成立。
+ * 横向仍居中（left:50% + translateX(-50%)），横排多池以中心对称展开。
+ *
+ * ⚠️ 纵向预算很紧，必须同时满足上下两侧：
+ *     顶排块底 30.60% ←—0.60%—→ 胶囊上沿 31.20%
+ *     胶囊下沿 38.80% ←—3.95%—→ 公共牌顶 42.75%
+ * 边池只能塞进胶囊下方那 3.95%，故「间距」与「行高」一起收窄：
+ *   间距 0.2uh + 行高约 3.4uh = 3.6uh < 3.95uh，留 0.38%（约 3px）余量。
+ * （初版曾按 0.8+4.0=4.8uh 直接下挂，结果边池压住公共牌 0.96% —— 修一处
+ *  坏一处，所以这里两侧都得算。余量刻意留够 0.35% 以上：0.15% 在 812px
+ *  屏上只有 1.2px，字体行高抖动就可能吃掉。） */
+.side-pots {
+  position: absolute; top: calc(100% + 0.2 * var(--uh)); left: 50%;
+  transform: translateX(-50%);
+  display: flex; flex-direction: row; align-items: center;
+  white-space: nowrap;
+}
 .side-pot {
-  font-size: calc(2.6 * var(--uh)); color: #ffd98a; background: rgba(232,163,61,.14);
-  border: 1rpx solid rgba(232,163,61,.28); padding: calc(0.2 * var(--uh)) calc(2.2 * var(--uw));
-  border-radius: 999rpx; margin: 0 calc(0.8 * var(--uw)); white-space: nowrap;
+  /* 字号 2.6→2.2uh、padding 0.2→0.15uh：为把整行压进 3.95% 的纵向预算。
+     边池说的是「多路全下时谁有资格拿哪个池」，信息等级低于主底池一个档次，
+     小一号可接受，但不能省掉（那是玩家最需要反查的细节）。 */
+  font-size: calc(2.2 * var(--uh)); color: #ffd98a; background: rgba(232,163,61,.14);
+  border: 1rpx solid rgba(232,163,61,.28); padding: calc(0.15 * var(--uh)) calc(2 * var(--uw));
+  border-radius: 999rpx; margin: 0 calc(0.6 * var(--uw)); white-space: nowrap;
 }
 /* 边池归属（有资格竞争该池的座位号）：纯文字色弱化，不引新色（重排红线安全） */
 .side-pot .sp-elig { color: rgba(255,217,138,.72); font-size: calc(2.2 * var(--uh)); }
@@ -437,10 +469,35 @@
 .seat.reveal { z-index: 8; }
 
 .act-bubble {
+  /* 默认朝下（挂在座位块下方、朝桌心）：适用于左/右/底排座位，不挡自己底牌。 */
   position: absolute; bottom: calc(-1 * var(--uh)); left: 50%; transform: translateX(-50%);
   font-size: calc(2.6 * var(--uh)); padding: calc(0.25 * var(--uh)) calc(2 * var(--uw));
   border-radius: 999rpx; font-weight: 700; color: #fff; white-space: nowrap;
   background: #2f7d5c; border: 1rpx solid rgba(255,255,255,.16); z-index: 4;
+}
+/* 顶排座位：气泡改挂到座位块【顶部内侧】（2026-10-19 评审修复
+ * 「顶排行动气泡被底池盖住」）。
+ *
+ * 病根：顶排座位块底固定 30.60%（ringPositions 的 pieMaxY 按底池上沿 31.2%
+ * 推出），气泡原本向下挂（bottom:-1uh）就落进底池胶囊 31.2%~38.8%，重叠
+ * 4.11%；而 .seat(z:3) 低于 .pot-row(z:5)，底池直接把气泡盖住。气泡不是一闪
+ * 而过——它持续显示到换街才清（见 _lastActMap 注释），所以顶排玩家的
+ * 「跟注/加注」长时间看不见。
+ *
+ * 为什么选「块内顶部」而不是「块外上方」：顶排块顶只有 4.2%，再往上浮
+ * （气泡高约 4.1uh）会顶出牌桌上沿 0.91% 被裁掉——试过，不行。块内顶部
+ * 是唯一既不越界、又不进底池的落点（4.5%~8.6%，距底池上沿 22% 余量）。
+ * 代价是盖住头像上半圈：头像只是身份标识，气泡文字才是行动信息，
+ * 两者冲突时保文字。 */
+.act-bubble.bub-top {
+  bottom: auto;
+  top: calc(0.3 * var(--uh));
+  transform: translateX(-50%);
+  /* ⚠️ 这个 z-index 提不过 .pot-row(z:5)：.seat 的 z-index:3 + transform 建了
+     层叠上下文，座位内部的 z-index 只在座位内排序，出不去。
+     真正解决遮挡的是【位置】——气泡移到块内顶部后不再与底池区域相交。
+     这里的 7 只负责在座位内部压住头像等无 z-index 的子元素，别误解它的作用。 */
+  z-index: 7;
 }
 .act-f { background: #5b6470; }
 .act-r { background: linear-gradient(160deg, #c98a2a, #a76d15); }

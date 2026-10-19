@@ -145,7 +145,9 @@
           <view class="card-xs back"></view>
         </view>
 
-        <view class="act-bubble {{item.actCls}}" wx:if="{{item.actText}}">{{item.actText}}</view>
+        <!-- 行动气泡：bubbleCls 管【落位】（顶排朝上、其余朝下），actCls 管【动作配色】
+             （弃牌灰/加注金）。两者职责不同，不能合并成一个字段。 -->
+        <view class="act-bubble {{item.bubbleCls}} {{item.actCls}}" wx:if="{{item.actText}}">{{item.actText}}</view>
 
         <!-- 连胜徽章（≥2 手显示 🔥xN；新手 startHand 清零） -->
         <text class="streak-badge" wx:if="{{streaks[item.seat]}}">{{streaks[item.seat]}}</text>

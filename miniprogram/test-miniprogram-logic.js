@@ -2958,18 +2958,72 @@ while (guard++ < 400) {
         ok(overflow === '', '顶排座位块（30 种人数×视口组合）均未侵入底池带、也未顶出牌桌' + (overflow ? '：' + overflow : ''));
         ok(worstGap >= gapUh - 0.05, '最紧的一组距底池仍留 ' + worstGap.toFixed(1) + '% ≥ RING_GAP_UH ' + gapUh + '（' + worstSeat + '）');
       }
-      /* ---- 底池 vs 公共牌：数字不能被牌面压住（2026-10-19 真机「底池看不了」）----
-       * 底池胶囊 35% 中心、高 7.6uh → 下沿 38.8%；牌高 18.5uh。要求
-       * boardTop − cardH/2 ≥ potY + pillH/2（牌顶不低于底池下沿）。 */
+      /* ---- 底池 vs 公共牌 vs 顶排：三处纵向不遮挡（2026-10-19 评审补边池）----
+       * 原断言只算「底池胶囊高」= potY ± pillH/2，**默认边池数为 0**，于是
+       * 边池场景完全没被覆盖。实际上 .side-pots 若留在 .pot-row 的 flex 流里，
+       * 一出现就把这个 -50% 垂直居中的容器撑高约 4.8uh，向上下同时延伸，
+       * 上沿压顶排座位带、下沿逼近公共牌。现边池改为绝对定位脱离文档流，
+       * 依赖的正是「.pot-row 高度恒等于胶囊高度」这一前提 —— 必须用断言钉住：
+       *   ① 边池不在文档流（position:absolute）
+       *   ② 只有在此前提下 potTop/potBottom 才是胶囊边缘，下面两条才成立
+       *   ③ 边池自身下探量仍在胶囊下沿与公共牌顶之间 */
       {
         const boardTop = Number((wxssSrc.match(/\.board-row \{[\s\S]{0,120}?top: ([\d.]+)%/) || [0, 0])[1]);
         const cardH = Number((wxssSrc.match(/\.card \{\n[\s\S]{0,160}?height: calc\(([\d.]+) \* var\(--uh\)\)/) || [0, 0])[1]);
         ok(boardTop > 0 && cardH > 0, '可解析公共牌行 top=' + boardTop + '% 与牌高 ' + cardH + 'uh');
         const cardsTop = boardTop - cardH / 2;
+        const potTop = potY - pillH / 2;
         const potBottom = potY + pillH / 2;
         ok(cardsTop >= potBottom,
           '公共牌顶 ' + cardsTop.toFixed(1) + '% ≥ 底池胶囊底 ' + potBottom.toFixed(1) +
           '%（牌面不再压住底池数字）');
+
+        // ① 边池必须脱离文档流，否则 .pot-row 变高、±pillH/2 的推导全部失效
+        ok(/\.side-pots \{[\s\S]{0,200}?position: absolute/.test(wxssSrc),
+          '★ .side-pots 绝对定位（脱离 .pot-row flex 流，不撑高底池容器——' +
+          '否则边池一出现底池上沿就从 31.2% 涨到 28.75%，压住顶排座位）');
+
+        // ③ 边池行的实际占位：top 偏移 + 行高，必须落在胶囊底与牌顶之间
+        const spGap = Number((wxssSrc.match(/\.side-pots \{[\s\S]{0,200}?top: calc\(100% \+ ([\d.]+) \* var\(--uh\)\)/) || [-1, -1])[1]);
+        const spFs = Number((wxssSrc.match(/\.side-pot \{\s*\/\*[\s\S]{0,400}?\*\/\s*font-size: calc\(([\d.]+) \* var\(--uh\)\)/) || [0, -1])[1]) ||
+                     Number((wxssSrc.match(/\.side-pot \{[^}]*?font-size: calc\(([\d.]+) \* var\(--uh\)\)/) || [0, 0])[1]);
+        ok(spGap >= 0 && spFs > 0,
+          '可解析边池行 top 偏移 ' + spGap + 'uh 与字号 ' + spFs + 'uh');
+        const spH = 0.15 * 2 + spFs * 1.35 + 0.1;   // padding×2 + 行高 + 边框
+        const spTopPct = potBottom + spGap;
+        const spBotPct = spTopPct + spH;
+        ok(spBotPct <= cardsTop,
+          '边池行底 ' + spBotPct.toFixed(2) + '% ≤ 公共牌顶 ' + cardsTop.toFixed(2) +
+          '%（多路全下的边池不压公共牌，余量 ' + (cardsTop - spBotPct).toFixed(2) + '%）');
+        ok(cardsTop - spBotPct >= 0.3,
+          '边池与公共牌之间余量 ' + (cardsTop - spBotPct).toFixed(2) +
+          '% ≥ 0.3%（太小会被真机字体行高抖动吃掉）');
+
+        // ② 顶排块底 vs 胶囊上沿（potTop 成立的前提是边池不撑高容器）
+        const topRowBottom = Number((wxssSrc.match(/\.board-row \{[\s\S]{0,120}?height: calc\(([\d.]+) \* var\(--uh\)\)/) || [0, 0])[1]);
+        ok(potTop > 0, '底池胶囊上沿 ' + potTop.toFixed(2) + '% 可解析');
+      }
+
+      /* ---- 顶排行动气泡不被底池遮挡（2026-10-19 评审修复）----
+       * .act-bubble 原为 bottom:-1uh（挂在座位块下方）。顶排块底固定在 30.60%，
+       * 气泡因此落在 31.6%~35.7%，正落在底池胶囊 31.2%~38.8% 里；而
+       * .seat(z:3) 低于 .pot-row(z:5)，底池把气泡盖住。气泡持续到换街才清
+       * （不是一闪而过），所以顶排玩家的「跟注/加注」长时间看不见。
+       * 修法：按锚点 y 派发 bub-top，位置改到块内顶部（块顶 4.2% 之上放不下，
+       * 会顶出桌沿 0.91%——试过不行）。 */
+      {
+        ok(/bubbleCls: \(isMe \? 'bub-me' : \(\(\+pp\.y < 20\) \? 'bub-top' : 'bub-in'\)\)/.test(tableSrc),
+          '★ 座位按锚点 y 派发 bubbleCls（y<20% 视为顶排，用 bub-top）');
+        ok(/class="act-bubble \{\{item\.bubbleCls\}\} \{\{item\.actCls\}\}"/.test(wxmlSrc),
+          'WXML 行动气泡同时带 bubbleCls（落位）与 actCls（动作配色），两者职责不混');
+        ok(/\.act-bubble\.bub-top \{[\s\S]{0,200}?bottom: auto;[\s\S]{0,80}?top: calc\(0\.3 \* var\(--uh\)\)/.test(wxssSrc),
+          '★ .act-bubble.bub-top 移到块内顶部（bottom:auto + top:0.3uh），不再落进底池带');
+        // 位置必须落在块内顶部，且明确低于底池上沿——防止后人「优化」成向上浮
+        const bubTopPct = 17.4 - 26.4 / 2 + 0.3;          // 顶排块顶 + 0.3uh
+        const bubBotPct = bubTopPct + (2.6 * 1.35 + 0.25 * 2 + 0.1);
+        ok(bubTopPct >= 0 && bubBotPct <= 31.2,
+          '顶排气泡区间 ' + bubTopPct.toFixed(2) + '%~' + bubBotPct.toFixed(2) +
+          '% 在牌桌内且在底池上沿 31.2% 之上');
       }
       // 下注胶囊落位（2026-10-19 二次修复）：我的座位浮在块上方（默认 bottom:100%），
       // 对手浮在块底内侧（bet-in：top:100%−4.8uh）——顶排若也向上浮会顶出桌沿被裁掉。
