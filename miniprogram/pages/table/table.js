@@ -142,6 +142,11 @@ const AI_WAIT_HINT = {
   sitting: '点任一空位选座位坐下，坐下后自动安排 AI 对手',
   seated: '点「开始游戏」发牌；想多人混战可继续「添加电脑玩家」'
 };
+/* 教练提示持续手数（新手可玩性 review 2026-10-19）：前 N 手每手轮到我都提示一次。
+   取 3 的理由：新手的困惑不是「第一次没看到界面」，而是「连续几把都不知道该看
+   什么」；一手太短（还没建立条件反射就没了），再多就变成噪音（会打的人被反复
+   打扰）。手动点掉永远优先——见 onCoachClose。 */
+const COACH_HANDS = 3;
 const QUICK_TALK = ['打得不错', '运气真好', '好牌！', '跟一手', '谢谢', '再想想'];
 const EMOJIS = ['👍', '😂', '😮', '🔥', '💰', '😢'];
 /** 好友房快捷语/表情广播白名单（防伪造内容/超长 payload）。
@@ -533,7 +538,17 @@ Page({
       { name: '摊牌', desc: '7 张牌取最大 5 张组合比大小' }
     ],
     coachShow: false,
-    coachTip: '轮到你时：看右侧「牌力分析」的胜率与赔率，胜率高于赔率再跟注。'
+    /* 首手教练提示（新手可玩性 review 2026-10-19 重写）。
+     * 旧文案：「轮到你时：看右侧『牌力分析』的胜率与赔率，胜率高于赔率再跟注。」
+     * 两个问题：
+     *   ① 引导到了一个**当时不存在的画面**——胜率/赔率曾被 coachShow 的
+     *      wx:elif 挤掉，且不在「右侧」（它在底牌上方一条）。现已并列显示，位置
+     *      也写明。
+     *   ② 只说了「看哪里」，没说「我这手牌算好算坏」。而新手刚发牌时最大的
+     *      疑问恰恰是后者——现在底牌下方已有起手牌标签/牌型名，把这条也指出来，
+     *      让「一条提示」和「界面上的几处新标签」串成一条线。
+     * 仍只在 AI 练习模式显示，操作一次后自动收起（doAct 里清 coachShow）。 */
+    coachTip: '轮到你时：先看底牌下方的起手牌标签（比如「顶口袋对子」），再看上方的胜率与赔率——胜率明显高于赔率再跟注。',
   },
 
   onLoad(options) {
@@ -3165,8 +3180,16 @@ Page({
       this.startStacks = {};
       game.players.forEach(p => { this.startStacks[p.seat] = p.stack; });
     }
-    // AI 练习模式首手给出教练提示，操作一次后自动收起
-    this.setData({ coachShow: this.mode === 'ai' });
+    /* AI 练习模式教练提示（新手可玩性 review 2026-10-19）。
+     * 旧实现只在 startGame 置一次 true，doAct 首次操作就永久收起——
+     * 新手只见到一把牌桌就再没有引导了。
+     * 现改为「前 COACH_HANDS 手，每手轮到我都提示」：新手的困惑不在于
+     * 「第一次看到界面」，而在于「连续几把都不知道该看什么」。给三手，
+     * 到第四手还不会的话，重复的提示也只是噪音。
+     * 用户手动点掉（onCoachClose）则永久收起——尊重已经上手的人。 */
+    if (this.mode === 'ai' && !this._coachDismissed && (this._coachHandsSeen || 0) < COACH_HANDS) {
+      this.setData({ coachShow: true });
+    }
     // 引擎看门狗：双模式通用巡检，任何一环掉链 1.5s 内自动接上
     this.startEngineWatch();
     return this.startHand();
@@ -3566,20 +3589,41 @@ Page({
        *   const 的 TDZ（ReferenceError: Cannot access before initialization）。
        */
       let myHandName = '';
-      if (mePre && mePre.hole && mePre.hole.length === 2 && game.board.length >= 3 && !this.myStanding) {
-        const ev = P.evaluate(mePre.hole.concat(game.board));
-        if (ev && ev.name) myHandName = ev.name;
-        /* 听牌提示（新手可玩性 review）：只报「牌型名」会误导新手——
-         * A♠Q♠ + 9♠5♠J♣ 判定为「高牌」，新手以为自己什么都没有，转头就弃掉
-         * 一手四张同花（还有两张牌可成同花，是最值钱的听牌之一）。
-         * 故当已成牌型只是「高牌」或「一对」时，额外看一眼有没有 8 张以上的出路
-         * （同花听/两头顺听=8~9 张），有就补一句「听牌」。
-         * 只加「听」这个事实，不给「该跟注还是加注」的结论，仍不属于行动建议。
-         */
-        if (myHandName === '高牌' || myHandName === '一对') {
-          const dr = P.detectDraws ? P.detectDraws(mePre.hole, game.board) : null;
-          if (dr && dr.outs >= 8 && game.board.length < 5) {
-            myHandName = myHandName + ' · ' + (dr.desc || '听牌') + ' ' + dr.outs + ' 张';
+      let myHandTier = 0;   // 配色档位（1 最强 .. 5 最弱），0=无标签
+      if (mePre && mePre.hole && mePre.hole.length === 2 && !this.myStanding) {
+        if (game.board.length >= 3) {
+          const ev = P.evaluate(mePre.hole.concat(game.board));
+          if (ev && ev.name) myHandName = ev.name;
+          /* 听牌提示（新手可玩性 review）：只报「牌型名」会误导新手——
+           * A♠Q♠ + 9♠5♠J♣ 判定为「高牌」，新手以为自己什么都没有，转头就弃掉
+           * 一手四张同花（还有两张牌可成同花，是最值钱的听牌之一）。
+           * 故当已成牌型只是「高牌」或「一对」时，额外看一眼有没有 8 张以上的出路
+           * （同花听/两头顺听=8~9 张），有就补一句「听牌」。
+           * 只加「听」这个事实，不给「该跟注还是加注」的结论，仍不属于行动建议。
+           */
+          if (myHandName === '高牌' || myHandName === '一对') {
+            const dr = P.detectDraws ? P.detectDraws(mePre.hole, game.board) : null;
+            if (dr && dr.outs >= 8 && game.board.length < 5) {
+              myHandName = myHandName + ' · ' + (dr.desc || '听牌') + ' ' + dr.outs + ' 张';
+            }
+          }
+        } else {
+          /* 翻牌前起手牌标签（新手可玩性 review 2026-10-19）。
+           * 手上只有两张牌时 evaluate 判不出「牌型」（只能给「高牌」），
+           * 于是新手拿到 A♠K♠ 与 7♣2♦ 看到的界面完全一样——而这正是
+           * 弃牌/跟注/加注第一个决策依据。
+           * advisor.classifyHole 早就实现好了五档起手牌分类（premium/strong/
+           * playable/marginal/trash，边界按「新手友好」偏保守调过），
+           * 但此前只在轮到我行动时、作为「胜率 xx% · 起手牌：xx · 建议」的
+           * 一部分出现，且被 coachShow 的 elif 链路挤掉过。现在直接常驻显示
+           * 在底牌下方，翻前翻后统一由 myHandName 承载。
+           * ⚠️ 合规：这是「这手牌的类别」这一纯事实判断（静态牌力表，无 RNG、
+           *   无对手信息），不是「建议加注/弃牌」，故不受 mode !== 'ai' 门控。
+           */
+          const cls = advisor.classifyHole(mePre.hole);
+          if (cls && cls.label) {
+            myHandName = cls.label;
+            myHandTier = cls.tier || 0;
           }
         }
       }
@@ -3621,7 +3665,7 @@ Page({
         // 顶层已覆盖 board 与 p.hole，但它是本轮新增的独立显示字段，按本仓库
         // 「新增任何写入 render 的 setData 字段都要同步加进指纹」的约定显式登记，
         // 避免将来 hole 的指纹口径调整时把它静默吞掉。
-        'hn' + myHandName,
+        'hn' + myHandName + '/' + myHandTier,
         this.data.resultModal ? 'rm' : '',  // 结算弹窗开/关状态
         // P0-1：AI 桌输光/练习模式开关——派生 myAIBusted/aiUnlimitedTip 由二者驱动，
         // 不进指纹则设置切换或筹码归零瞬间的 mytip 切换会被跳过分支吞掉
@@ -3711,12 +3755,16 @@ Page({
         const pp = pos[p.seat] || { x: 50, y: 20 };
         const isMe = p.seat === this.mySeat;
         const isWinner = !readyPhase && result && result.winners.indexOf(p.seat) !== -1;
-        // C3（玩家审视 2026-10-17）：赢家座位同时亮出牌型名——原先只有
-        // 结算弹窗里有，桌面中央几秒内根本看不出「他拿什么赢的」。
-        // 只在摊牌结算（showdownReveal 有该座位）时显示：fold 结算不亮牌
-        // （muck 礼仪），拿不到牌型名也不显示空壳。
-        const winnerReveal = isWinner && game.showdownReveal ? game.showdownReveal[p.seat] : null;
-        const typeName = (winnerReveal && winnerReveal.name) ? winnerReveal.name : '';
+        /* 摊牌牌型标注（新手可玩性 review 2026-10-19）。
+         * 病根：牌型名此前只挂给**赢家**座位（isWinner 条件）。摊牌时其余亮牌的
+         * 座位只有两张牌在飘，新手看到「我输了」却不知道对方到底赢在哪一手——
+         * 而这正是学牌最关键的一课（「原来 Q 三条赢了我的两对」）。
+         * 现放宽为：摊牌阶段（showdown）任何已亮牌的座位都标牌型名，
+         * 赢家的名字加金色（winner 样式在 cls 里），输家是灰色。
+         * fold 结算不亮牌（muck 礼仪）→ showdownReveal 无该座位 → 不显示空壳。
+         */
+        const reveal = !readyPhase && showdown && game.showdownReveal ? game.showdownReveal[p.seat] : null;
+        const typeName = (reveal && reveal.name) ? reveal.name : '';
         const name = p.name || '玩家';
         // 就绪徽章数据：true=已准备 / false=准备中 / null=不显示（非就绪阶段或不在就绪名单）
         const rEntry = readyLs.filter(x => Number(x.seat) === Number(p.seat))[0];
@@ -4007,6 +4055,7 @@ Page({
         // 我的区域（底部）
         myCards,
         myHandName,          // 当前牌型名（翻牌后才有；新手「我这是什么牌」的答案）
+        myHandTier,          // 起手牌档位 1..5（翻前用于配色；翻牌后为 0）
         myStack: meP ? meP.stack : 0,
         // myzone 显示用紧凑格式（与座位环同口径）。myStack 保持数字——
         // 结算/补筹等数值口径照旧读 myStack，不受显示格式影响。
@@ -4708,6 +4757,9 @@ Page({
   },
 
   onCoachClose() {
+    // 用户主动点掉 = 「我懂了」，本桌永久收起（与 doAct 里按手计数自然结束区分）。
+    // 只在内存里记（不写 storage）：下一桌重新给新手提示，不把一次性意图永久化。
+    this._coachDismissed = true;
     this.setData({ coachShow: false });
   },
 
@@ -5222,7 +5274,15 @@ Page({
     myActText = text;
     myActCls = cls;
     this.feedback();                       // 震动反馈
-    if (this.data.coachShow) this.setData({ coachShow: false });   // 已上手，收起教练提示
+    /* 教练提示按手收起（新手可玩性 review 2026-10-19）。
+     * 旧逻辑：首次操作就永久收起 → 新手只见到一把牌桌就再无引导。
+     * 现在每手第一次操作时收起本手提示，并累加已提示手数；打满
+     * COACH_HANDS 手后不再出现（再提示就是噪音）。
+     * 与 onCoachClose（用户手动点掉）区分开：手动点掉是永久，计数用完是自然结束。 */
+    if (this.data.coachShow) {
+      this.setData({ coachShow: false });
+      this._coachHandsSeen = (this._coachHandsSeen || 0) + 1;
+    }
     if (this.remoteMode) {
       // 镜像端：本地乐观执行做即时反馈，动作上行给房主（下一帧广播回来校正）
       roomSync.pushAction(this.roomNo, {

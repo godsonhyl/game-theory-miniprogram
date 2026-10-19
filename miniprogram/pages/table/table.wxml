@@ -128,7 +128,10 @@
 
         <!-- 摊牌后：赢家座位直接飘出赢得的筹码数 + C3 牌型名（一眼看出拿什么赢的） -->
         <view class="seat-win" wx:if="{{item.win && item.winGain}}">🏆 +{{item.winGain}}</view>
-        <view class="seat-typename" wx:if="{{item.win && item.typeName}}">{{item.typeName}}</view>
+        <!-- 摊牌牌型标注（新手可玩性 review）：摊牌时每个亮牌座位都标牌型名，
+             不再只给赢家——新手要的正是「原来他的 Q 三条赢了我的两对」这一课。
+             赢家金色、输家灰色，一眼看出谁以什么牌赢的。 -->
+        <view class="seat-typename {{item.win ? 'win' : 'lose'}}" wx:if="{{item.typeName}}">{{item.typeName}}</view>
 
         <!-- 对手底牌：摊牌时亮出；未摊牌且未弃牌时显示两张小牌背（仍在手） -->
         <view class="seat-cards show" wx:if="{{item.showCards}}">
@@ -247,10 +250,13 @@
             <view class="card back"></view>
             <view class="card back"></view>
           </block>
-          <!-- 我的当前牌型（新手可玩性 review）：翻牌后才有，与底牌同帧刷新。
+          <!-- 我的当前牌型 / 起手牌标签（新手可玩性 review）。
+               翻牌前 = 起手牌分类（顶口袋对子/AK 同花/垃圾牌…），翻牌后 = 最佳成手
+               牌型名。两者同一位置、同一字段承载，故翻前翻后视觉连续不跳变。
                弃牌后不再显示 —— 已出局的人看到「两对」只会困惑「那我怎么没赢」。
+               tier 仅翻前有值（1 最强..5 最弱），用 tier-1..tier-5 做配色分级。
                纯事实展示，非行动建议，不受练习模式合规门控。 -->
-          <view class="myhand" wx:if="{{myHandName && !myFolded}}">{{myHandName}}</view>
+          <view class="myhand {{myHandName && !myFolded ? '' : 'hide'}} {{myHandTier ? 'tier-' + myHandTier : ''}}">{{myHandName}}</view>
         </view>
 
         <view class="mymid">

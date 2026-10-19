@@ -89,6 +89,20 @@ function classifyHole(hole) {
   if (suited && gap <= 2) {
     return { label: '同花连张', tag: 'marginal', tier: 4 };
   }
+  /* 单高张兜底（2026-10-19 新手可玩性 review 补充）。
+   * 病根：旧实现到这一行就把**所有**未匹配的手牌一律归「垃圾牌」——
+   * A♣5♦ / A♦3♥ / K♦5♣ 与 7♣2♦ 显示完全一样。但 A 高张在对局里有实打实的
+   * 价值（能中 A 顶对、有阻断 A 的效果），K 高张次之；把它们与 72o 等同是
+   * 把新手教错，也会让「垃圾牌」这个标签失去区分度（全都是垃圾 = 没有信息）。
+   * 分档依据：A 高张与 A 小同花同档（tier4，都不是能主动打的牌），
+   * K 高张再降一档（tier5，但仍带「K 高张」标签而非「垃圾牌」）。
+   * 真正的垃圾牌（如 7♣2♦、8♣3♥）仍归 trash。 */
+  if (hi === 12) {
+    return { label: 'A 高张', tag: 'marginal', tier: 4 };
+  }
+  if (hi === 11 && lo >= 4) {           // K + 8 以上（K9o+）才值得提一句
+    return { label: 'K 高张', tag: 'trash', tier: 5 };
+  }
   // 其余：垃圾牌
   return { label: '垃圾牌', tag: 'trash', tier: 5 };
 }

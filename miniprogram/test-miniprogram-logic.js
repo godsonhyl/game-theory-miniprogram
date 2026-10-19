@@ -476,6 +476,31 @@ pageCtx.confirmBuyIn({ currentTarget: { dataset: { amt: '1000' } } });
 pageCtx.startGame();
 ok(dataStore.phase === 'playing', 'AI 桌选座并点开始后进入牌桌');
 ok(dataStore.coachShow === true, 'AI 练习模式首手显示教练提示（发牌时才置位）');
+/* 教练提示持续 3 手（新手可玩性 review 2026-10-19）。
+ * 旧实现只在 startGame 置一次 true，首次操作就永久收起——新手只见到一把牌桌
+ * 就再没有引导。新逻辑：前 COACH_HANDS(3) 手每手轮到我都提示一次。 */
+{
+  const handsSeenBefore = pageCtx._coachHandsSeen || 0;
+  // 打掉当前手里的一次行动 → 本手提示收起、手数 +1
+  if (dataStore.isMyTurn) {
+    pageCtx.onCheckOrCall();
+    ok((pageCtx._coachHandsSeen || 0) === handsSeenBefore + 1,
+      '首次操作后本手教练提示收起并记入已提示手数，实际 ' + pageCtx._coachHandsSeen);
+  }
+  ok(/COACH_HANDS/.test(require('fs').readFileSync(
+    require('path').join(__dirname, 'pages/table/table.js'), 'utf8')),
+    '教练提示受 COACH_HANDS 手数上限约束（不再一手即永久消失）');
+  const tipSrc = require('fs').readFileSync(
+    require('path').join(__dirname, 'pages/table/table.js'), 'utf8');
+  /* 断言要落在**实际生效的文案**上，而不是扫描整个源码——源码注释里会引用
+   * 旧文案作为「为什么改」的记录（本轮就引用了「看右侧」），扫描源码必然误报。
+   * 直接读页面 data 里的 coachTip 值。 */
+  ok(/起手牌标签/.test(dataStore.coachTip) && /胜率与赔率/.test(dataStore.coachTip),
+    '教练提示同时指向「起手牌标签」与「胜率/赔率」两处（旧文案只指后者），实际「' +
+    String(dataStore.coachTip).slice(0, 40) + '…」');
+  ok(dataStore.coachTip.indexOf('看右侧') < 0,
+    '生效文案不再出现「看右侧」的旧措辞（该位置已改到「上方」，且当时被 elif 挤掉不显示）');
+}
 ok(dataStore.myStanding === false, '默认坐在局内（未站起）');
 ok(dataStore.canStand === false, '本手进行中且未弃牌 → 不允许站起');
 toasts.length = 0;
@@ -2100,6 +2125,21 @@ while (guard++ < 400) {
     ok(sevTwo && sevTwo.tag === 'trash', '72o → trash（非同花、间隔大、低牌）');
     const ts = advisor.classifyHole([cid(8, 0), cid(7, 0)]);      // T9s
     ok(ts && ts.tag === 'marginal', 'T9s → marginal/同花连张（lo<8，归同花连张而非大同花连张）');
+    /* 单高张兜底（新手可玩性 review 2026-10-19）：
+     * 旧实现所有未匹配手牌一律「垃圾牌」，A♣5♦ 与 7♣2♦ 显示完全一样。
+     * A 高张（能中 A 顶对、阻断 A）有实打实价值，不该与 72o 等同；
+     * 否则「垃圾牌」标签失去区分度（全都是垃圾 = 没有信息）。 */
+    const a5o = advisor.classifyHole([cid(12, 1), cid(3, 2)]);   // A5o
+    ok(a5o && a5o.label === 'A 高张' && a5o.tier === 4,
+      'A5o → 「A 高张」而非垃圾牌（旧实现与 72o 显示相同），实际 ' + (a5o && a5o.label));
+    const k9o = advisor.classifyHole([cid(11, 0), cid(7, 3)]);    // K9o
+    ok(k9o && k9o.label === 'K 高张',
+      'K9o → 「K 高张」（K + 8 以上才值得提一句），实际 ' + (k9o && k9o.label));
+    const k5o = advisor.classifyHole([cid(11, 2), cid(3, 1)]);    // K5o
+    ok(k5o && k5o.label === '垃圾牌',
+      'K5o → 仍是垃圾牌（K 配太小踢脚没有价值），实际 ' + (k5o && k5o.label));
+    ok(sevTwo && sevTwo.label === '垃圾牌' && a5o.label !== sevTwo.label,
+      'A5o 与 72o 不再显示同一个标签（垃圾牌标签恢复区分度）');
 
     // ---- 全组合覆盖：52*51/2 每对都有合法归属 ----
     let bad = 0, nonNull = 0;
@@ -3244,11 +3284,15 @@ while (guard++ < 400) {
       'C2 actLabel(d, currentBet) 双参口径（AI 气泡同口径，currentBet 由调用处传入）');
     ok(/this\.actLabel\(d, game\.currentBet\)/.test(tableSrc),
       'C2 scheduleAI 调用 actLabel 时透传 game.currentBet');
-    ok(/const winnerReveal = isWinner && game\.showdownReveal/.test(tableSrc) &&
+    /* C3 座位牌型标注：原守卫锁 winnerReveal（只给赢家）。2026-10-19 新手 review
+     * 放宽为「摊牌时任何已亮牌座位都标牌型名」——新手要看的正是「他的 Q 三条
+     * 赢了我的两对」。变量同步改成 reveal，且必须仍以 showdown 为条件
+     * （fold 结算不亮牌、muck 礼仪），否则会在非摊牌局闪出空壳。 */
+    ok(/const reveal = !readyPhase && showdown && game\.showdownReveal/.test(tableSrc) &&
       /typeName: typeName/.test(tableSrc),
-      'C3 座位卡派生 typeName（showdownReveal，fold 结算为空不显示）');
-    ok(/seat-typename/.test(wxmlSrc) && /item\.typeName/.test(wxmlSrc),
-      'C3 WXML 赢家座位渲染牌型名节点');
+      'C3 座位卡派生 typeName（摊牌阶段逐座位取 showdownReveal，fold 结算为空不显示）');
+    ok(/seat-typename \{\{item\.win \? 'win' : 'lose'\}\}/.test(wxmlSrc) && /item\.typeName/.test(wxmlSrc),
+      'C3 WXML 牌型名按赢/输分色（赢家金色、输家灰色）');
     ok(/potOddsText = '跟注 ' \+ legal\.toCall \+ ' · 池比 1:'/.test(tableSrc) &&
       /pot-odds/.test(wxmlSrc),
       'C4 行动条上方池比行（跟注 X · 池比 1:Z，纯算术展示）');
@@ -3570,8 +3614,35 @@ while (guard++ < 400) {
       'renderAdvice 调用 advisor.explainAdvice（牌理解释）');
     ok(/advBase\.holeLabel/.test(tableSrc) && /advBase\.explain/.test(tableSrc),
       'advice setData 新增 holeLabel/explain 字段（不破坏 equityPct/potOdds/text/tone/drawDesc/drawOuts）');
-    const advCalls = (tableSrc.match(/advisor\.(classifyHole|explainAdvice)/g) || []).length;
-    ok(advCalls === 2, 'advisor 调用只在 renderAdvice 内（classifyHole + explainAdvice 各 1，不绕 mode!==ai 门槛），共 ' + advCalls);
+    /* 只统计**真实调用**，先剥掉注释行——否则注释里提到 advisor.classifyHole
+     * 也会被算进去（本轮就在 render() 的说明块里提到过，导致「实际 4」误报）。
+     * 剥注释口径：去掉整行 // 注释 + 去掉 /** ... *\/ 块注释。 */
+    const tableSrcNoComment = tableSrc
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/^\s*\/\/.*$/gm, '');
+    const advCalls = (tableSrcNoComment.match(/advisor\.(classifyHole|explainAdvice)\s*\(/g) || []).length;
+    /* advisor 调用点审计（2026-10-19 新手可玩性 review 后从「必须恰好 2 次」放宽）。
+     *
+     * 原守卫断言 advisor.* 只被调用 2 次（renderAdvice 内的 classifyHole +
+     * explainAdvice），用「调用次数」来保证「没有绕开 mode!==ai 门槛」。
+     * 本轮在 render() 里新增了第三个调用点 classifyHole —— 用于翻牌前常驻显示
+     * 起手牌标签。这确实是绕开了 renderAdvice 的门槛，故必须单独论证，而不是
+     * 简单把 2 改成 3：
+     *   · classifyHole 是**纯静态分类**：只读两张牌的点数/花色查表，无 RNG、
+     *     无对手信息、不调引擎胜率，输出「顶口袋对子/同花连张/垃圾牌」这类
+     *     **牌本身的类别描述**，不含「该跟/该弃/该加多少」的结论。
+     *   · explainAdvice（把胜率 vs 赔率翻译成牌理建议）**仍然只在 renderAdvice
+     *     内**，继续受 mode !== 'ai' 门控 —— 真正的「行动建议」没有被放开。
+     *   · 好友房/匹配房看到的是「我的牌属于哪一类」，等于真人牌桌上自己看牌，
+     *     不构成 README 第 0.3 节禁止的「实时外挂辅助」。
+     * 故断言改为：explainAdvice 仍恰好 1 次且必须在 renderAdvice 内；
+     * classifyHole 允许 2 次，但 render() 里那次不得出现在 explainAdvice 附近。 */
+    ok(advCalls === 3, 'advisor 调用点共 3 处（renderAdvice: classifyHole+explainAdvice，render: 起手牌标签），实际 ' + advCalls);
+    const explainCalls = (tableSrcNoComment.match(/advisor\.explainAdvice\s*\(/g) || []).length;
+    ok(explainCalls === 1,
+      'explainAdvice（牌理建议文案）仍恰好 1 处，未因新手标签被放开门槛，实际 ' + explainCalls);
+    ok(/this\.mode !== 'ai'/.test(tableSrc),
+      'renderAdvice 的 mode !== ai 合规门槛仍在（好友房/匹配不输出行动建议）');
     ok(/class="adv-explain"/.test(wxmlSrc), '建议栏 wxml 含 adv-explain 节点');
     ok(/advice\.explain/.test(wxmlSrc), '建议栏 wxml 插值 advice.explain');
   }
