@@ -554,6 +554,17 @@ Page({
     this._humanVpipCount = 0;
     this._humanActedThisHand = false;
     this.chatSeq = this.chatSeq || 0;
+    // #14 批二：动作文案渲染态（座位 → { text, cls }）。三端统一存储——
+    // AI 端 scheduleAI 写、房主端 applyFriendAction 写（看好友）、镜像端
+    // diffActLabels 从快照 diff 推断后写；render 座位映射从这里派生。
+    // 旧架构是 scheduleAI 的路径型 setData 补丁，afterAct→render 全量重建
+    // seats 时把非我的 actText 重置为 ''——气泡一帧闪现，现实中几乎不可见。
+    // 换街即清（render 内 _actHandStreet 判据），防「文字说跟注、桌面无注」。
+    // 进渲染指纹靠 _actEpoch 令牌（独立实例状态，不穿透会被跳过分支吞掉）。
+    this._lastActMap = {};
+    this._actEpoch = 0;
+    this._actHandStreet = '';
+    this._remotePrev = null;   // 镜像端 diff 的上一帧快照基线（enterRemote 维护）
     // 氛围状态：页面级重置（连胜/频控/飞行 id 随页面实例归零）
     winStreaks = {};
     lastEmoteAt = {};
@@ -1599,8 +1610,20 @@ Page({
     const seat = Number(a.rowSeat);
     if (a.type === 'act') {
       if (game.actionSeat === seat && !game.result) {
+        // #14 批二：act 前存街内最高注——actLabel 的「下注/加注」语义按动作
+        // 发生前的 currentBet 判定（act 后 currentBet 已变，拿不到正确口径）。
+        const currentBetBefore = game.currentBet;
         const r = game.act(seat, a.action, a.amount || 0);
-        if (r.ok) this.afterAct();
+        if (r.ok) {
+          // 动作文案精确写入（好友桌均可看见「对方做了什么」）。payload 只有
+          // {type,seat,action,amount}，与 actLabel 查表口径完全同构，零新文案逻辑。
+          this._lastActMap[seat] = {
+            text: this.actLabel({ action: a.action, amount: a.amount || 0 }, currentBetBefore),
+            cls: this.actClsOf(a.action)
+          };
+          this._actEpoch++;
+          this.afterAct();
+        }
       }
       // 动作过期（已不是该座行动 / 本手已结束）→ 丢弃
       return;
@@ -1992,6 +2015,13 @@ Page({
       while (merged.length > 8) merged.shift();
       patch.chatLog = merged;
     }
+    // #14 批二：镜像端动作文案——从快照 diff 推断（零广播成本：不新增上行/
+    // 快照字段，房主端也无需广播 actText）。必须在指纹 return **之前**写入并
+    // 递增 _actEpoch：diff 的源字段（bet/folded/allIn/actionSeat）全在
+    // _lastRemoteFp 内，真有动作时指纹必不同；但渲染指纹不含 actionSeat，
+    // 不带令牌的话「过牌」类 diff（bet 不变）会被渲染指纹跳过分支吞掉。
+    // 宁空不错：判不准的动作不发文案。
+    this._mirrorDiffActs(snap);
     // 脏检查（评审 2026-10-15 MEDIUM「镜像端每 1.5s 全量 setData 无脏检查」）：
     // 好友端 1.5s 轮询拿到房主快照；若牌局实质未变，loadSnapshot 后渲染出的 patch
     // 与上一帧逐字段相同——整帧 setData 纯属空转，触发全量 diff/重绘、低端机掉帧。
@@ -2020,6 +2050,77 @@ Page({
     this.render();
     // 镜像端不驱动引擎：若轮到我，只起本地计时环做视觉反馈
     if (game.actionSeat === 0 && !game.result) this.startTimer();
+  },
+
+  /**
+   * #14 批二：镜像端动作文案推断。好友端 1.5s 轮询只有快照可看（引擎在房主
+   * 机），旧实现完全没有对手动作文案——好友桌的「下注过程」只有 bet 数字在变。
+   * 这里比对相邻两帧快照推断每人做了什么，写进 _lastActMap 补齐过程语义。
+   * 纯函数 diffActLabels 便于单测；调用侧只做 map 维护与基线更新。
+   * 已知粒度损失：1.5s 轮询可能合并两次动作（A 下注→B 加注同帧抵达），
+   * 只能标终态（A 跟注 B 加注）——标签仍为真，只是丢失中间过程，可接受。
+   */
+  _mirrorDiffActs(snap) {
+    const prev = this._remotePrev;
+    const players = (snap.players || []).map(p => ({
+      seat: p.seat, bet: p.bet, folded: !!p.folded, allIn: !!p.allIn
+    }));
+    const next = {
+      handNo: snap.handNo,
+      actionSeat: snap.actionSeat,
+      bets: {}, folded: {}, allIn: {}
+    };
+    players.forEach(p => {
+      next.bets[p.seat] = p.bet;
+      next.folded[p.seat] = p.folded;
+      next.allIn[p.seat] = p.allIn;
+    });
+    this._remotePrev = next;
+    if (!prev || prev.handNo !== snap.handNo) return;   // 首帧/跨手：只建基线不推断
+    if (snap.result) return;                            // 结算帧只做归池（bet 清零），不误标
+    const acts = this.diffActLabels(prev, players, snap.currentBet);
+    if (!acts.length) return;
+    acts.forEach(a => {
+      if (a.text) {
+        this._lastActMap[a.seat] = { text: a.text, cls: a.cls };
+        this._actEpoch++;
+      }
+    });
+  },
+
+  /** _mirrorDiffActs 的纯推断核心（可单测）。返回 [{seat, text, cls}]。 */
+  diffActLabels(prev, players, currentBet) {
+    const out = [];
+    players.forEach(p => {
+      const beforeBet = Number(prev.bets[p.seat]);
+      const wasFolded = !!prev.folded[p.seat];
+      const wasAllIn = !!prev.allIn[p.seat];
+      if (!wasFolded && p.folded) {
+        out.push({ seat: p.seat, text: '弃牌', cls: 'act-f' });
+        return;
+      }
+      if (!wasAllIn && p.allIn) {
+        out.push({ seat: p.seat, text: '全下', cls: 'act-a' });
+        return;
+      }
+      if (p.bet > beforeBet) {
+        if (p.bet >= currentBet) {
+          // += 到达当前注：增前街内有注是加注，无注是首个下注（与 actLabel 同口径）
+          const verb = beforeBet > 0 ? '加注 ' : '下注 ';
+          out.push({ seat: p.seat, text: verb + p.bet, cls: 'act-r' });
+        } else {
+          out.push({ seat: p.seat, text: '跟注', cls: '' });
+        }
+      } else if (p.bet === beforeBet && p.seat === prev.actionSeat &&
+                 currentBet === p.bet) {
+        // bet 不变且该座位上一帧持有行动权且注 = 街内最高注 → 过牌。
+        // 附 currentBet===p.bet 防 preflop 盲注位被误标（盲注推入后 bet=currentBet
+        // 但从不是他的主动动作……严格说盲注位 actionSeat afterEach 会离开，正常
+        // 帧序下不会命中；此判据宁空不错，边角漏标不误导）。
+        out.push({ seat: p.seat, text: '过牌', cls: '' });
+      }
+    });
+    return out;
   },
 
   // ---------- 牌局快照：中途退出后可重新进入续局 ----------
@@ -3065,6 +3166,9 @@ Page({
     this._raiseHandNo = game.handNo;
     myActText = '';
     myActCls = '';
+    // #14 批二：跨手清空动作文案（镜像端不走 startHand，靠 render 判据兜底）
+    this._lastActMap = {};
+    this._actEpoch++;
     this.render();
     this.forcePublish();   // 新手牌是关键状态：穿透节流立即广播，好友马上看到发牌
 
@@ -3309,6 +3413,10 @@ Page({
         tick,                    // 计时环残值——变化时必须重绘
         myActText,               // 我的动作气泡文案
         myActCls,
+        // #14 批二：动作文案是独立实例状态（非 stack/bet 派生），必须以 epoch
+        // 令牌进指纹——render fp 不含 actionSeat，房主端 applyFriendAction 写
+        // map 后若其余成分恰好全同，不加令牌气泡会被跳过分支吞掉。
+        'ax' + this._actEpoch,
         this.myStanding ? 1 : 0,
         this.pendingSit ? 1 : 0, // 影响 mySeated（坐下待下一手入局）的派生态
         this.data.resultModal ? 'rm' : '',  // 结算弹窗开/关状态
@@ -3329,6 +3437,16 @@ Page({
       // 跳过、自然重试，降级态不会卡到下一次实质状态变化才恢复（评审 2026-10-16）。
       const showdown = g.street === P.STREET.SHOWDOWN;
       const result = g.result;
+      // #14 批二：动作文案换街即清——跟 bet 归池（引擎 collectBets）同帧发生。
+      // 旧街的「跟注」若残留会与「桌面无注」矛盾误导玩家。镜像端 street 由
+      // loadSnapshot 更新，同一 render 路径自动清；两手之间的极端残留由
+      // startHand 的显式清空双保险兜底（镜像端不走 startHand）。
+      const actTag = g.handNo + ':' + g.street;
+      if (this._actHandStreet !== actTag) {
+        this._lastActMap = {};
+        this._actEpoch++;
+        this._actHandStreet = actTag;
+      }
       // 就绪阶段：上一手的牌全部收走（公共牌/底牌/赢家特效），桌面清空等下一局，
       // 就绪状态以徽章形式挂在各个座位上（不再在底部条里逐人罗列）。
       const readyPhase = this.data.readyPhase;
@@ -3484,8 +3602,10 @@ Page({
           timerPct: !readyPhase && game.actionSeat === p.seat ? Math.round(tick / tickMax * 100) : 0,
           // 最后 5s 计时环转红脉冲（仅当前行动座位，与我回合 actbar.urgent 同阈值）
           timerUrgent: !readyPhase && game.actionSeat === p.seat && tick <= 5 && tick > 0,
-          actText: !readyPhase && p.seat === this.mySeat ? myActText : '',
-          actCls: !readyPhase && p.seat === this.mySeat ? myActCls : ''
+          // #14 批二：动作文案从实例态派生（我走 myActText 模块变量，其余座位
+          // 查 _lastActMap——AI 端/房主端看好友/镜像端 diff 三路统一写入）。
+          actText: !readyPhase ? (isMe ? myActText : ((this._lastActMap[p.seat] || {}).text || '')) : '',
+          actCls: !readyPhase ? (isMe ? myActCls : ((this._lastActMap[p.seat] || {}).cls || '')) : ''
         };
       });
 
@@ -5394,14 +5514,16 @@ Page({
           return;
         }
 
-        // 把 AI 的动作写回座位数据用于气泡展示。
-        // 注意：seats 只含对手，下标 ≠ 座位号，必须按 seat 查出实际下标。
-        const idx = game.players.filter(p => p.seat !== this.mySeat).findIndex(p => p.seat === seat);
-        if (idx < 0) { this.afterAct(); return; }
-        this.setData({
-          ['seats[' + idx + '].actText']: this.actLabel(d, game.currentBet),
-          ['seats[' + idx + '].actCls']: this.actClsOf(d.action)
-        }, () => this.afterAct());
+        // #14 批二：把 AI 的动作写进实例态 _lastActMap（render 派生动着气泡）。
+        // 旧实现是路径型 setData 补丁 seats[idx].actText，afterAct→render 全量
+        // 重建 seats 时被重置为 ''——气泡一帧闪现，现实中几乎不可见。
+        // actLabel 第二参必传 game.currentBet（C2：aiDecide 返回值不带 ctx）。
+        this._lastActMap[seat] = {
+          text: this.actLabel(d, game.currentBet),
+          cls: this.actClsOf(d.action)
+        };
+        this._actEpoch++;
+        this.afterAct();
         // AI 聊天冒泡：角色触发率（话痨高 / 寡言低），诈唬时按马脚调整。
         // 诈唬话多掩饰（bluffTalkBoost）或诈唬必沉默（bluffSilent）。
         const thisBluff = /诈唬/.test(d.reason || '');

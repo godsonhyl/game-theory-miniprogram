@@ -1341,6 +1341,12 @@ while (guard++ < 400) {
     guardUxBatch2(tableSrc, wxmlSrc);
   }
 
+  /* ---------- #14 批二：动作文案 render 派生（_lastActMap 三端统一）---------- */
+  {
+    guardActTextPersistence(tableSrc);
+    assertActTextDerived(pageCtx, dataStore);
+  }
+
   /* ---------- 边池归属显示（玩家审视 2026-10-17）---------- */
   {
     guardSidePotElig(tableSrc, wxmlSrc, wxssSrc);
@@ -2856,6 +2862,85 @@ while (guard++ < 400) {
       '#14-1 座位筹码文案为非空字符串（fmtStack 输出）');
     ok(typeof dataStore.myStackText === 'string',
       '#14-1 myzone myStackText 落值（字符串口径）');
+  }
+
+  /* #14 批二守卫：动作文案（弃牌/跟注/加注/全下）是「每一轮每个玩家下注/加注过程」
+   * 的语义层。旧架构是 scheduleAI 路径型 setData 补丁——afterAct→render 全量重建
+   * seats 时被重置为 ''，气泡一帧闪现现实不可见；好友镜像端则完全没有写入点。
+   * 新架构：三端统一写实例态 _lastActMap，render 派生 + epoch 令牌进渲染指纹。 */
+  function guardActTextPersistence(tableSrc) {
+    const renderFpBlock = (tableSrc.match(/const fp = \[[\s\S]*?if \(this\._lastRenderFp === fp\)/) || [''])[0];
+    ok(renderFpBlock && /'ax' \+ this\._actEpoch/.test(renderFpBlock),
+      '#14-2 渲染指纹含 _actEpoch 令牌（独立实例状态写入必须穿透，否则跳过分支吞掉气泡）');
+    ok(/this\._lastActMap\[seat\] = \{/.test(tableSrc) &&
+      /this\._actEpoch\+\+/.test(tableSrc),
+      '#14-2 动作文案写入实例态 _lastActMap（路径型 actText 补丁退役）');
+    ok(!/\['seats\[' \+ idx \+ '\]\.actText'\]/.test(tableSrc),
+      '#14-2 scheduleAI 不再有路径型 seats[idx].actText 补丁（闪现根源）');
+    ok(/this\.actLabel\(d, game\.currentBet\)/.test(tableSrc),
+      '#14-2（回归）scheduleAI 调 actLabel 透传 game.currentBet（C2 口径）');
+    ok(/const actTag = g\.handNo \+ ':' \+ g\.street;/.test(tableSrc) &&
+      /this\._actHandStreet !== actTag/.test(tableSrc),
+      '#14-2 render 换街判据 actTag（bet 归池与文案清除同帧，防矛盾态）');
+    const startHandBlock = (tableSrc.match(/startHand\(\) \{[\s\S]*?\n  \}/) || [''])[0];
+    ok(startHandBlock && /_lastActMap = \{\}/.test(startHandBlock),
+      '#14-2 startHand 跨手清空 _lastActMap（与 myActText=\'\' 同点双保险）');
+    const applyBlock = (tableSrc.match(/applyFriendAction\(a\) \{[\s\S]*?\n  \},/) || [''])[0];
+    ok(applyBlock && /currentBetBefore = game\.currentBet/.test(applyBlock) &&
+      /_lastActMap\[seat\] = \{/.test(applyBlock),
+      '#14-2 房主端好友动作用 act 前的 currentBet 写精确文案（下注/加注口径）');
+    ok(/diffActLabels\(prev, players, snap\.currentBet\)|diffActLabels\(prev, players, currentBet\)/.test(tableSrc) &&
+      /_mirrorDiffActs\(snap\)/.test(tableSrc),
+      '#14-2 镜像端从快照 diff 推断动作文案（零上行/快照改动）');
+    ok(/if \(!prev \|\| prev\.handNo !== snap\.handNo\) return;|prev\.handNo !== snap\.handNo\) return;/.test(tableSrc) &&
+      /if \(snap\.result\) return;/.test(tableSrc),
+      '#14-2 镜像 diff 首帧/跨手/结算帧不误标（宁空不错）');
+  }
+
+  /* #14 批二行为级：_lastActMap → render 派生 → setData 全链 + 换街清除。 */
+  function assertActTextDerived(pageCtx, dataStore) {
+    // 派生链：写 map + 令牌 → 强制重渲染 → 座位对象带文案与色类
+    pageCtx._lastActMap[2] = { text: '加注 40', cls: 'act-r' };
+    pageCtx._actEpoch++;
+    pageCtx._lastRenderFp = null;
+    pageCtx.render();
+    const seat2 = (dataStore.seats || []).filter(s => s.seat === 2)[0];
+    ok(seat2 && seat2.actText === '加注 40' && seat2.actCls === 'act-r',
+      '#14-2 render 从 _lastActMap 派生对手动作气泡（全链落 setData）');
+    // 换街清除：推进 street 后 render，旧街文案即被抹掉
+    const g = pageCtx.requireGame();
+    if (g && g.street !== 'showdown') {
+      const nextStreet = { preflop: 'flop', flop: 'turn', turn: 'river' }[g.street];
+      if (nextStreet) {
+        g.street = nextStreet;
+        pageCtx._lastRenderFp = null;
+        pageCtx.render();
+        const cleared = (dataStore.seats || []).every(s => !s.actText || s.seat === pageCtx.mySeat);
+        ok(cleared, '#14-2 换街帧全部座位动作气泡清空（文案与桌面无注不再矛盾）');
+        g.street = { flop: 'preflop', turn: 'flop', river: 'turn' }[nextStreet];
+      }
+    }
+    // diffActLabels 纯函数三场景（镜像端推断核心）
+    const prevA = { bets: { 1: 0, 2: 20, 3: 40 }, folded: {}, allIn: {}, actionSeat: 3 };
+    const outA = pageCtx.diffActLabels(
+      prevA,
+      [ { seat: 1, bet: 0, folded: false, allIn: false },
+        { seat: 2, bet: 40, folded: false, allIn: false },
+        { seat: 3, bet: 80, folded: false, allIn: false } ],
+      80);
+    ok(outA.length === 2 && outA.some(x => x.seat === 2 && x.text === '跟注') &&
+      outA.some(x => x.seat === 3 && x.text === '加注 80'),
+      '#14-2 diffActLabels：跟注/加注推断正确（金额=到达注，口径与 actLabel 一致）');
+    const prevB = { bets: { 1: 40 }, folded: { 1: false }, allIn: {}, actionSeat: 1 };
+    const outB = pageCtx.diffActLabels(
+      prevB, [ { seat: 1, bet: 40, folded: true, allIn: false } ], 40);
+    ok(outB.length === 1 && outB[0].text === '弃牌' && outB[0].cls === 'act-f',
+      '#14-2 diffActLabels：弃牌（false→true 转移）正确');
+    const prevC = { bets: { 1: 60 }, folded: {}, allIn: {}, actionSeat: 1 };
+    const outC = pageCtx.diffActLabels(
+      prevC, [ { seat: 1, bet: 60, folded: false, allIn: true } ], 60);
+    ok(outC.length === 1 && outC[0].text === '全下' && outC[0].cls === 'act-a',
+      '#14-2 diffActLabels：全下（allIn 转移）正确');
   }
 
   /* C2/C3/C4 UI 批守卫（玩家审视 2026-10-17）：
