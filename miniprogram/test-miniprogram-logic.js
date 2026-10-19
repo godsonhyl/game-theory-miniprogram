@@ -4199,6 +4199,38 @@ while (guard++ < 400) {
       'startGame 权威端用本地 waitSeats 的 bot 补齐云端布局（防 hostState 滞后丢 bot）');
   }
 
+  /* ---------- SNG 本人未坐下直接开始 → 自动入座，准备就绪按钮可点（2026-10-18 修复回归） ----------
+   * 复现场景：SNG 等待室本人不点「坐下」，只加 2 个 bot → canStart 已满足（只看 occupied≥2），
+   * 直接「开始游戏」会开成「本人不在 game.players」的畸形局：mySeat 仍指向 game 里不存在的 0 号位，
+   * 就绪阶段 readyList 漏掉本人，「准备就绪」按钮看似可点、点了 myReady 不变、无提示。
+   * 修复：startGame 内本人未落座时自动占第一个空位入局（仅非好友房）。 */
+  pageCtx.onLoad({ mode: 'sng', level: 'advanced', max: '6' });
+  ok(dataStore.phase === 'waiting', 'SNG 进等待室');
+  pageCtx.addBot();
+  pageCtx.addBot();
+  ok(dataStore.waitSeats.filter(s => s.occupied).length === 2 &&
+      !dataStore.waitSeats.some(s => s.isMe),
+      'SNG 本人未坐下、加 2 bot：occupied=2 且无 me（开局只看 occupied≥2 故可开始）');
+  ok(dataStore.canStart === true, 'SNG 本人未坐下但 2 bot 已满足 canStart');
+  pageCtx.startGame();
+  ok(dataStore.phase === 'playing', 'SNG 直接开始进入牌桌');
+  ok(pageCtx.mySeat >= 0 && dataStore.waitSeats[pageCtx.mySeat] &&
+      dataStore.waitSeats[pageCtx.mySeat].isMe === true,
+      'SNG 本人未坐下时 startGame 自动入座（mySeat 指向真实在座座位，不再指向空位 0）');
+  pageCtx.enterReadyPhase();
+  ok(dataStore.readyPhase === true, 'SNG 进入就绪阶段');
+  ok(dataStore.readyList.filter(x => x.isMe).length === 1,
+      'SNG 就绪列表含本人（此前本人不在 game.players，readyList 漏掉本人 → 按钮点了无反应）');
+  const myReadyBefore = dataStore.myReady;
+  pageCtx.onReadyTap();
+  ok(dataStore.myReady === true && dataStore.myReady !== myReadyBefore,
+      'SNG 本人未坐下开局后，「准备就绪」按钮点击生效（myReady 变 true）');
+  // 结构守卫：锁死「本人未落座自动入座」修复存在（防回归）
+  const tableSrcSng = require('fs').readFileSync(
+    path.join(__dirname, 'pages', 'table', 'table.js'), 'utf8').replace(/\r/g, '');
+  ok(/if \(this\.mode !== 'friend' && !source\.some\(s => s\.isMe\)\)/.test(tableSrcSng),
+      'startGame 锁死「本人未落座则自动入座」（SNG 本人必在局内，防「准备就绪」按钮失效回归）');
+
   /* ---------- 输出 ---------- */
   console.log('\n' + '='.repeat(52));
   if (failures.length === 0) {

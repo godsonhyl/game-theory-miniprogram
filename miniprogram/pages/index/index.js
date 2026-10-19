@@ -643,7 +643,8 @@ Page({
       const kept = [];
       const stale = [];
       (rooms || []).forEach(r => {
-        if (auth.roomExpired(r, now)) stale.push(r.room_no);
+        // 僵尸清理只针对 active 房：ended 房（保留 7 天）不能在此被重置计时。
+        if (auth.roomExpired(r, now) && r.status === 'active') stale.push(r.room_no);
         else kept.push(r);
       });
       stale.forEach(no => {
@@ -658,6 +659,11 @@ Page({
           // 本地若有该房间的牌局快照，说明中途退出过，进入后可续局
           const snap = snapshot.load(r.room_no);
           const live = !!snap;
+          const ended = r.status === 'ended';
+          // ended 房：剩余天数 = expires_at - now（向上取整）。
+          const daysLeft = ended && r.expires_at
+            ? Math.max(0, Math.ceil((new Date(r.expires_at).getTime() - now) / 86400000))
+            : 0;
           return {
             roomNo: r.room_no,
             mode: r.mode,
@@ -665,8 +671,13 @@ Page({
             durationMin: r.duration_min || 0,
             durText: this.durText(r.duration_min),
             createdAt: r.created_at,
+            status: r.status,
+            ended: ended,
+            daysLeft: daysLeft,
             live: live,
-            liveText: live ? '继续第 ' + snap.handNo + ' 手' : '等待中'
+            liveText: ended ? ('复盘 · 剩 ' + daysLeft + ' 天')
+                            : (live ? '继续第 ' + snap.handNo + ' 手' : '等待中'),
+            enterLabel: ended ? '复盘' : (live ? '继续' : '进入')
           };
         })
       });
@@ -686,27 +697,33 @@ Page({
 
   onCloseRoom(e) {
     const room = e.currentTarget.dataset.room;
+    const ended = e.currentTarget.dataset.ended;
     if (!room) return;
+    // ended 房 = 彻底清除（连复盘一起删）；active 房 = 软关闭（有对战则保留 7 天）。
+    const purge = !!ended;
+    const modal = purge
+      ? { title: '清除房间', content: '房间 ' + room + ' 及其全部复盘将彻底删除，此操作不可恢复', confirmText: '清除' }
+      : { title: '删除房间', content: '房间 ' + room + ' 将被关闭。若已进行过对战，将保留 7 天供回看复盘，7 天后自动消失', confirmText: '删除' };
     wx.showModal({
-      title: '删除房间',
-      content: '房间 ' + room + ' 将被关闭并从列表移除，好友将无法再加入',
-      confirmText: '删除',
+      title: modal.title,
+      content: modal.content,
+      confirmText: modal.confirmText,
       cancelText: '取消',
       confirmColor: '#e5484d',
       success: res => {
         if (!res.confirm) return;
-        wx.showLoading({ title: '删除中…', mask: true });
-        auth.closeRoom(room)
-          .then(() => {
-            snapshot.clear(room);
-            wx.hideLoading();
-            wx.showToast({ title: '已删除', icon: 'success' });
-            this.loadMyRooms();
-          })
-          .catch(() => {
-            wx.hideLoading();
-            wx.showToast({ title: '删除失败，请重试', icon: 'none' });
-          });
+        wx.showLoading({ title: (purge ? '清除中…' : '删除中…'), mask: true });
+        const done = purge ? auth.purgeRoom(room) : auth.closeRoom(room);
+        done.then(r => {
+          snapshot.clear(room);
+          wx.hideLoading();
+          const kept = r && r.status === 'ended';
+          wx.showToast({ title: purge ? '已清除' : (kept ? '已结束，保留7天' : '已删除'), icon: 'success' });
+          this.loadMyRooms();
+        }).catch(() => {
+          wx.hideLoading();
+          wx.showToast({ title: (purge ? '清除' : '删除') + '失败，请重试', icon: 'none' });
+        });
       }
     });
   },
@@ -716,9 +733,11 @@ Page({
     const d = e.currentTarget.dataset;
     const room = d.room;
     if (!room) return;
-    // 带上房间创建时的人数与时长设置，保证续局沿用同一规则
+    // 带上房间创建时的人数与时长设置，保证续局沿用同一规则；ended 房带 ended=1
+    // 让 table 页直接跳复盘浏览（不跑引擎）。
+    const ended = d.ended ? '&ended=1' : '';
     const url = '/pages/table/table?room=' + room + '&own=1' +
-      '&max=' + (d.max || 6) + '&dur=' + (d.dur || 0);
+      '&max=' + (d.max || 6) + '&dur=' + (d.dur || 0) + ended;
     wx.navigateTo({ url });
   }
 });

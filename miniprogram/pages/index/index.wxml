@@ -114,18 +114,18 @@
   <view class="myrooms" wx:elif="{{myRooms.length}}">
     <view class="sec-head">
       <text class="sec-title">我的房间</text>
-      <text class="sec-count">{{myRooms.length}} 个进行中</text>
+      <text class="sec-count">{{myRooms.length}} 个房间</text>
     </view>
-    <view class="room-card" wx:for="{{myRooms}}" wx:key="roomNo"
+    <view class="room-card {{item.ended ? 'ended' : ''}}" wx:for="{{myRooms}}" wx:key="roomNo"
           bindtap="onEnterRoom" data-room="{{item.roomNo}}"
-          data-max="{{item.maxPlayers}}" data-dur="{{item.durationMin}}">
+          data-max="{{item.maxPlayers}}" data-dur="{{item.durationMin}}" data-ended="{{item.ended}}">
       <view class="room-ico ic ic-friend"></view>
       <view class="room-info">
-        <text class="room-no">房间 {{item.roomNo}}</text>
+        <text class="room-no">房间 {{item.roomNo}}{{item.ended ? ' · 已结束' : ''}}</text>
         <text class="room-meta">{{item.maxPlayers}} 人桌 · {{item.durText}} · {{item.liveText}}</text>
       </view>
-      <view class="room-del" catchtap="onCloseRoom" data-room="{{item.roomNo}}">删除</view>
-      <view class="room-enter">{{item.live ? '继续' : '进入'}} <text class="chev">›</text></view>
+      <view class="room-del" catchtap="onCloseRoom" data-room="{{item.roomNo}}" data-ended="{{item.ended}}">{{item.ended ? '清除' : '删除'}}</view>
+      <view class="room-enter">{{item.enterLabel}} <text class="chev">›</text></view>
     </view>
   </view>
 

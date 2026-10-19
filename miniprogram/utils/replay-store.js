@@ -14,9 +14,13 @@
 const KEY = 'poker_replay_cache';
 const MAX_REPLAYS = 20;
 
-/** 把一局引擎快照成可复盘记录（结算时调用）。失败静默返回 false。 */
-function addReplay(g, mySeat, mode) {
-  if (!g || !g.events || !g.events.length || !g.result) return false;
+/**
+ * 把一局引擎快照成可复盘 payload（结算时调用）。失败/无效返回 null。
+ * 本地缓存与云端落库共用这一份，保证两边复盘数据一致。
+ * @returns {object|null} 复盘对象（含 handNo/mySeat/sb/bb/players/board/myHole/result/events）
+ */
+function buildReplayPayload(g, mySeat, mode) {
+  if (!g || !g.events || !g.events.length || !g.result) return null;
   try {
     const rec = {
       handNo: g.handNo,
@@ -50,7 +54,7 @@ function addReplay(g, mySeat, mode) {
     for (let i = g.events.length - 1; i >= 0; i--) {
       if (g.events[i].type === 'hand_start') { lastStart = i; break; }
     }
-    if (lastStart < 0) return false;   // 没有 hand_start 的残局不可复盘
+    if (lastStart < 0) return null;   // 没有 hand_start 的残局不可复盘
     const evts = g.events.slice(lastStart).map(e => ({
       type: e.type,
       seq: e.seq,
@@ -66,11 +70,9 @@ function addReplay(g, mySeat, mode) {
 
     // 盲注补录：引擎的盲注在 startHand 内部 postBlind，不发事件——底池还原
     // 需要真实投入额（短码时 put = min(盲注, stack)，不能按 sb/bb 额度写死）。
-    // 用「本手 committed」做守恒校验不可行（跨手字段），直接从玩家 bet 归零后的
-    // committed 差额取不可靠；改为补录虚拟 action，金额 = min(盲注额, 当时筹码)。
     // 收割发生在结算后：各玩家 committed 已含盲注+动作，无法拆分——务实做法：
     // 按座位号从 hand_start 事件读 sb/bb 座位，金额按 rec.sb/rec.bb 与该座位
-    // 本手开始时筹码夹取。本手开始筹码 ≈ endStack + 本手总投入（committed）
+    // 本手开始时筹码夹取。
     const committedNow = {};
     g.players.forEach(p => { committedNow[p.seat] = p.committed; });
     const hs = evts[0];
@@ -89,7 +91,17 @@ function addReplay(g, mySeat, mode) {
     if (sbEvt) evts.splice(1, 0, sbEvt);
     if (bbEvt) evts.splice(sbEvt ? 2 : 1, 0, bbEvt);
     rec.events = evts;
+    return rec;
+  } catch (e) {
+    return null;
+  }
+}
 
+/** 把一局引擎快照成可复盘记录并写入本地缓存。失败静默返回 false。 */
+function addReplay(g, mySeat, mode) {
+  const rec = buildReplayPayload(g, mySeat, mode);
+  if (!rec) return false;
+  try {
     const list = listAll();
     list.push(rec);
     while (list.length > MAX_REPLAYS) list.shift();
@@ -126,4 +138,4 @@ function clear() {
   try { wx.removeStorageSync(KEY); } catch (e) {}
 }
 
-module.exports = { KEY, MAX_REPLAYS, addReplay, listAll, latest, findByDate, clear };
+module.exports = { KEY, MAX_REPLAYS, buildReplayPayload, addReplay, listAll, latest, findByDate, clear };

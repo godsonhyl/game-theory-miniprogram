@@ -487,6 +487,12 @@ Page({
     // 好友房的机器人沿用默认梯度（好友房 Bot 不该比真人强太多）
     this.level = ((this.mode === 'ai' || this.mode === 'sng') && opts.level) ? opts.level : 'advanced';
     this.roomNo = opts.room || '';
+    // 结束房入口（好友房「有对战」被关闭后 status='ended'）：进房不跑引擎，
+    // 直接跳复盘页按房间列出每局（满足「进房间看每一局复盘」）。
+    if (opts.ended === '1' && this.roomNo) {
+      wx.redirectTo({ url: '/pages/replay/replay?room=' + this.roomNo });
+      return;
+    }
     // own=1 表示从「我的房间」或创建流程进入（房主）；分享/输入房间号进入视为访客
     this.isOwner = this.mode === 'friend' ? opts.own === '1' : true;
     this.roomClosed = false;   // 每次进出页面重置：房间是否已被本页关闭
@@ -2364,6 +2370,23 @@ Page({
         });
         source = Object.keys(bySeat).map(k => bySeat[k])
           .sort((a, b) => Number(a.seat) - Number(b.seat));
+      }
+      // 本人（房主 / AI·SNG 本人）尚未落座时，自动占第一个空位入局——
+      // 否则会开成「自己观战 bot 互打」的畸形局：mePlayer 缺失使 mySeat 仍指向
+      // game 里不存在的座位，就绪阶段 readyList 不含我，「准备就绪」按钮看似可点
+      // 实则点了无反应（myReady 不变、无提示）。SNG 本就是本人参赛的淘汰赛，
+      // 不该出现「本人不在局内」的开局（2026-10-18 复现：repro-sng-noseat.js）。
+      // 好友房本人入座由云端 roomSync 保证，此处跳过。
+      if (this.mode !== 'friend' && !source.some(s => s.isMe)) {
+        const empty = source.find(s => !s.occupied);
+        if (empty) {
+          empty.occupied = true;
+          empty.isMe = true;
+          empty.isOwner = this.isOwner;
+          empty.name = this.meLabel(this.isOwner);
+          empty.stack = this.buyInStack[empty.seat] || DEFAULT_BUY_IN;
+          if (this.isOwner) { this.mySeat = empty.seat; this.roomSeat = empty.seat; }
+        }
       }
       let players = source.filter(s => s.occupied).map(toPlayer);
       // 兜底：云端布局异常（如 state 残留 playing 导致机器人丢失）→ 用本地布局重试
@@ -4859,6 +4882,15 @@ Page({
     // 全量；观战/中途退出价值低不缓存）。失败静默（体验优化，不阻断结算）。
     if (game && game.events && game.events.length && game.result && !this.remoteMode) {
       replayStore.addReplay(game, this.mySeat, this.data.mode);
+      // 云端落库复盘（仅好友房、权威端）：把本局逐街事件流存到 poker_hand_replays，
+      // 供「进房看每局复盘」。失败静默降级——复盘是体验增强，绝不懈怠结算主流程。
+      if (this.roomNo) {
+        const payload = replayStore.buildReplayPayload(game, this.mySeat, this.data.mode);
+        if (payload) {
+          auth.saveHandReplay(this.roomNo, game.handNo, payload).catch(e =>
+            console.error('[table] 复盘云端落库失败', JSON.stringify({ room: this.roomNo, hand: game.handNo, err: e && e.message })));
+        }
+      }
       // 高光时刻判定与存档：同样仅权威端（镜像端无 game.result.evals 全量）。
       // 判定规则在此处（store 层只存不判）——此时 game.result.evals/winners 已算完、
       // winStreaks 已被 renderAmbience 的 _bumpStreaks 更新（先于 showResultModal）、
