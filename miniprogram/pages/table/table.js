@@ -3319,6 +3319,12 @@ Page({
         const pp = pos[p.seat] || { x: 50, y: 20 };
         const isMe = p.seat === this.mySeat;
         const isWinner = !readyPhase && result && result.winners.indexOf(p.seat) !== -1;
+        // C3（玩家审视 2026-10-17）：赢家座位同时亮出牌型名——原先只有
+        // 结算弹窗里有，桌面中央几秒内根本看不出「他拿什么赢的」。
+        // 只在摊牌结算（showdownReveal 有该座位）时显示：fold 结算不亮牌
+        // （muck 礼仪），拿不到牌型名也不显示空壳。
+        const winnerReveal = isWinner && game.showdownReveal ? game.showdownReveal[p.seat] : null;
+        const typeName = (winnerReveal && winnerReveal.name) ? winnerReveal.name : '';
         const name = p.name || '玩家';
         // 就绪徽章数据：true=已准备 / false=准备中 / null=不显示（非就绪阶段或不在就绪名单）
         const rEntry = readyLs.filter(x => Number(x.seat) === Number(p.seat))[0];
@@ -3400,6 +3406,8 @@ Page({
           win: !!isWinner,
           // 摊牌后赢家座位直接飘出赢得的筹码数（WPK 式结算反馈）
           winGain: isWinner ? result.awards.filter(a => a.seat === p.seat).reduce((s, a) => s + a.amount, 0) : 0,
+          // C3：赢家座位同帧亮牌型名（source: showdownReveal，fold 结算为空）
+          typeName: typeName,
           timer: !readyPhase && game.actionSeat === p.seat ? tick : '',
           timerPct: !readyPhase && game.actionSeat === p.seat ? Math.round(tick / tickMax * 100) : 0,
           // 最后 5s 计时环转红脉冲（仅当前行动座位，与我回合 actbar.urgent 同阈值）
@@ -3503,6 +3511,21 @@ Page({
         raiseSubmit = Math.max(legal.minRaiseTo, Math.round(raiseTo || 0));
         raiseAllIn = raiseSubmit >= legal.maxRaiseTo;
       }
+      // C2（玩家审视 2026-10-17）：加注按钮动词按街内是否有注区分——
+      // 无人下过注（toCall===0）时是「下注 X」而非「加注到 X」（翻后首位
+      // 开池说「加注」是错误术语）。派生输入 legal.toCall 已随 legal 进指纹。
+      const raiseVerb = (isMyTurn && legal && legal.canRaise && legal.toCall === 0)
+        ? '下注' : '加注';
+      // C4（玩家审视 2026-10-17）：池比展示——跟注 X مقابل 池比 1:Z。
+      // Z = (pot + toCall) / toCall（含我补齐后的总池），纯算术、不含任何
+      // 建议/胜率成分，合规上等同展示底池数字。保留 1 位小数（2.5 这类
+      // 中间值对跟注/弃牌边线判断有信息量）。只在有注可跟时显示。
+      let potOddsText = '';
+      if (isMyTurn && legal && legal.toCall > 0) {
+        const pot = game.potTotal();
+        const z = (pot + legal.toCall) / legal.toCall;
+        potOddsText = '跟注 ' + legal.toCall + ' · 池比 1:' + (z >= 10 ? Math.round(z) : +z.toFixed(1));
+      }
 
       const curPlayer = game.actionSeat >= 0 ? game.seatOf(game.actionSeat) : null;
 
@@ -3528,6 +3551,8 @@ Page({
         raisePreset: wasReset ? 'min' : this.data.raisePreset,
         raiseSubmit,
         raiseAllIn,
+        raiseVerb,
+        potOddsText,
         isMyTurn,
         // 非我回合时自动解除弃牌确认态（下一手/对手行动后不再误触发）
         foldConfirm: isMyTurn ? this.data.foldConfirm : false,
@@ -5254,7 +5279,9 @@ Page({
     if (d.action === 'check') return '过牌';
     if (d.action === 'call') return '跟注';
     if (d.action === 'allin') return '全下';
-    return '加注 ' + d.amount;
+    // C2：街内无人下过注 →「下注」（翻后首位开池说加注是错误术语）。
+    // d.currentBet 是决策快照里的街内最高注（scheduleAI 透传），0 即首个下注。
+    return ((d.currentBet | 0) === 0 ? '下注 ' : '加注 ') + d.amount;
   },
 
   actClsOf(action) {

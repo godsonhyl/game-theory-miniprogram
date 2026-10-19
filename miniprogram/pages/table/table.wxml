@@ -121,8 +121,9 @@
           <text class="badge style" wx:if="{{item.styleTag}}">{{item.styleTag}}</text>
         </view>
 
-        <!-- 摊牌后：赢家座位直接飘出赢得的筹码 -->
+        <!-- 摊牌后：赢家座位直接飘出赢得的筹码数 + C3 牌型名（一眼看出拿什么赢的） -->
         <view class="seat-win" wx:if="{{item.win && item.winGain}}">🏆 +{{item.winGain}}</view>
+        <view class="seat-typename" wx:if="{{item.win && item.typeName}}">{{item.typeName}}</view>
 
         <!-- 对手底牌：摊牌时亮出；未摊牌且未弃牌时显示两张小牌背（仍在手） -->
         <view class="seat-cards show" wx:if="{{item.showCards}}">
@@ -316,13 +317,16 @@
            开局后凑人只走真人路径——好友通过邀请卡片 / 房间号进来点空位坐下
            （waiting 选座、joinMidGame 中途加入）。加 bot 只在等待室。 -->
       <!-- 行动条：三个大按钮，间距拉大避免误触；最后 5s 整条紧迫脉冲提示 -->
+      <!-- C2：加注动词按街内是否有注区分（raiseVerb：下注/加注，render 派生） -->
+      <!-- C4：有注可跟时上方一行池比（纯算术展示，与跟注按钮同源 toCall） -->
+      <view class="pot-odds" wx:if="{{isMyTurn && potOddsText}}">{{potOddsText}}</view>
       <view class="actbar {{myTimerUrgent ? 'urgent' : ''}}">
         <button class="ab ab-fold {{foldConfirm ? 'confirm' : ''}}" bindtap="onFold" disabled="{{!isMyTurn}}">{{foldConfirm ? '再点弃牌' : '弃牌'}}</button>
         <button class="ab ab-call" bindtap="onCheckOrCall" disabled="{{!isMyTurn}}">
           {{legal.toCall > 0 ? ('跟注 ' + legal.toCall) : '过牌'}}
         </button>
         <button class="ab ab-raise" bindtap="onRaise" disabled="{{!isMyTurn || !legal.canRaise}}">
-          {{raiseAllIn ? '全下' : (raiseSubmit ? ('加注 ' + raiseSubmit) : '加注')}}
+          {{raiseAllIn ? '全下' : (raiseSubmit ? (raiseVerb + ' ' + raiseSubmit) : raiseVerb)}}
         </button>
       </view>
     </view>

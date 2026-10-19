@@ -1323,6 +1323,7 @@ while (guard++ < 400) {
     guardTimerNoResidue(tableSrc);
     guardTimerMaxUnified(tableSrc);
     guardUxBatch1(tableSrc, wxssSrc);
+    guardUxBatch2(tableSrc, wxmlSrc);
   }
 
   /* ---------- 边池归属显示（玩家审视 2026-10-17）---------- */
@@ -2781,6 +2782,26 @@ while (guard++ < 400) {
       'C5 飞出/收池动画落点都走 POT_ANCHOR（不再硬编码 50,32）');
     ok(/top: 22%/.test(wxssSrc) && /POT_ANCHOR\.y 同步/.test(tableSrc + wxssSrc),
       'C5 .pot-row top:22% 与 wxss 注释标明与 POT_ANCHOR.y 同步');
+  }
+
+  /* C2/C3/C4 UI 批守卫（玩家审视 2026-10-17）：
+   * C2 —— 加注动词按下注/加注分场景；C3 —— 桌面赢家牌型名；C4 —— 行动条池比。 */
+  function guardUxBatch2(tableSrc, wxmlSrc) {
+    ok(/const raiseVerb = \(isMyTurn && legal && legal\.canRaise && legal\.toCall === 0\)/.test(tableSrc) &&
+      /raiseVerb \+ ' ' \+ raiseSubmit/.test(wxmlSrc),
+      'C2 raiseVerb 派生（toCall===0→下注）且按钮文案用 raiseVerb');
+    ok(/d\.currentBet \| 0\) === 0 \? '下注 ' : '加注 '/.test(tableSrc),
+      'C2 actLabel 按 currentBet 区分下注/加注（AI 气泡同口径）');
+    ok(/const winnerReveal = isWinner && game\.showdownReveal/.test(tableSrc) &&
+      /typeName: typeName/.test(tableSrc),
+      'C3 座位卡派生 typeName（showdownReveal，fold 结算为空不显示）');
+    ok(/seat-typename/.test(wxmlSrc) && /item\.typeName/.test(wxmlSrc),
+      'C3 WXML 赢家座位渲染牌型名节点');
+    ok(/potOddsText = '跟注 ' \+ legal\.toCall \+ ' · 池比 1:'/.test(tableSrc) &&
+      /pot-odds/.test(wxmlSrc),
+      'C4 行动条上方池比行（跟注 X · 池比 1:Z，纯算术展示）');
+    ok(/\(pot \+ legal\.toCall\) \/ legal\.toCall/.test(tableSrc),
+      'C4 池比公式 = 补齐后总池 / 跟注额');
   }
 
   /* 边池归属 + 非摊牌赢池自愿亮牌（玩家审视 2026-10-17）：
