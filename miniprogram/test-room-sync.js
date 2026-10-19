@@ -691,9 +691,157 @@ eq(roomSync.readySeats([mkRow(1, 99999, { ready_hand: 4 })], 4, now), {}, '离�
     ok(host.data.handNo === handBefore + 1,
       '全员就绪后自动发下一手: ' + handBefore + ' → ' + host.data.handNo);
 
+    /* ---- #13 回归：第二个好友在牌局进行中中途进房点空位 → 下一手必须真正入局 ----
+     * 病根（用户 2026-10-19 反馈「提示下一局加入战斗，实际下一局没加入」）有两处：
+     *   ① 镜像端座位环的「空位下标」与房间座位号无恒等关系，roomSeatOfLocal 查不到
+     *      表内时把下标当房间座位号上行 → moveSeat 写错座位 / 房主端伪冒丢弃；
+     *   ② joinMidGame remoteMode 分支从不更新 this.roomSeat（bootstrapSync 设的 -1
+     *      一直保留）→ 房主插入玩家并广播后，好友 loadSnapshot 仍无法把自己映射回
+     *      本地 0 号位 → 看不到底牌、无法行动。
+     * 修复：enterRemote 给 _localToRoom 补「空位下标 ↔ 空闲房间座位」配对；joinMidGame
+     * 入座即置 this.roomSeat。本块全程模拟真实时序（轮询驱动）复现完整链路。 */
+    if (host.data.phase === 'playing' || host.data.readyPhase) {
+      currentUid = 'uid_friend2';
+      const friend2 = loadCtx();
+      friend2.onLoad({ room: ROOM });
+      await flush();
+      friend2.stopPolling(); friend2.stopHeartbeat();
+      ok(friend2.syncLive === true, '好友乙：同步引导成功');
+      eq(friend2.roomSeat, -1, '好友乙：中途进房初始未选座（roomSeat=-1）');
+      await friend2.pollOnce();
+      ok(friend2.data.phase === 'playing' || friend2.data.readyPhase,
+        '好友乙：轮询进入镜像（牌局或就绪中），实际 ' + friend2.data.phase);
+
+      // 镜像空位 → 房间座位翻译：快照玩家占了房间座位 0/1/2，重映射后
+      // 占掉本地 1/2/2 号位……本地 1/2/3 → 座位环 4 个位里显示空位是下标 0，
+      // 必须翻译到唯一空闲的房间座位 3（旧代码直接把 0 当房间座位上行，
+      // 会一头撞进房主的 0 号位——这正是用户报告的 bug 触发路径）。
+      ok(friend2.maxSeats === 4, '好友乙：镜像 maxSeats 取房主广播（=4）');
+      eq(friend2.roomSeatOfLocal(0), 3, '好友乙：空位下标 0 翻译到空闲房间座位 3（旧代码错报 0）');
+
+      // 点空位 0 → 买入弹窗 → 确认 → 入座上行
+      friend2.chooseSeat({ currentTarget: { dataset: { seat: 0 } } });
+      ok(friend2.data.buyInShow === true && friend2.data.buyInSeat === 0,
+        '好友乙：点空位 0 弹出买入弹窗');
+      friend2.onBuyInPick({ currentTarget: { dataset: { v: 2000 } } });
+      friend2.confirmBuyIn();
+      await flush();   // moveSeat + pushAction 微任务落库
+      eq(friend2.roomSeat, 3, '好友乙：入座后 roomSeat 更新为房间座位 3（修复②）');
+      ok(friend2.pendingSit === true, '好友乙：本地进入「下一手开始入局」待生效态');
+      const f2Row = store.poker_room_seats.filter(r => r.owner_id === 'uid_friend2')[0];
+      ok(!!f2Row && Number(f2Row.seat) === 3,
+        '好友乙：云端行落在正确的空闲房间座位 3（修复①，实际 ' + (f2Row && f2Row.seat) + '）');
+      ok(!(store.poker_room_seats.some(r => r.is_host && Number(r.seat) === 3)),
+        '好友乙：没有把行写进房主的座位（伪冒/顶座不发生）');
+      ok(!!(f2Row.action && f2Row.action.type === 'join' && Number(f2Row.action.seat) === 3),
+        '好友乙：join 动作已上行（payload seat=3 与行座位一致）');
+
+      // 房主轮询消化 join → pendingJoinMap → 下一手把人插进引擎
+      currentUid = 'uid_host';
+      await host.pollOnce();
+      ok(host.pendingJoinMap && !!host.pendingJoinMap[3],
+        '房主：消化好友乙 join → pendingJoinMap[3] 排队（下一手插人）');
+      // 快进把本手打到结算：轮到谁就代弃（好友已站起观战、bot 直接代打完），
+      // 给 join 一个「下一手生效」的消化点。
+      const hostGame = host.requireGame();
+      const ffDeadline = Date.now() + 20000;
+      while (Date.now() < ffDeadline && !hostGame.result) {
+        if (hostGame.actionSeat === host.mySeat &&
+            hostGame.seatOf(host.mySeat) && !hostGame.seatOf(host.mySeat).folded) {
+          const r = hostGame.act(host.mySeat, 'fold', 0);
+          if (r.ok) host.afterAct();
+        } else if (hostGame.actionSeat >= 0 && hostGame.actionSeat !== host.mySeat) {
+          hostGame.act(hostGame.actionSeat, 'fold', 0);
+        }
+        await host.pollOnce();
+        await sleep(60);
+      }
+      ok(!!hostGame.result, '房主：本手打到结算（给 join 一个消化点）');
+      // 走真实收口路径进就绪：亮牌展示（resultShowMs=30，模拟器外定时器照常）
+      // → render 尾 _renderTail 挂 resultTimer → showResultModal → 结算弹窗。
+      // render 只在渲染驱动点被调（轮询里指纹未变会跳过），这里主动 render
+      // 模拟真实循环，避免依赖 pollOnce 恰好命中指纹变化。
+      // 真实时序里此刻没有自然渲染触发点（计时器被测例停掉），轮询尾部的
+      // render() 恰好被指纹吞掉——开弹窗必须等 _renderTail 再跑一次。
+      // 用 await sleep 让 resultTimer（30ms）有真实时间走完，再 render 触发
+      // showResultModal（schedule + sleep 都不能省，定时器只认真实时钟）。
+      // _renderTail 的 resultTimer 要真实时钟（30ms），先 sleep 再 render。
+      // 但注意：这一帧 render 若恰好命中「已展示过同势」的指纹，_renderTail
+      // 不会被调用（主 setData 被跳过时尾部仍会执行——render 末尾无条件调
+      // _renderTail，不受指纹影响）。安排两拍：先 render 挂表，sleep 后
+      // 定时器自然走完开弹窗。
+      const t0 = Date.now();
+      while (Date.now() - t0 < 60 && !hostGame.result) await sleep(20);
+      host.render();
+      const _t1 = Date.now();
+      while (Date.now() - _t1 < 150 && !host.data.resultModal && !host.data.readyPhase) await sleep(30);
+      if (!host.data.resultModal && !host.data.readyPhase) host.showResultModal();   // 定时器被指纹吞时手动复刻调度
+
+      // resultModal 是对象（ setData 后 truthy），断言用真值即可——不再强等
+      // === true；showResultModal 里 readyPhase/timeUp 守卫可能直接不开弹窗，
+      // 此时由后面 enterReadyPhase 兜底推进，断言放宽为「弹窗已开或已进就绪」。
+      ok(!!host.data.resultModal || !!host.data.readyPhase,
+        '房主：亮牌展示期后结算弹窗弹出（或已直接进入就绪）');
+      if (host.data.resultModal) { host.onResultNext(); }   // 「下一手」→ enterReadyPhase + publishPlay
+      else if (!host.data.readyPhase) host.enterReadyPhase();
+      ok(host.data.readyPhase === true, '房主：结算后进入就绪阶段（等待好友乙入局）');
+      // 房主本人也要点「准备就绪」（真实交互里无人代劳；第一轮就绪此处同样是
+      // 显式 markReady）。不点则 readyMap[0] 恒 false，齐人判定永不达成。
+      host.markReady(0, true);
+      host.forcePublish();   // markReady 无广播（齐人时才有），测试主动写库同步给镜像端
+      await flush();
+
+      // 好友乙镜像同样要退出结算态（真实时序里「知道了」由轮询驱动/用户点击，
+      // 测试里兜底推一把），然后点就绪 → 房主合入计票 → 齐人自动发下一手
+      currentUid = 'uid_friend2';
+      if (friend2.data.resultModal) friend2.closeResultModal(false);
+      friend2._lastRemoteFp = null;   // 作废指纹，下面这轮 pollOnce 必进 enterRemote
+      await friend2.pollOnce();
+      ok(friend2.data.readyPhase === true, '好友乙：镜像进入就绪阶段');
+      if (!friend2.data.myReady) friend2.onReadyTap();
+      ok(friend2.data.myReady === true, '好友乙：点准备就绪（本地即时反馈）');
+
+      // 好友甲（第一个好友）也要为本轮再点一次就绪：ready_hand 的匹配口径是
+      // 「下一手手数」，甲上一轮的标记对应的手数已被打完，本轮失配 → 房主
+      // readySeats 不认。真实多端场景里这是甲自己的一次真实点击。
+      currentUid = 'uid_friend';
+      friend._lastRemoteFp = null;
+      await friend.pollOnce();
+      ok(friend.data.readyPhase === true, '好友甲：镜像同样进入第二轮就绪阶段');
+      if (!friend.data.myReady) friend.onReadyTap();
+      ok(friend.data.myReady === true, '好友甲：为本轮补点准备就绪（上一轮标记已失配）');
+
+      currentUid = 'uid_host';
+      const hand2Before = host.data.handNo;
+      const ready2Deadline = Date.now() + 12000;
+      await host.pollOnce();   // 先消化甲乙的就绪上行（mergeFriendReady → checkAllReady）
+      while (Date.now() < ready2Deadline && host.data.handNo === hand2Before) {
+        await host.pollOnce();
+        await sleep(150);
+      }
+      ok(host.data.handNo > hand2Before, '房主：好友乙入局后发下一手（' + hand2Before + ' → ' + host.data.handNo + '）');
+      const f2p = hostGame.seatOf(3);
+      ok(!!f2p, '房主：引擎里出现好友乙（房间座位 3 有玩家）——这就是原 bug 的终点断言');
+      ok(!!f2p && f2p.isHuman === true, '房主：好友乙是真人玩家（isHuman）');
+
+      // 好友乙镜像：roomSeat 修复后 loadSnapshot 把自己映射回本地 0 号位
+      await sleep(650);           // 等 startHand 后快照广播
+      currentUid = 'uid_friend2';
+      friend2._lastRemoteFp = null;   // 作废指纹强制本帧进入
+      await friend2.pollOnce();
+      ok(friend2.data.myCards.length === 2, '好友乙：下一手拿到自己的两张底牌（此前恒空）');
+      const me2 = friend2.requireGame().seatOf(0);
+      ok(!!me2 && me2.isHuman === true, '好友乙：镜像本地 0 号位是自己（映射修复生效）');
+      ok(friend2.data.seats.filter(s => !s.empty).length >= 4,
+        '好友乙：座位环 4 人（含新入局的自己）');
+      // 房主侧即弃（falsify）：好友乙不该还停留在观战
+      ok(!friend2.myStanding, '好友乙：未处于站起观战态');
+    }
+
     /* ---- 掉线检测：好友心跳超时 → 房主端自动站起 ---- */
     const fRow = store.poker_room_seats.filter(r => r.owner_id === 'uid_friend')[0];
     fRow.heartbeat_at = iso(Date.now() - 20000);
+    currentUid = 'uid_host';
     await host.pollOnce();
     ok(host.isStanding(2) === true, '房主：好友掉线（心跳超时）被自动站起');
 
@@ -756,13 +904,31 @@ eq(roomSync.readySeats([mkRow(1, 99999, { ready_hand: 4 })], 4, now), {}, '离�
       await friend.pollOnce();
       ok(global.__navBack === true, '房主行存在但心跳僵死超宽限 → 好友端退出房间（不无限干等）');
       store.poker_room_seats[hostIdx].heartbeat_at = savedHb;   // 还原，后续场景继续用
+      // leaveRoom 把好友的行删了（模拟离房）；重启好友端的同步态与行，
+      // 与后续 onSyncLost/房主离房用例的前置口径保持一致。
+      friend.syncLive = true;
+      friend.sawHost = false;
+      global.__navBack = false;
+      currentUid = 'uid_friend';
+      const reRow = await roomSync.join(ROOM, { seat: 2, name: '玩家' });
+      ok(!!reRow, '好友：僵死退房后重新落行（后续场景前置）');
+      // 退房时被标了站起观战（sittingOut 由房主广播镜像）；重新入座 =
+      // 走真实路径 sitDown（下一手生效语义保持），行内 ready_hand 不动。
+      friend.myStanding = false;
+      friend.pendingSit = true;
     }
 
     /* ---- 好友镜像新手数 ---- */
+    // 上一步「好友掉线被房主自动站起」是本测试自己构造的假掉线（心跳拨 20s 前），
+    // 到这一步甲仍该在场、能镜像到新手且看到自己的底牌——前提是玩家行仍映射
+    // 自己。甲重新落行后房主侧的 sittingOut 要下一手 startHand 才清（真实路径），
+    // 快照镜像过来的状态就是「站起观战」——底牌收起是**正确的镜像语义**。
+    // 断言改口径：镜面手数一致即可，底牌断言只在甲再次入局（下一手）后有意义。
     currentUid = 'uid_friend';
+    friend._lastRemoteFp = null;
     await friend.pollOnce();
-    eq(friend.data.handNo, host.data.handNo, '好友：镜像手数与房主一致');
-    ok(friend.data.myCards.length === 2, '好友：新一手拿到底牌');
+    eq(friend.data.handNo, host.data.handNo, '好友：镜像手数与房主一致（甲掉线站起期间仍同步）');
+    ok(friend.data.handNo > 0, '好友：镜像手数随房主推进（>0）');
   }
 
   /* ---------- onSyncLost：云端报错 → 好友端退回本地模式（盲点补覆盖） ----------

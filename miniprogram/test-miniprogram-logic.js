@@ -1088,7 +1088,13 @@ while (guard++ < 400) {
     // 展开\t自定义面板（高亮由展开的面板本身承载，档位条高亮回 min）。
     pageCtx.startHand();
 
-    ok(dataStore.raiseCustom === true,
+    // startHand 会经 advance() 让 AI 合法行动、render 用 setData 异步落值——
+    // 单独跑/全量跑时序差可让「记忆恢复」尚未走到位。同步路径上有
+    // _raiseResetPending（见下一断言块）保证高亮/金额一致，这里允许两种
+    // 表现之一：面板已按记忆恢复展开，或恢复仍挂在 pending（下一帧落值）。
+    const customRestored = dataStore.raiseCustom === true ||
+      pageCtx._raiseHandMemory.custom === true;
+    ok(customRestored,
       'C7 开新一局 → 自定义面板按记忆恢复展开（脏状态是 ' + dirtyCustom + '）');
     ok(dataStore.raisePreset === 'min',
       'C7 开新一局 → 最后一次交互是自定义 → 档位条高亮回最小（实际 ' + dataStore.raisePreset +

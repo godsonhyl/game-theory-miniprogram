@@ -1348,6 +1348,12 @@ Page({
     this.buyInStack[seat] = buyIn;
     if (this.remoteMode) {
       const roomSeat = this.roomSeatOfLocal(seat);
+      // #13 修复（2026-10-19）：入座成功必须更新 this.roomSeat——此前它一直是
+      // bootstrapSync 设的 -1（观战），导致后续 loadSnapshot 永远无法把自己
+      // 映射回本地 0 号位（me0 不存在 → 看不到底牌、无法行动），用户所见即
+      // 「提示下一手入局，实际下一手没加入」。乐观置位：上行链失败时已有
+      // syncFailToast 提示重试，重试会走同一分支再次置位，无需回滚。
+      this.roomSeat = roomSeat;
       // 先占云端的房间座位，再上行加入动作——两条串在一条链上，
       // 任一步失败都统一提示（上行失败必须让用户看见，不能静默吞掉）
       roomSync.moveSeat(this.roomNo, roomSeat, buyIn)
@@ -1897,6 +1903,21 @@ Page({
     // 房主端按房间座位记账，传本地号会被当成座位伪冒直接丢弃。
     this._localToRoom = {};
     Object.keys(remapS).forEach(r => { this._localToRoom[remapS[r]] = Number(r); });
+    // 空位也要进逆映射（#13 修复 2026-10-19）：座位环按「原始下标 0..maxSeats-1」
+    // 铺满空位，这些下标与房间座位号没有任何恒等关系——中途加入的好友点空位时，
+    // joinMidGame 拿它查 roomSeatOfLocal，表内查不到就会退回「下标当座位号」，
+    // moveSeat 把自己的行写去错误的房间座位（占座冲突 / 房主端伪冒丢弃 / 插错位）。
+    // 配对规则：未占的显示下标升序 ↔ 未被快照玩家占用的房间座位升序，逐一配对。
+    const occupiedRoom = {};
+    Object.keys(remapS).forEach(r => { occupiedRoom[Number(r)] = true; });
+    const freeRoomSeats = [];
+    for (let rs = 0; rs < this.maxSeats; rs++) if (!occupiedRoom[rs]) freeRoomSeats.push(rs);
+    const takenLocal = {};
+    Object.keys(this._localToRoom).forEach(l => { takenLocal[Number(l)] = true; });
+    let freeIdx = 0;
+    for (let ls = 0; ls < this.maxSeats && freeIdx < freeRoomSeats.length; ls++) {
+      if (!takenLocal[ls]) this._localToRoom[ls] = freeRoomSeats[freeIdx++];
+    }
     const list = (st.readyList || [])
       .map(x => Object.assign({}, x, { seat: remapS[Number(x.seat)] !== undefined ? remapS[Number(x.seat)] : -1 }))
       .filter(x => x.seat >= 0);
@@ -5244,7 +5265,7 @@ Page({
       roomSync.markReadyRow(this.roomNo, nextHand)
         .catch(() => this.syncFailToast('准备未同步成功，请重试'));
       const list = (this.data.readyList || []).map(x =>
-        Number(x.seat) === Number(this.roomSeat) ? Object.assign({}, x, { ready: true }) : x);
+        Number(x.seat) === Number(this.mySeat) ? Object.assign({}, x, { ready: true }) : x);
       this.setData({ myReady: true, readyList: list });
       return;
     }
