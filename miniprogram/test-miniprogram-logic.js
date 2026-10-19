@@ -3012,18 +3012,50 @@ while (guard++ < 400) {
        * 修法：按锚点 y 派发 bub-top，位置改到块内顶部（块顶 4.2% 之上放不下，
        * 会顶出桌沿 0.91%——试过不行）。 */
       {
-        ok(/bubbleCls: \(isMe \? 'bub-me' : \(\(\+pp\.y < 20\) \? 'bub-top' : 'bub-in'\)\)/.test(tableSrc),
-          '★ 座位按锚点 y 派发 bubbleCls（y<20% 视为顶排，用 bub-top）');
+        /* bubbleCls 判据必须是【纵向越界 且 横向相交】双条件。
+         * 这里记录我推错的两轮，避免后人重蹈：
+         *   ① 用 y<20 判「顶排」→ 半圆上所有对手 y 都在 15%~19.4%，
+         *     全桌都被判成 bub-top，头像全被压（实测）。
+         *   ② 只看块底是否越底池上沿 → 所有座位块底都在 28.2%~30.6%，
+         *     低于底池上沿 31.2%，于是又全判进去。
+         * 真正的核心变量是 **x**：底池是居中的窄条，左右两侧座位虽然纵向
+         * 也落在底池带里，但横向根本不重叠，朝下完全没问题。
+         * 实测结果：4 人桌只有 x=50 那 1 个、8 人桌 x=36/50/64 共 3 个需要改。 */
+        ok(/Math\.abs\(\(\+pp\.x\) - POT_ANCHOR\.x\) < \(POT_SAFE_HALF_W \+ ACT_BUBBLE_HALF_W\)/.test(tableSrc),
+          '★ bubbleCls 判据含横向相交条件（|x−底池中心x| < 底池半宽+气泡半宽）——' +
+          '只看 y 或只看块底都会把全桌判进去');
+        ok(/\(\+pp\.y\) \+ \(allSeats\.length >= 7 \? SEAT_H_PX_UH_TIGHT : SEAT_H_PX_UH\) \/ 2\s*\+ ACT_BUBBLE_DROP_UH\) > \(POT_ANCHOR\.y - POT_PILL_H \/ 2\)/.test(tableSrc),
+          '★ bubbleCls 判据含纵向越界条件（块底+气泡落深 > 底池上沿）');
+        ok(/const ACT_BUBBLE_DROP_UH = 5\.1/.test(tableSrc) &&
+           /const POT_SAFE_HALF_W = 11/.test(tableSrc),
+          '气泡落深 / 底池保守半宽为具名常量（不散落魔数，改样式时可同步）');
         ok(/class="act-bubble \{\{item\.bubbleCls\}\} \{\{item\.actCls\}\}"/.test(wxmlSrc),
           'WXML 行动气泡同时带 bubbleCls（落位）与 actCls（动作配色），两者职责不混');
         ok(/\.act-bubble\.bub-top \{[\s\S]{0,200}?bottom: auto;[\s\S]{0,80}?top: calc\(0\.3 \* var\(--uh\)\)/.test(wxssSrc),
           '★ .act-bubble.bub-top 移到块内顶部（bottom:auto + top:0.3uh），不再落进底池带');
+        /* 顶排气泡不得设 z-index（2026-10-19 评审自查）。
+         * 初版曾给 .bub-top 加 z-index:7 想"压过底池"——错了两层：
+         *   ① .seat(z:3)+transform 建层叠上下文，座位内 z-index 再大也越不过
+         *      .pot-row(z:5)，写它是无效的；
+         *   ② .avatar 是 position:relative 但不建独立上下文，.dealer（庄家 D
+         *      徽章，top -1.4~3.4uh）与气泡同层排序 —— z-index:7 会盖住庄家
+         *      徽章，而庄家位置是重要信息。默认 z-index:4 已足够盖住首字母。
+         * 故：既不该有，也必须有守卫钉住「不该有」。 */
+        const bubTopRule = (wxssSrc.match(/\.act-bubble\.bub-top \{[^}]*\}/) || [''])[0];
+        ok(bubTopRule.indexOf('z-index') < 0,
+          '★ .act-bubble.bub-top 不设 z-index（既压不过 .pot-row，又会盖住庄家 D 徽章）');
         // 位置必须落在块内顶部，且明确低于底池上沿——防止后人「优化」成向上浮
         const bubTopPct = 17.4 - 26.4 / 2 + 0.3;          // 顶排块顶 + 0.3uh
         const bubBotPct = bubTopPct + (2.6 * 1.35 + 0.25 * 2 + 0.1);
         ok(bubTopPct >= 0 && bubBotPct <= 31.2,
           '顶排气泡区间 ' + bubTopPct.toFixed(2) + '%~' + bubBotPct.toFixed(2) +
           '% 在牌桌内且在底池上沿 31.2% 之上');
+        /* 边池字号层级：主文字必须严格大于归属文字（金额 > 名单）。
+         * 本轮主文字 2.6→2.2 后，若 .sp-elig 仍留 2.2 就同号，层级彻底消失。 */
+        const spMain = Number((wxssSrc.match(/\.side-pot \{[^}]*?font-size: calc\(([\d.]+) \* var\(--uh\)\)/) || [0, 0])[1]);
+        const spElig = Number((wxssSrc.match(/\.sp-elig \{[^}]*?font-size: calc\(([\d.]+) \* var\(--uh\)\)/) || [0, 0])[1]);
+        ok(spMain > 0 && spElig > 0 && spMain > spElig,
+          '边池主文字字号 ' + spMain + 'uh > 归属文字 ' + spElig + 'uh（保留金额/名单的视觉层级）');
       }
       // 下注胶囊落位（2026-10-19 二次修复）：我的座位浮在块上方（默认 bottom:100%），
       // 对手浮在块底内侧（bet-in：top:100%−4.8uh）——顶排若也向上浮会顶出桌沿被裁掉。
