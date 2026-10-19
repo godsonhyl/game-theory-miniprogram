@@ -41,7 +41,8 @@
 
     <!-- 底池 + 边池（仅游戏中）：WPK 式中央筹码堆，带「底池」标签 -->
     <view class="pot-row" wx:if="{{phase === 'playing'}}">
-      <view class="pot-pill {{pot > 0 ? 'live' : ''}}">
+      <!-- potPulse：换街归池瞬间胶囊弹一下（#14 批三），与归池飞行配套给「底池为何变大」一个因果画面 -->
+      <view class="pot-pill {{pot > 0 ? 'live' : ''}} {{potPulse ? 'pulse' : ''}}">
         <view class="pot-chip"></view>
         <text class="pot-label">底池</text>
         <text class="pot-amount">{{pot}}</text>

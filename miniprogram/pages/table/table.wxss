@@ -764,11 +764,20 @@
   0%, 100% { box-shadow: 0 0 calc(2 * var(--uh)) rgba(232,163,61,.18); }
   50%      { box-shadow: 0 0 calc(4 * var(--uh)) rgba(232,163,61,.38); }
 }
+/* #14 批三：换街归池脉冲——底池数字跳大瞬间胶囊弹一下，与归池筹码飞行
+   配套（「桌面注码滑进底池」的画面因果）。只动 transform（重排红线）。 */
+.pot-pill.pulse { animation: potPop .45s cubic-bezier(.2,.9,.3,1.3) both; }
+@keyframes potPop {
+  0%   { transform: scale(1); }
+  45%  { transform: scale(1.1); }
+  100% { transform: scale(1); }
+}
 .no-anim .card,
 .no-anim .felt-glow,
 .no-anim .seat.active .avatar,
 .no-anim .seat-bet,
 .no-anim .pot-pill.live { animation: none !important; }
+.no-anim .pot-pill.pulse { animation: none; }
 
 /* ---------- 弹层：规则 / 结算 ---------- */
 .help-mask {

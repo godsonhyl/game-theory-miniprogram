@@ -286,6 +286,8 @@ const BIG_HAND_MIN = 4;   // HAND.STRAIGHT——引擎牌型枚举：0高牌…4
 const WIN_STREAK_MIN = 2;
 /** 高光存档「连胜」门槛：连续赢 ≥5 手入档（独立于 WIN_STREAK_MIN 的 2 手显示门槛）。 */
 const HIGHLIGHT_STREAK = 5;
+/** 底池脉冲驻留（毫秒）：换街归池时底池胶囊弹一下的时长上限（#14 批三，renderAmbience 清场）。 */
+const POT_PULSE_MS = 600;
 
 /** 牌型名 → 引擎枚举（BIG_HAND_MIN 门槛用；evals 里存的是中文名）。 */
 const HAND_NAME_TO_CAT = {
@@ -454,6 +456,7 @@ Page({
     spark: null,           // 大牌星光粒子 [{x, y, d, s, key}]（null = 不播）
     flyOut: [],            // 下注筹码飞行：座位 → 底池 [{x, y, dx, dy, delay, key}]
     flyIn: [],             // 收池筹码飞行：底池 → 赢家 [{x, y, tx, ty, delay, key}]
+    potPulse: false,       // #14 批三：换街归池时底池胶囊脉冲（到期由 renderAmbience 清场）
     streaks: {},           // 座位 → 连胜徽章文案（'' = 不显示，如 '🔥 x2'）
     winFx: '',             // 本手赢家座位列表（逗号串，wxml 给座位加金光脉冲 class）
     // 批⑥：对手画像角色卡（长按头像弹出）——独立 modal toggle，不进三道脏检查指纹
@@ -3924,6 +3927,19 @@ Page({
         });
       }
 
+      // ---- ①' 归池飞行 + 底池脉冲：换街帧触发（#14 批三）----
+      // 引擎 collectBets 把各家 bet 清零归池的瞬间，旧体验是座位注额胶囊
+      // 集体凭空消失、底池数字跳大，玩家看不懂「钱去哪了」。这里对上一帧
+      // 还在桌上的每份 bet 再放一波 fly-out 到 POT_ANCHOR——「桌面注码滑进
+      // 底池」的因果画面，底池胶囊同时脉冲一下呼应数字跳变。弃牌者的注
+      // 也归池，全飞（座位灰显下飞出的暗淡筹码反而真实）。与 ① 分工：
+      // ① 是下注即时反馈（筹码推到面前），①' 是收注入池结算（真桌隐喻）。
+      if (prev && prev.handNo === now.handNo && prev.street !== now.street && this.data.animOn) {
+        prev.bets.forEach(b => { if (b.bet > 0) this._spawnFlyOut(b.seat, now.pot); });
+        this.setData({ potPulse: true });
+        this.potPulseBorn = Date.now();
+      }
+
       // ---- ② 收池筹码飞行：底池 → 赢家 + 金光脉冲（结算瞬间触发）----
       if (this.data.animOn && result_fresh) {
         const winners = now.result ? now.result.winners || [] : [];
@@ -3952,6 +3968,8 @@ Page({
       // 收池飞行到位后清场
       if (this.data.flyIn.length && Date.now() - this.flyInBorn > 1600) this.setData({ flyIn: [] });
       if (this.data.flyOut.length && Date.now() - this.flyOutBorn > 1200) this.setData({ flyOut: [] });
+      // 底池脉冲到期清场（#14 批三，同 flyOutBorn 清场模式）
+      if (this.data.potPulse && Date.now() - this.potPulseBorn > POT_PULSE_MS) this.setData({ potPulse: false });
     } catch (e) { /* 氛围异常绝不影响牌局（与音效同口径静默） */ }
     // 下一帧的基线在本 render 主体开头已由 _snapBaseline 刷新
   },

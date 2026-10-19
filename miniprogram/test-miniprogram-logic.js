@@ -1347,6 +1347,12 @@ while (guard++ < 400) {
     assertActTextDerived(pageCtx, dataStore);
   }
 
+  /* ---------- #14 批三：换街归池飞行 + 底池脉冲（过程有因果）---------- */
+  {
+    guardPotMergeFx(tableSrc, wxmlSrc, wxssSrc);
+    assertPotMergeFx(pageCtx, dataStore);
+  }
+
   /* ---------- 边池归属显示（玩家审视 2026-10-17）---------- */
   {
     guardSidePotElig(tableSrc, wxmlSrc, wxssSrc);
@@ -2941,6 +2947,62 @@ while (guard++ < 400) {
       prevC, [ { seat: 1, bet: 60, folded: false, allIn: true } ], 60);
     ok(outC.length === 1 && outC[0].text === '全下' && outC[0].cls === 'act-a',
       '#14-2 diffActLabels：全下（allIn 转移）正确');
+  }
+
+  /* #14 批三守卫：换街归池的因果呈现。旧体验是引擎 collectBets 清注归池的
+   * 瞬间——座位注额胶囊集体凭空消失、底池数字跳大，玩家看不懂钱去哪了。
+   * 归池飞行复用既有 _spawnFlyOut（POT_ANCHOR 同源）；底池胶囊脉冲只动
+   * transform（重排红线）；no-anim 兜底与既有 keyframes 清单同口径。 */
+  function guardPotMergeFx(tableSrc, wxmlSrc, wxssSrc) {
+    ok(/prev\.handNo === now\.handNo && prev\.street !== now\.street && this\.data\.animOn/.test(tableSrc),
+      '#14-3 换街帧触发归池飞行（collectBets 的视觉因果）');
+    ok(/prev\.bets\.forEach\(b => \{ if \(b\.bet > 0\) this\._spawnFlyOut\(b\.seat, now\.pot\); \}\)/.test(tableSrc),
+      '#14-3 归池飞行复用 _spawnFlyOut（落点 POT_ANCHOR 同源，弃牌者的注也飞）');
+    ok(/potPulse: false,/.test(tableSrc) &&
+      /Date\.now\(\) - this\.potPulseBorn > POT_PULSE_MS/.test(tableSrc) &&
+      /POT_PULSE_MS = 600/.test(tableSrc),
+      '#14-3 potPulse 状态声明 + POT_PULSE_MS 到期清场（同 flyOutBorn 模式）');
+    ok(/potPulse \? 'pulse' : ''/.test(wxmlSrc),
+      '#14-3 WXML 底池胶囊 pulse 类（单层三元，与 live 类同构）');
+    const popBlock = (wxssSrc.match(/@keyframes potPop \{[\s\S]*?\n\}/) || [''])[0];
+    ok(/transform:/.test(popBlock) && !/top:|left:|width|height/.test(popBlock),
+      '#14-3 potPop 关键帧只动 transform（重排红线）');
+    ok(/\.no-anim \.pot-pill\.pulse \{ animation: none; \}/.test(wxssSrc),
+      '#14-3 关动画兜底禁用池脉冲（与 .no-anim keyframes 清单同口径）');
+  }
+
+  /* #14 批三行为级：换街帧归池飞行 + 脉冲落值；关动画时不触发。 */
+  function assertPotMergeFx(pageCtx, dataStore) {
+    const g = pageCtx.requireGame();
+    if (!g || pageCtx.data.phase !== 'playing') return;   // 非对局态跳过（不误伤时序）
+    // 构造换街帧：基线停在当前街且有桌上注，推进 street 后 renderAmbience 应触发
+    const betsOnTable = (g.players || []).some(p => p.bet > 0);
+    // 前段设置面板断言把 animOn 关掉后未复原（历史如此），这里临时开回来再还原，
+    // 不动前段口径
+    const savedAnim = pageCtx.data.animOn;
+    pageCtx.setData({ animOn: true });
+    try {
+    pageCtx.render();   // 刷新 _base 基线到当前态
+    const savedStreet = g.street;
+    const nextStreet = { preflop: 'flop', flop: 'turn', turn: 'river' }[savedStreet];
+    if (nextStreet) {
+      g.street = nextStreet;
+      const flyBefore = (pageCtx.data.flyOut || []).length;
+      pageCtx._prevBase = Object.assign({}, pageCtx._base, { street: savedStreet });
+      pageCtx._snapBaseline();
+      pageCtx.renderAmbience();
+      const grew = (pageCtx.data.flyOut || []).length > flyBefore;
+      ok(grew || !betsOnTable,
+        '#14-3 换街帧归池飞行触发（桌上有注时应增长；桌上无注允许不增）');
+      if (betsOnTable) {
+        ok(pageCtx.data.potPulse === true, '#14-3 换街帧底池脉冲置位');
+      }
+      g.street = savedStreet;
+      pageCtx.setData({ potPulse: false });
+    }
+    } finally {
+      pageCtx.setData({ animOn: savedAnim });
+    }
   }
 
   /* C2/C3/C4 UI 批守卫（玩家审视 2026-10-17）：
