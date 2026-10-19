@@ -1082,6 +1082,12 @@
   white-space: nowrap; flex-shrink: 0;
 }
 .seat.empty:active .sit-btn { transform: scale(.95); }
+/* C9（玩家审视 2026-10-17）：进行中的空位胶囊降透明——满桌打牌时空位按钮
+ * 与真人座位同权重抢焦点、干扰读牌。dim 只降 .sit-btn 的可见度（不动
+ * .avatar 虚线框：座位格本身仍可见，知道「这桌还能坐人」）。
+ * ⚠️ cls 的 dim 只在「!readyPhase && !result」时拼上（table.js render 座位环），
+ * 等待室/局间不降透——填桌是那时的主任务。opacity 属合成层属性，无重排。 */
+.seat.empty.dim .sit-btn { opacity: .45; }
 
 /* 等待室底部：房间信息 + 房主操作条 */
 .wait-info {

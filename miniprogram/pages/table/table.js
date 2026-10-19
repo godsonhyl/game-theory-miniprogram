@@ -163,8 +163,11 @@ const READY_TIMEOUT_SEC = 30;
  * 手感调优（2026-10-17）：8s → 3s。单机两手间隔（结算 3s + 代点 8s 一度
  * 合计 13s）是节奏拖沓首因；3s 代点 + 就绪条「继续 ▶」手动快进双保险，
  * 想停的玩家随时站起，赶节奏的玩家零等待。
+ * 手感调优（2026-10-17 二调）：3s → 2s。3s 仍被反馈拖沓——结算亮牌 3s +
+ * 代点 3s 合计 6s；代点窗口本身没有信息量（无倒计时、无提示），压到 2s
+ * 只保留「结算刚看完想喘口气」的最小间隙。30s 硬超时口径继续不动。
  */
-const READY_AUTO_SEC = 3;
+const READY_AUTO_SEC = 2;
 
 /**
  * 结算展示时序（毫秒）：一手结束（摊牌亮牌）后，先在牌桌上停留亮牌
@@ -553,6 +556,9 @@ Page({
     const s = settings.get();
     // B3：补筹弹窗在本手是否已询问/已补过——防每手结算重复弹窗骚扰
     this._rebuyAskedHand = -1;
+    // C7：加注档位会话记忆（preset 键 + 自定义面板展开偏好）。setRaiseTo 写入、
+    // render 重置帧恢复（校验当前街档位表，失效回 'min'）。纯实例字段不进指纹。
+    this._raiseHandMemory = { preset: 'min', custom: false };
     // AI 桌无限练习：true = 旧行为每手自动补满；false（默认）= 真枪实弹，我输光即本桌结束。
     // 放 this （实例字段）而非 data：参与 startHand 守卫与 render 指纹，属页面级常量而非渲染态。
     this.aiUnlimited = !!s.aiUnlimited;
@@ -3315,7 +3321,15 @@ Page({
       const pos = ringPositions(allSeats, this.mySeat);
       const seats = allSeats.map(si => {
         const p = game.seatOf(si);
-        if (!p) return emptySeat(si, pos[si] || { x: 50, y: 20 }, true);
+        if (!p) {
+          // C9（玩家审视 2026-10-17）：进行中的空位胶囊降透明——满桌打牌时
+          // 空位的「入座」按钮与真人座位同权重抢焦点，干扰读牌。等待室
+          // （未开局）不降透：拉人是等待室的主任务，按钮必须显眼。
+          // readyPhase（局间等待）同样不降透：填桌就在这时发生。
+          const es = emptySeat(si, pos[si] || { x: 50, y: 20 }, true);
+          if (!readyPhase && !result) es.cls += ' dim';
+          return es;
+        }
         const pp = pos[p.seat] || { x: 50, y: 20 };
         const isMe = p.seat === this.mySeat;
         const isWinner = !readyPhase && result && result.winners.indexOf(p.seat) !== -1;
@@ -3447,6 +3461,9 @@ Page({
       const isMyTurn = game.actionSeat === this.mySeat && !result && !standing;
       let legal = null;
       let raiseTo = 0;
+      // C7：自定义面板的恢复意图（null = 无恢复，走原有收起/保留逻辑）。
+      // 必须与 legal 同期声明——恢复判断要读 legal.canRaise。
+      let raiseCustomLocal = null;
       // 跨手重置的触发条件 = 「手数前进」，而不是「走过 startHand()」。
       // ⚠️ 曾经只挂在 startHand() 上，结果好友房复发「一直高亮上一局的」：
       // 镜像端根本不走 startHand()——enterRemote() 直接 loadSnapshot 房主快照
@@ -3485,6 +3502,24 @@ Page({
             : (this.data.raiseTo >= legal.minRaiseTo ? this.data.raiseTo : legal.minRaiseTo);
         }
       }
+      // C7（玩家审视 2026-10-17）：档位会话记忆恢复。
+      // 每手/每街重置帧把高亮恢复成「玩家上一手惯用的档位」（而不是一刀切回
+      // 最小），连续打牌少一次点击。只记 preset 键不记金额——金额随新一手
+      // pot/stack 语义全变，记金额必错；键恢复时由『最小额 + 档位口径』当场重算。
+      // 恢复前校验该档在当前街的档位表内（翻前 BB 档与翻后比例档键不同，
+      // 跨手跨街恢复可能失效 → 回退最小档自洽）。自定义面板的展开记忆
+      // （custom）只在玩家真的用自定义口径提交过时恢复。
+      const streetPresets = this.presetsForStreet(game ? game.street : P.STREET.PREFLOP);
+      const memPreset = (this._raiseHandMemory && this._raiseHandMemory.preset) || 'min';
+      const memCustom = !!(this._raiseHandMemory && this._raiseHandMemory.custom);
+      const presetRestore = wasReset
+        ? (streetPresets.some(x => x.k === memPreset) && memPreset !== 'custom' ? memPreset : 'min')
+        : this.data.raisePreset;
+      if (wasReset && memCustom && streetPresets.some(x => x.k === 'custom') && legal && legal.canRaise) {
+        // 恢复自定义面板展开 + 金额对齐最小额（原 onCustomTap 的「展开即对齐」口径）
+        raiseCustomLocal = true;
+        raiseTo = legal.minRaiseTo;
+      }
       // 自定义下注面板的上下限：MAX = 全下金额（raiseTo 可达上限），最小值由合法下注决定
       const raiseMin = (isMyTurn && legal) ? legal.minRaiseTo : 0;
       const raiseMax = (isMyTurn && legal) ? legal.maxRaiseTo : 0;
@@ -3499,9 +3534,14 @@ Page({
         : 0;
       // 非我回合 / 不可加注时收起自定义面板，避免残留数值误导。
       // 每手首帧额外强制收起：上一手展开的面板不得跨手残留（好友房镜像端同理）。
-      const raiseCustom = wasReset
-        ? false
-        : (isMyTurn && legal && legal.canRaise ? this.data.raiseCustom : false);
+      // ⚠️ C7：C7 的自定义面板恢复优先于这里的收起（玩家惯用自定义口径时
+      // 下一手应回到面板，而不是每次都被收掉）；两者都在同一帧写入 setData，
+      // 不产生中间态。
+      const raiseCustom = raiseCustomLocal !== null
+        ? raiseCustomLocal
+        : (wasReset
+            ? false
+            : (isMyTurn && legal && legal.canRaise ? this.data.raiseCustom : false));
       // 实际会提交的加注额（与 onRaise 钳制同口径，仅用于按钮文案）：
       // 数字输入框能填出低于下限的值，而失焦补正未必先触发；到达上限则等价全下。
       // ⚠️ 读 raiseTo（上面算好的局部量）而非 this.data.raiseTo：每手重置帧
@@ -3511,6 +3551,19 @@ Page({
         raiseSubmit = Math.max(legal.minRaiseTo, Math.round(raiseTo || 0));
         raiseAllIn = raiseSubmit >= legal.maxRaiseTo;
       }
+      // C7 金额口径自洽：记忆档位不是『最小』时，本帧金额按该档口径当场重算
+      // （presetTarget 只依赖 legal/pot/currentBet，重置帧全部就绪），
+      // 否则会出现「高亮 2.5BB + 金额最小额」的新矛盾态——档位高亮与金额
+      // 必须同帧同源。presetTarget 返回 null（档非法）则回落最小，不动高亮。
+      if (wasReset && isMyTurn && legal && legal.canRaise && presetRestore !== 'min') {
+        const t = this.presetTarget(presetRestore);
+        if (t !== null) {
+          raiseTo = t;
+          raiseSubmit = Math.max(legal.minRaiseTo, t);
+          raiseAllIn = raiseSubmit >= legal.maxRaiseTo;
+        } else { presetRestore = 'min'; }
+      }
+      const presetFinal = presetRestore;
       // C2（玩家审视 2026-10-17）：加注按钮动词按街内是否有注区分——
       // 无人下过注（toCall===0）时是「下注 X」而非「加注到 X」（翻后首位
       // 开池说「加注」是错误术语）。派生输入 legal.toCall 已随 legal 进指纹。
@@ -3548,7 +3601,9 @@ Page({
         raisePresets: this.presetsForStreet(game.street),
         // 档位高亮与金额必须同帧写入同一个 setData：分两次写会出现
         //「高亮已回『最小』但金额还是上一手」的中间态被渲染出来。
-        raisePreset: wasReset ? 'min' : this.data.raisePreset,
+        // C7：重置帧恢复会话记忆档（校验通过时），非重置帧保持原值；
+        // presetTarget 兜底失败回落最小也反映在这一帧。
+        raisePreset: presetFinal,
         raiseSubmit,
         raiseAllIn,
         raiseVerb,
@@ -4539,6 +4594,18 @@ Page({
     const submit = min ? Math.max(min, v) : v;
     const patch = { raiseTo: v, raiseSubmit: submit, raiseAllIn: !!(max && submit >= max) };
     if (preset !== undefined) patch.raisePreset = preset;
+    // C7（玩家审视 2026-10-17）：玩家主动选的档位记进会话记忆，下一手轮到我时
+    // 高亮直接回到该档（见 resetRaiseState/render 的 C7 段）。只记 preset 键，
+    // 不记金额——金额语义（pot/stack 尺度）随新手牌全变，记金额必错。
+    // onCustomTap 展开面板传 'custom'，恰好同时完成「custom=true」的记忆。
+    if (preset !== undefined && preset !== 'custom') {
+      this._raiseHandMemory = {
+        preset: preset,
+        custom: (this._raiseHandMemory && this._raiseHandMemory.custom) || false
+      };
+    } else if (preset === 'custom') {
+      this._raiseHandMemory = { preset: 'custom', custom: true };
+    }
     this.setData(patch);
     return patch;
   },
@@ -4559,9 +4626,20 @@ Page({
    * resetRaiseState() 之后紧接着的 render() 同帧读 this.data 拿到的还是
    * 上一手旧值 —— 只 setData 会造成「高亮已重置为最小，金额却还是上一手的」。
    * render() 用这个实例字段做一次覆盖，读写都在同步路径上，绕开 setData 时序。
+   *
+   * C7（玩家审视 2026-10-17）：档位选择做会话记忆——玩家点过的档位键记进
+   * `this._raiseHandMemory = { preset, custom }`（setRaiseTo 写入，见其注释），
+   * resetRaiseState 只做保底归一（尚未点过任何档位时回 'min'/false）。
+   * render 的重置帧读该记忆恢复高亮与金额（见 render 内 C7 段）——本方法的
+   * setData 'min' 是旧值的兜底，恢复逻辑以 render 为单一来源，二者不冲突。
    */
   resetRaiseState() {
     this._raiseResetPending = true;
+    // C7：记忆字段保底归一（首次游玩尚未点过任何档位时才落默认值）。
+    this._raiseHandMemory = {
+      preset: (this._raiseHandMemory && this._raiseHandMemory.preset) || 'min',
+      custom: (this._raiseHandMemory && this._raiseHandMemory.custom) || false
+    };
     this.setData({
       raisePreset: 'min',
       raiseTo: 0,
@@ -5251,10 +5329,9 @@ Page({
         const idx = game.players.filter(p => p.seat !== this.mySeat).findIndex(p => p.seat === seat);
         if (idx < 0) { this.afterAct(); return; }
         this.setData({
-          ['seats[' + idx + '].actText']: this.actLabel(d),
+          ['seats[' + idx + '].actText']: this.actLabel(d, game.currentBet),
           ['seats[' + idx + '].actCls']: this.actClsOf(d.action)
         }, () => this.afterAct());
-
         // AI 聊天冒泡：角色触发率（话痨高 / 寡言低），诈唬时按马脚调整。
         // 诈唬话多掩饰（bluffTalkBoost）或诈唬必沉默（bluffSilent）。
         const thisBluff = /诈唬/.test(d.reason || '');
@@ -5274,14 +5351,19 @@ Page({
     }, delay);
   },
 
-  actLabel(d) {
+  /**
+   * AI 动作气泡文案。raise 之外的动作文案与金额无关，直接查表。
+   * C2：街内无人下过注 →「下注」（翻后首位开池说加注是错误术语）。
+   * ⚠️ 第二参 currentBet 必传（街内最高注，0 即首个下注）：
+   * aiDecide 的返回对象只有 {action,amount,reason}，不带 ctx 透传字段，
+   * 从返回值读 currentBet 恒为 undefined、文案会错标成「下注」。
+   */
+  actLabel(d, currentBet) {
     if (d.action === 'fold') return '弃牌';
     if (d.action === 'check') return '过牌';
     if (d.action === 'call') return '跟注';
     if (d.action === 'allin') return '全下';
-    // C2：街内无人下过注 →「下注」（翻后首位开池说加注是错误术语）。
-    // d.currentBet 是决策快照里的街内最高注（scheduleAI 透传），0 即首个下注。
-    return ((d.currentBet | 0) === 0 ? '下注 ' : '加注 ') + d.amount;
+    return ((currentBet | 0) === 0 ? '下注 ' : '加注 ') + d.amount;
   },
 
   actClsOf(action) {

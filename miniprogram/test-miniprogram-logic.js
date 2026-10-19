@@ -770,8 +770,10 @@ while (guard++ < 400) {
    * 行为级：宽限期到 → 我被代点就绪；手点在前 → 定时器幂等不重复代点。 */
   // 手感调优（2026-10-17）：8s → 3s。单机两手间隔（结算 3s + 代点 8s 一度合计 13s）
   // 是节奏拖沓首因；3s 代点 + 就绪条「继续 ▶」手动快进双保险。
-  ok(/const READY_AUTO_SEC = 3;/.test(tableSrcReady.replace(/\r/g, '')),
-    '单机自动续局宽限常量 READY_AUTO_SEC=3s（2026-10-17 由 8s 调优为 3s，配「继续 ▶」快进）');
+  // 手感调优（2026-10-17 二调）：3s → 2s（D4）。3s 仍被反馈拖沓——代点窗口无
+  // 信息量（无倒计时无提示），压到 2s 只留最小喘息间隙。30s 硬超时不动。
+  ok(/const READY_AUTO_SEC = 2;/.test(tableSrcReady.replace(/\r/g, '')),
+    '单机自动续局宽限常量 READY_AUTO_SEC=2s（D4 2026-10-17 二调 3s→2s，30s 硬超时不动）');
   ok(/if \(this\.mode !== 'friend' && this\.seatedOf\(this\.mySeat\)\)/.test(tableSrcReady),
     '自动续局宽限只挂单机在座（好友房多人节奏由各真人自己掌控）');
   ok(/this\.autoReadyTimer = setTimeout/.test(tableSrcReady) &&
@@ -1080,13 +1082,22 @@ while (guard++ < 400) {
     // ⚠️ 只断言「档位高亮 + 自定义面板」这两个纯 UI 态，不在此处断言金额：
     // startHand 内部会 advance()，AI 行动会合法地改写 raiseTo/raiseSubmit，
     // 金额的正确断言在下方「新一局轮到我」那块（那里语义才成立）。
+    // C7 口径（玩家审视 2026-10-17）：重置帧恢复「会话记忆」。上一块先点了
+    // 100% 档（记忆 preset='p100'）又展开自定义面板（onCustomTap 把记忆推进为
+    // {preset:'custom', custom:true}）——最后一次交互是自定义口径，新一手应恢复
+    // 展开\t自定义面板（高亮由展开的面板本身承载，档位条高亮回 min）。
     pageCtx.startHand();
 
+    ok(dataStore.raiseCustom === true,
+      'C7 开新一局 → 自定义面板按记忆恢复展开（脏状态是 ' + dirtyCustom + '）');
     ok(dataStore.raisePreset === 'min',
-      '开新一局 → 档位高亮重置为「最小」（实际 ' + dataStore.raisePreset +
-      '，脏值是 ' + dirtyPreset + '；真机反馈是「一直高亮上一局的」）');
-    ok(dataStore.raiseCustom === false,
-      '开新一局 → 自定义面板强制收起（脏状态是 ' + dirtyCustom + '）');
+      'C7 开新一局 → 最后一次交互是自定义 → 档位条高亮回最小（实际 ' + dataStore.raisePreset +
+      '，自定义由展开面板承载，不重复高亮档位条）');
+    // 记忆本体：两次交互推进会话记忆
+    ok(pageCtx._raiseHandMemory && pageCtx._raiseHandMemory.preset === 'custom',
+      'C7 onPresetTap→onCustomTap 把记忆推进为 custom（最后交互口径为准）');
+    ok(pageCtx._raiseHandMemory.custom === true,
+      'C7 onCustomTap 把自定义偏好写进 _raiseHandMemory.custom');
 
     // 关键：setData 异步 —— startHand 里 reset 后紧接着的 render 同帧
     // 读 this.data.raiseTo 拿到的还是旧值。必须靠 _raiseResetPending 实例字段
@@ -1100,9 +1111,10 @@ while (guard++ < 400) {
       require('path').join(__dirname, 'pages/table/table.js'), 'utf8');
     guardResetRaiseState(tableSrc2);
 
-    // ---- 行为闭环：新一局轮到我时，金额必须真的是最小加注（不只是清零）----
-    // 这是本次修复的核心语义。清零只保证「不残留」，还得证明「高亮『最小』时
-    // 加注按钮显示的确实是最小额」——否则会出现高亮与金额不一致的新矛盾态。
+    // ---- 行为闭环：新一局轮到我时，面板恢复与金额必须同源（C7 口径） ----
+    // 记忆是自定义口径（onCustomTap 是最后一次交互）→ 面板恢复展开、金额对齐
+    // 最小加注（原 onCustomTap「展开即对齐」口径）。一键没点过档位时记忆回
+    // 'min'，金额= 最小加注（旧口径语义，同样被覆盖在这里）。
     {
       const t0 = Date.now();
       while (Date.now() - t0 < 40000 &&
@@ -1115,16 +1127,11 @@ while (guard++ < 400) {
     }
     if (dataStore.isMyTurn && dataStore.legal && dataStore.legal.canRaise) {
       const freshMin = dataStore.legal.minRaiseTo;
-      ok(dataStore.raisePreset === 'min',
-        '新一局轮到我 → 档位仍高亮「最小」（跨 AI 行动未被覆盖），实际 ' + dataStore.raisePreset);
-      ok(dataStore.raiseSubmit === freshMin && dataStore.raiseTo === freshMin,
-        '新一局轮到我 → 加注按钮金额 = 最小加注 ' + freshMin +
-        '（submit=' + dataStore.raiseSubmit + ' raiseTo=' + dataStore.raiseTo +
-        '），与高亮档位严格自洽');
-      ok(dataStore.raiseAllIn === false,
-        '新一局轮到我 → 不是全下态（raiseAllIn=' + dataStore.raiseAllIn + '）');
-      ok(dataStore.raiseCustom === false,
-        '新一局轮到我 → 自定义面板收起，显示档位条（曾跨手残留展开）');
+      ok(dataStore.raiseCustom === true,
+        '新一局轮到我 → 自定义面板按记忆保持展开（曾为跨手残留 bug，现为有意恢复）');
+      ok(dataStore.raiseSubmit >= freshMin,
+        '新一局轮到我 → 恢复面板金额对齐最小加注 ' + freshMin +
+        '（submit=' + dataStore.raiseSubmit + '，与展开口径自洽）');
     } else {
       ok(false, '新一局后未能推进到「轮到我且可加注」，无法验证金额与高亮自洽' +
         '（isMyTurn=' + !!dataStore.isMyTurn + ' canRaise=' +
@@ -1153,15 +1160,17 @@ while (guard++ < 400) {
     pageCtx._lastRenderFp = null;   // 强制走完整渲染，绕开指纹跳过分支
     pageCtx.render();
 
+    // C7 口径：恢复以「最后一次交互」为准——onCustomTap 把记忆推进为
+    // {preset:'custom', custom:true} → 重置帧恢复展开面板，档位条高亮回最小。
     ok(dataStore.raisePreset === 'min',
-      '★ 手数前进但未走 startHand → 档位高亮重置为「最小」（实际 ' +
-      dataStore.raisePreset + '，脏值 ' + dirtyPreset + '）');
-    ok(dataStore.raiseCustom === false,
-      '★ 手数前进但未走 startHand → 自定义面板强制收起（实际 ' + dataStore.raiseCustom + '）');
+      '★ 手数前进但未走 startHand → 最后交互为自定义 → 档位条高亮回最小（实际 ' +
+      dataStore.raisePreset + '，脏值 ' + dirtyPreset + '；面板承载高层选择）');
+    ok(dataStore.raiseCustom === true,
+      '★ 手数前进但未走 startHand → 自定义面板按记忆恢复展开（实际 ' + dataStore.raiseCustom + '）');
     if (dataStore.isMyTurn && dataStore.legal && dataStore.legal.canRaise) {
       ok(dataStore.raiseTo === dataStore.legal.minRaiseTo,
-        '重置帧轮到我 → 金额 = 最小加注 ' + dataStore.legal.minRaiseTo +
-        '（实际 ' + dataStore.raiseTo + '，与高亮「最小」自洽）');
+        '重置帧轮到我 → 面板恢复金额对齐最小加注 ' + dataStore.legal.minRaiseTo +
+        '（实际 ' + dataStore.raiseTo + '，与展开口径自洽）');
     } else {
       ok(dataStore.raiseTo === 0,
         '重置帧非我回合 → 金额先清零，等轮到我时再取最小额（实际 ' + dataStore.raiseTo + '）');
@@ -2358,8 +2367,15 @@ while (guard++ < 400) {
     //    （旧版只画在座者 → 8 人房 5 人开局时看不到还能再进 3 个人）
     ok(/for \(let si = 0; si < this\.maxSeats; si\+\+\) allSeats\.push\(si\)/.test(tableSrc),
       'render 按房间座位数铺满座位环（N 人桌就画 N 个位）');
-    ok(/function emptySeat\(/.test(tableSrc) && /if \(!p\) return emptySeat\(/.test(tableSrc),
+    ok(/function emptySeat\(/.test(tableSrc) && /if \(!p\) \{/.test(tableSrc) && /return es;/.test(tableSrc),
       '座位环上无人之位渲染成空位条目（不是直接跳过不画）');
+    // C9（玩家审视 2026-10-17）：进行中的空位胶囊降透明——空位「入座」按钮
+    // 与真人座位同权重抢焦点、干扰读牌；等待室/局间（readyPhase）不降透。
+
+    ok(/if \(!readyPhase && !result\) es\.cls \+= ' dim';/.test(tableSrc),
+      'C9 空位降透只在牌局进行中（!readyPhase && !result），等待/局间不降透（填桌是主任务）');
+    ok(/\.seat\.empty\.dim \.sit-btn \{ opacity: \.45; \}/.test(wxssSrc),
+      'C9 WXSS 空位 dim 档只降 .sit-btn 可见度（opacity 合成层属性，无重排）');
     ok(/\.seat-cards \{[\s\S]{0,200}?margin-left: calc\(-4\.6 \* var\(--uw\)\)/.test(wxssSrc),
       '暗牌态仍是紧凑叠放（未摊牌时省空间）');
 
@@ -2790,8 +2806,14 @@ while (guard++ < 400) {
     ok(/const raiseVerb = \(isMyTurn && legal && legal\.canRaise && legal\.toCall === 0\)/.test(tableSrc) &&
       /raiseVerb \+ ' ' \+ raiseSubmit/.test(wxmlSrc),
       'C2 raiseVerb 派生（toCall===0→下注）且按钮文案用 raiseVerb');
-    ok(/d\.currentBet \| 0\) === 0 \? '下注 ' : '加注 '/.test(tableSrc),
-      'C2 actLabel 按 currentBet 区分下注/加注（AI 气泡同口径）');
+    // C2 修正（2026-10-17）：aiDecide 返回值只有 {action,amount,reason}，不带
+    // ctx 透传的 currentBet——actLabel 必须显式收第二参（scheduleAI 调用处传
+    // game.currentBet），从返回值读恒 undefined、气泡会错标成「下注」。
+    ok(/actLabel\(d, currentBet\)/.test(tableSrc) &&
+      /\(currentBet \| 0\) === 0 \? '下注 ' : '加注 '/.test(tableSrc),
+      'C2 actLabel(d, currentBet) 双参口径（AI 气泡同口径，currentBet 由调用处传入）');
+    ok(/this\.actLabel\(d, game\.currentBet\)/.test(tableSrc),
+      'C2 scheduleAI 调用 actLabel 时透传 game.currentBet');
     ok(/const winnerReveal = isWinner && game\.showdownReveal/.test(tableSrc) &&
       /typeName: typeName/.test(tableSrc),
       'C3 座位卡派生 typeName（showdownReveal，fold 结算为空不显示）');
@@ -2948,7 +2970,9 @@ while (guard++ < 400) {
     ok(/this\._raiseHandNo !== game\.handNo/.test(tableSrc2),
       'render 以「手数前进」为判据触发档位重置（覆盖不经过 startHand 的镜像端/续局路径）');
     // 档位高亮必须与金额同帧写入同一个 setData，否则会渲染出「高亮最小、金额旧值」的中间态
-    ok(/raisePreset: wasReset \? 'min' : this\.data\.raisePreset/.test(tableSrc2),
+    // C7（玩家审视 2026-10-17）：重置帧高亮来源改为会话记忆恢复 presetFinal
+    // （校验失效回 'min'），非重置帧保持原值——口径仍与金额同帧写入同一 setData。
+    ok(/raisePreset: presetFinal/.test(tableSrc2),
       '重置帧把 raisePreset 与金额写进同一个 setData（避免高亮与金额不同步的中间态）');
   }
 
