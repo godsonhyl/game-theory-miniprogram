@@ -735,7 +735,14 @@
       // 故叠加 stackPressure = toCall / stack（0.04 → 无压力，0.25 → 极限），
       // 把门槛抬到最多 +6 分：短码/大注面前必须真是好牌才跟。
       const stackPressure = (toCall > 0 && stack > 0) ? Math.min(1, toCall / stack / 0.25) : 0;
-      const bar = Math.max(6, threshold * (1 - potOdds * 0.45) + stackPressure * 6);
+      // 收带项 2 + tight * 3（2026-10-19 第二轮调参）：stackPressure 只对「跟注吃筹码」
+      // 的场景生效，但旧口径下各档入池率整体仍远高于真人（中位 78%、极松 92%
+      // ≈「任何两张都打」，AI 对打时牌桌几乎无人弃牌）。此项给所有风格加一道基本纪律：
+      //   tight=0 → +2（仍有底线，不至于见牌就跟） tight=0.5 → +3.5 tight=1 → +5
+      // ⚠️ 试过更强的 3 + tight*2（入池再降 3~6 个点），但把 AQs 从加注降级成跟注、
+      // 66/A5o 从跟注变成弃牌，破坏了 A5+D1 那轮定下的行为契约，故取此档。
+      // 实测（真实 4 人桌）：tight 1.0→26.8% 0.72→47.0% 0.5→64.0% 0.28→72.8% 0→85.8%
+      const bar = Math.max(6, threshold * (1 - potOdds * 0.45) + stackPressure * 6 + 2 + tight * 3);
 
       // 加注锋线 bar+7（原 +12）：原锋线高于 AA/KK 之外的一切起手分（QQ/AK 全 limp），
       // 收窄至 +7 让中高对与 AK 进入价值加注区（2026-10-17 评审调参）。
