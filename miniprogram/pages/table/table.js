@@ -3818,6 +3818,10 @@ Page({
           // #14 批一：筹码文案走紧凑格式（>=1万折「万」），显示层统一口径
           stack: this.fmtStack(p.stack),
           bet: readyPhase ? 0 : p.bet,
+          // 下注胶囊落位按座位区分：对手（上半圆）浮在块底「内侧」，我的座位
+          // （底部中央）浮在块「上方」朝桌心。顶排若也向上浮会顶出牌桌上沿被裁掉
+          // ——真机「部分玩家下注筹码看不到」正是这个（下注数字上半截被切）。
+          betCls: 'seat-bet ' + (isMe ? 'bet-me' : 'bet-in'),
           allIn: readyPhase ? false : p.allIn,
           folded: isFolded,
           standing: isStanding,
@@ -3971,6 +3975,10 @@ Page({
         : (wasReset
             ? false
             : (isMyTurn && legal && legal.canRaise ? this.data.raiseCustom : false));
+      // 档位条只在「轮到我且真的可以加注」时显示。只能跟注/全下时（canRaise=false：
+      // 筹码不足，或被不足额全下封锁）档位没有任何意义，留着只会显示一个点不动的
+      // 高亮（真机「高亮 50% 却只能跟注」）。JS 预计算，避免 WXML 写复合逻辑。
+      const showPresets = !!(isMyTurn && legal && legal.canRaise && !raiseCustom);
       // 实际会提交的加注额（与 onRaise 钳制同口径，仅用于按钮文案）：
       // 数字输入框能填出低于下限的值，而失焦补正未必先触发；到达上限则等价全下。
       // ⚠️ 读 raiseTo（上面算好的局部量）而非 this.data.raiseTo：每手重置帧
@@ -3980,19 +3988,32 @@ Page({
         raiseSubmit = Math.max(legal.minRaiseTo, Math.round(raiseTo || 0));
         raiseAllIn = raiseSubmit >= legal.maxRaiseTo;
       }
-      // C7 金额口径自洽：记忆档位不是『最小』时，本帧金额按该档口径当场重算
-      // （presetTarget 只依赖 legal/pot/currentBet，重置帧全部就绪），
-      // 否则会出现「高亮 2.5BB + 金额最小额」的新矛盾态——档位高亮与金额
-      // 必须同帧同源。presetTarget 返回 null（档非法）则回落最小，不动高亮。
-      if (wasReset && isMyTurn && legal && legal.canRaise && presetRestore !== 'min') {
-        const t = this.presetTarget(presetRestore);
-        if (t !== null) {
-          raiseTo = t;
-          raiseSubmit = Math.max(legal.minRaiseTo, t);
-          raiseAllIn = raiseSubmit >= legal.maxRaiseTo;
-        } else { presetRestore = 'min'; }
+      // ⚠️ 高亮与金额必须「每帧同源」（2026-10-19 第三次复发修复）。
+      // 只在「重置帧」重算有一个致命漏洞：重置帧可能发生在「不是我的回合」
+      // （新一街前位对手先下注 → street/currentBet 变、actionSeat 不是我）：
+      // 高亮按 C7 记忆恢复成 p50，但金额因 isMyTurn=false 没算（仍为 0）；
+      // 等轮到我时 epoch 不再变化、wasReset=false，金额被钳回 minRaiseTo，
+      // 于是又出现「高亮 50% + 加注=最小」的矛盾态（真机截图实锤）。
+      // 修法：只要轮到我且可加注，每帧都按当前高亮档、用本帧最新 legal 重算
+      // 金额；自定义档保留玩家手感，只做合法区间钳制。
+      let presetFinal = presetRestore;
+      if (isMyTurn && legal && legal.canRaise) {
+        if (presetFinal !== 'custom') {
+          const t = this.presetTarget(presetFinal, legal);
+          if (t !== null) {
+            raiseTo = t;
+          } else {
+            // 当前街无此档（理论上 presetFinal 已按街校验过）→ 回落最小，高亮同步
+            presetFinal = 'min';
+            raiseTo = legal.minRaiseTo;
+          }
+        } else {
+          const v = Math.round(raiseTo || this.data.raiseTo || 0);
+          raiseTo = Math.min(legal.maxRaiseTo, Math.max(legal.minRaiseTo, v));
+        }
+        raiseSubmit = Math.max(legal.minRaiseTo, Math.round(raiseTo || 0));
+        raiseAllIn = raiseSubmit >= legal.maxRaiseTo;
       }
-      const presetFinal = presetRestore;
       // C2（玩家审视 2026-10-17）：加注按钮动词按街内是否有注区分——
       // 无人下过注（toCall===0）时是「下注 X」而非「加注到 X」（翻后首位
       // 开池说「加注」是错误术语）。派生输入 legal.toCall 已随 legal 进指纹。
@@ -4033,6 +4054,9 @@ Page({
         // C7：重置帧恢复会话记忆档（校验通过时），非重置帧保持原值；
         // presetTarget 兜底失败回落最小也反映在这一帧。
         raisePreset: presetFinal,
+        // 档位条可见性（可加注才显示）：与 raisePreset 同帧写入，避免
+        // 「高亮已出、按钮却不能加注」的中间态。
+        showPresets,
         raiseSubmit,
         raiseAllIn,
         raiseVerb,
@@ -4996,8 +5020,11 @@ Page({
    *     零头数字，与自定义面板的步进口径保持一致。
    *   - 全下不吸附：all-in 的金额就是玩家剩余筹码，本身可能不是盲注倍数。
    */
-  presetTarget(v) {
-    const l = this.data.legal || {};
+  presetTarget(v, legalOverride) {
+    // legalOverride：render 每帧重算金额时必须传「本帧刚算出的 legal」——
+    // this.data.legal 同帧还是上一帧的值（setData 异步），用错会把金额按旧的
+    // min/max 钳制，出现「高亮 50% 但金额=上一街的最小额」的漂移。
+    const l = legalOverride || this.data.legal || {};
     const min = Number(l.minRaiseTo) || 0;
     const max = Number(l.maxRaiseTo) || 0;
     if (v === 'min') return min;
@@ -5005,24 +5032,28 @@ Page({
     const mult = RAISE_PRESET_BB[v];
     if (mult !== undefined) {
       const bb = game && game.bb > 0 ? game.bb : 20;
-      return Math.min(max, Math.max(min, this.snapToBlind(Math.min(bb * mult, max))));
+      return Math.min(max, Math.max(min, this.snapToBlind(Math.min(bb * mult, max), max)));
     }
     const pct = RAISE_PRESET_PCT[v];
     if (pct === undefined) return null;
     const raw = game.currentBet * 2 + game.potTotal() * pct;
-    return Math.min(max, Math.max(min, this.snapToBlind(Math.min(raw, max))));
+    return Math.min(max, Math.max(min, this.snapToBlind(Math.min(raw, max), max)));
   },
 
   /**
    * 吸附到小盲注的整数倍（默认「就近」：不足半个盲注则进位，保证叫注不小于盲注粒度）。
    * 超过上限时回落为上限——上限是玩家剩余筹码，可能不是盲注倍数，不能被抬高一档。
    */
-  snapToBlind(v) {
+  snapToBlind(v, maxOverride) {
     const step = this.blindStep();
     const n = Math.round(Number(v) || 0);
     if (step <= 1) return n;
     const snapped = Math.round(n / step) * step;
-    const max = Number((this.data.legal || {}).maxRaiseTo) || 0;
+    // maxOverride：render 里用本帧 fresh legal 的 max，避免吸附时读到上一帧
+    // data.legal.maxRaiseTo 把金额压小（presetTarget 重算路径专用）。
+    const max = (maxOverride !== undefined)
+      ? (Number(maxOverride) || 0)
+      : (Number((this.data.legal || {}).maxRaiseTo) || 0);
     if (max && snapped > max) return max;
     return Math.max(step, snapped);
   },

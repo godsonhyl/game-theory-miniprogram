@@ -86,7 +86,7 @@
         <!-- 座位号（WPK 式：每个座位都标位号，便于好友按号入座） -->
         <text class="seat-no" wx:if="{{!item.empty}}">{{item.seatNo}}</text>
         <!-- 本轮下注：筹码堆 + 金额 -->
-        <view class="seat-bet" wx:if="{{item.bet > 0}}"><view class="bet-chip"></view>{{item.bet}}</view>
+        <view class="{{item.betCls}}" wx:if="{{item.bet > 0}}"><view class="bet-chip"></view>{{item.bet}}</view>
 
         <view class="avatar" catchtap="onAvatarTap" catchlongpress="onAvatarLongPress" data-seat="{{item.seat}}">
           <text wx:if="{{item.empty}}">＋</text>
@@ -263,7 +263,7 @@
           <!-- 轮到我：加注档位（微扑克式 sizing chips，替代占位大的滑杆）
                自定义面板展开时收起档位条：两者曾并排挤在同一行，导致滑杆、
                「最小/最大」被压到容器外互相遮盖 —— 现在改成互斥，各占整行。 -->
-          <view class="presets" wx:if="{{isMyTurn && !raiseCustom}}">
+          <view class="presets" wx:if="{{showPresets}}">
             <view class="pr {{raisePreset === item.k ? 'on' : ''}}" wx:for="{{raisePresets}}" wx:key="k"
                   data-v="{{item.k}}" bindtap="onPresetTap">{{item.t}}</view>
           </view>

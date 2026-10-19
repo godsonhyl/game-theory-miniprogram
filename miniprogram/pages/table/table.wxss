@@ -171,8 +171,13 @@
 .side-pot .sp-elig { color: rgba(255,217,138,.72); font-size: calc(2.2 * var(--uh)); }
 
 /* 公共牌 */
+/* ⚠️ 公共牌下移到 52%（2026-10-19 再修）：底池胶囊中心 35%、高 7.6uh →
+ * 胶囊下沿 38.8%；牌高 18.5uh。原 top:46% 时牌顶 36.75% < 38.8%，
+ * 牌面（DOM 在底池之后、同为 z-index:5）会压住底池数字的下半截 →
+ * 真机「底池看不了」。52% 时牌顶 = 52−9.25 = 42.75% > 38.8%（且 clears
+ * 边池行到 ~43.5%），底池完整可读；牌底 61.25% 仍远高于我的座位块顶 68.8%。 */
 .board-row {
-  position: absolute; top: 46%; left: 50%; transform: translate(-50%, -50%);
+  position: absolute; top: 52%; left: 50%; transform: translate(-50%, -50%);
   display: flex; align-items: center; z-index: 5;
 }
 .board-row::before {
@@ -289,9 +294,19 @@
   font-size: calc(3 * var(--uh)); font-weight: 700; color: #ffd98a; background: rgba(5,16,13,.9);
   padding: calc(0.2 * var(--uh)) calc(2 * var(--uw)); border-radius: 999rpx;
   border: 1rpx solid rgba(232,163,61,.38); white-space: nowrap; z-index: 4;
-  /* 浮到锚点上方：absolute 不占文档流，座位块因此少 ~4uh 向下延伸。
-     水平居中于座位块（.seat 本身是 flex column + align-items:center）。 */
+  /* absolute 不占文档流，不撑高座位块；水平居中于座位块。
+     默认（我的座位 / 兜底）：浮在块上方，朝桌心。 */
   position: absolute; left: 50%; bottom: calc(100% + 0.6 * var(--uh)); transform: translateX(-50%);
+}
+/* 对手座位：浮在座位块底部「内侧」，覆盖底牌下缘。
+ * ⚠️ 不能也向上浮（2026-10-19）：顶排座位锚点 y≈15~17%，块顶只有 ~2~4%，
+ * 下注胶囊在块上方还会再高 ~4.6uh → 越过牌桌上沿被裁掉，真机表现为
+ * 「部分玩家下注筹码看不到」（数字上半截没了）。改到块内底部后，胶囊
+ * 始终落在座位带内，且底边不超过块底（顶排块底 30.6% < 底池上沿 31.2%），
+ * 既不顶出桌沿、也不侵入底池带。 */
+.seat-bet.bet-in {
+  bottom: auto;
+  top: calc(100% - 4.8 * var(--uh));
 }
 
 .avatar {

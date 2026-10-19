@@ -1361,6 +1361,67 @@ while (guard++ < 400) {
     }
   }
 
+  /* ---------- 回归：高亮与金额跨「非我回合的重置」错位（2026-10-19 复发） ----------
+   * 病根：重置帧（street/currentBet 变）若发生在「不是我的回合」，高亮会按 C7
+   * 记忆恢复成 p50/bb30，但金额因 isMyTurn=false 没算；等轮到我时 epoch 不再变、
+   * wasReset=false，金额被钳回 minRaiseTo → 「高亮 50% + 加注=最小」矛盾态。
+   * 修复：只要轮到我且可加注，每帧都按当前高亮档重算金额（presetTarget 传本帧 legal）。 */
+  {
+    pageCtx.onLoad({ room: '300099', own: '1' });
+    pageCtx.addBot();
+    pageCtx.addBot();
+    pageCtx.startGame();
+    await new Promise(r => setTimeout(r, 80));
+    const gm = pageCtx.requireGame();
+    const my = pageCtx.mySeat;
+    const me = gm && gm.seatOf ? gm.seatOf(my) : null;
+    const other = gm && gm.players ? gm.players.filter(p => p.seat !== my)[0] : null;
+    ok(!!gm && !!me && !!other, '前置：拿到 game / 我 / 一名对手');
+    // 让「轮到我且可加注」成为确定局面：清弃牌/全下、恢复加注权、给足筹码
+    me.folded = false; me.allIn = false; me.canRaise = true; me.actedBet = null;
+    if (!(me.stack > 400)) me.stack = 5000;
+    gm.currentBet = Math.max(20, Number(gm.currentBet) || 0);
+    // 高亮档按当前街选合法键：翻前用 bb30，翻后用 p50
+    const presetKey = (gm.street === 'preflop') ? 'bb30' : 'p50';
+    pageCtx._raiseHandMemory = { preset: presetKey, custom: false };
+    pageCtx._raiseEpoch = null;             // 强制下一帧视为重置
+    pageCtx._raiseResetPending = true;
+
+    // 帧 A：不是我的回合（actionSeat 指向对手）→ 重置帧
+    gm.actionSeat = other.seat;
+    pageCtx._lastRenderFp = null;
+    pageCtx.render();
+    ok(dataStore.isMyTurn === false, '帧A：isMyTurn=false（非我回合的重置）');
+    ok(dataStore.raisePreset === presetKey,
+      '帧A：高亮按记忆恢复为 ' + presetKey + '（实际 ' + dataStore.raisePreset + '）');
+    ok(dataStore.raiseTo === 0, '帧A：非我回合金额暂为 0（实际 ' + dataStore.raiseTo + '）');
+
+    // 帧 B：轮到我，epoch 不变（不触发重置）→ 必须仍按高亮档重算金额
+    gm.actionSeat = my;
+    pageCtx._lastRenderFp = null;
+    const origPT = pageCtx.presetTarget;
+    pageCtx.__ptCalled = null;
+    pageCtx.presetTarget = (v, legalOverride) => {
+      const l = legalOverride || {};
+      pageCtx.__ptCalled = { v: v, hasLegal: !!legalOverride };
+      return Math.max(Number(l.minRaiseTo) || 0, Number(l.maxRaiseTo) || 0);   // 哨兵：全下额
+    };
+    pageCtx.render();
+    pageCtx.presetTarget = origPT;
+    if (dataStore.isMyTurn && dataStore.legal && dataStore.legal.canRaise) {
+      ok(pageCtx.__ptCalled && pageCtx.__ptCalled.v === presetKey,
+        '★ 帧B（非重置、轮到我）仍按高亮档 ' + presetKey + ' 重算金额（不再只在重置帧算）');
+      ok(pageCtx.__ptCalled && pageCtx.__ptCalled.hasLegal === true,
+        '★ 重算传入本帧 legal（不读上一帧 this.data.legal）');
+      ok(dataStore.raiseSubmit === dataStore.legal.maxRaiseTo && dataStore.raiseAllIn === true,
+        '★ 金额跟随高亮档（哨兵=全下额→按钮变全下）：submit=' + dataStore.raiseSubmit);
+      ok(dataStore.raisePreset === presetKey, '帧B：高亮保持 ' + presetKey + '（与金额同源）');
+    } else {
+      ok(false, '帧B 未能形成「轮到我且可加注」（isMyTurn=' + !!dataStore.isMyTurn +
+        ' canRaise=' + !!(dataStore.legal && dataStore.legal.canRaise) + '），无法验证同源');
+    }
+  }
+
   /* ---------- 回归：预设档改为百分比 + 盲注倍数吸附 ---------- */
   {
     guardRaisePresetPct(tableSrc, wxmlSrc);
@@ -2616,8 +2677,9 @@ while (guard++ < 400) {
       ok(new RegExp('\\.' + cls + '\\s*[,{]').test(tableWxss), 'WXSS：自定义面板样式齐全 .' + cls);
     });
     // 档位条与自定义面板互斥（并排会互相遮盖滑杆与轴标签）
-    ok(/class="presets" wx:if="\{\{isMyTurn && !raiseCustom\}\}"/.test(wxmlSrc),
-      'WXML：自定义面板展开时收起档位条（两者互斥，不并排挤在同一行）');
+    ok(/class="presets" wx:if="\{\{showPresets\}\}"/.test(wxmlSrc) &&
+      /const showPresets = !\!\(isMyTurn && legal && legal\.canRaise && !raiseCustom\);/.test(tableSrc),
+      'WXML：档位条由 showPresets 控制（自定义面板展开时收起 + 不可加注时不显示高亮）');
     ok(/\.rc-end\s*\{[^}]*flex:\s*none/.test(tableWxss),
       'WXSS：滑杆两端轴标签 flex:none（不与滑杆抢宽度，任意位数都不遮盖）');
     // 事件绑定与实现一一对应（onCustomTap 由「自定义」档经 onPresetTap 间接调用）
@@ -2896,9 +2958,28 @@ while (guard++ < 400) {
         ok(overflow === '', '顶排座位块（30 种人数×视口组合）均未侵入底池带、也未顶出牌桌' + (overflow ? '：' + overflow : ''));
         ok(worstGap >= gapUh - 0.05, '最紧的一组距底池仍留 ' + worstGap.toFixed(1) + '% ≥ RING_GAP_UH ' + gapUh + '（' + worstSeat + '）');
       }
-      // 下注胶囊已浮到锚点上方（pie）：不占块底高度——这是修复成立的前提
+      /* ---- 底池 vs 公共牌：数字不能被牌面压住（2026-10-19 真机「底池看不了」）----
+       * 底池胶囊 35% 中心、高 7.6uh → 下沿 38.8%；牌高 18.5uh。要求
+       * boardTop − cardH/2 ≥ potY + pillH/2（牌顶不低于底池下沿）。 */
+      {
+        const boardTop = Number((wxssSrc.match(/\.board-row \{[\s\S]{0,120}?top: ([\d.]+)%/) || [0, 0])[1]);
+        const cardH = Number((wxssSrc.match(/\.card \{\n[\s\S]{0,160}?height: calc\(([\d.]+) \* var\(--uh\)\)/) || [0, 0])[1]);
+        ok(boardTop > 0 && cardH > 0, '可解析公共牌行 top=' + boardTop + '% 与牌高 ' + cardH + 'uh');
+        const cardsTop = boardTop - cardH / 2;
+        const potBottom = potY + pillH / 2;
+        ok(cardsTop >= potBottom,
+          '公共牌顶 ' + cardsTop.toFixed(1) + '% ≥ 底池胶囊底 ' + potBottom.toFixed(1) +
+          '%（牌面不再压住底池数字）');
+      }
+      // 下注胶囊落位（2026-10-19 二次修复）：我的座位浮在块上方（默认 bottom:100%），
+      // 对手浮在块底内侧（bet-in：top:100%−4.8uh）——顶排若也向上浮会顶出桌沿被裁掉。
       ok(/\.seat-bet \{[\s\S]{0,900}?position: absolute; left: 50%; bottom: calc\(100% \+ 0\.6 \* var\(--uh\)\)/.test(wxssSrc),
-        '.seat-bet 浮到座位块上方（absolute + bottom:100%），不再向下撑高块底');
+        '.seat-bet 默认（我的座位）浮在座位块上方（absolute + bottom:100%），不撑高块底');
+      ok(/\.seat-bet\.bet-in \{[\s\S]{0,200}?bottom: auto;[\s\S]{0,80}?top: calc\(100% - 4\.8 \* var\(--uh\)\)/.test(wxssSrc),
+        '.seat-bet.bet-in 对手下注浮在块底内侧（不顶出桌沿、不侵入底池带）');
+      ok(/betCls: 'seat-bet ' \+ \(isMe \? 'bet-me' : 'bet-in'\)/.test(tableSrc) &&
+        /class="\{\{item\.betCls\}\}"/.test(wxmlSrc),
+        '座位对象按 isMe 派发 betCls（我的=bet-me / 对手=bet-in），WXML 用 item.betCls');
       // down 排布已删：不再有down class / 判型残留（防后人按失效注释再抄回来）
       ok(!/\.seat\.down \{/.test(wxssSrc) && !/__layout\.tight/.test(feltSrc) && !/'down'/.test(feltSrc),
         'down 排布（不可达的窄视口兜底）已连根拔除，仅存于注释的推导记录');
