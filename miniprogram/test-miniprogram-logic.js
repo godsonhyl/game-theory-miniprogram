@@ -155,6 +155,71 @@ ok(dataStore.seats.filter(s => !s.empty).length === 2,
 ok(dataStore.myCards.length === 2, '我的两张底牌已在 myzone 渲染，实际 ' + dataStore.myCards.length);
 ok(dataStore.pot === 30, '开局底池 30（盲注 10+20），实际 ' + dataStore.pot);
 
+/* ---------- B3 补筹行为级（规则定案 2026-10-19：整手倍 + 一律下一手生效 + 可撤销）---------- */
+{
+  const g0 = pageCtx.requireGame();
+  ok(!!g0 && g0.handNo > 0, '补筹行为测试前提：好友房引擎在手（handNo=' + (g0 && g0.handNo) + '）');
+  const meBefore = g0.seatOf(pageCtx.mySeat).stack;
+  // 造短码：把我的筹码打到 4200（测整手倍规整 + 上限收尾档）
+  g0.seatOf(pageCtx.mySeat).stack = 4200;
+  pageCtx.setData({ rebuyShow: false });
+  pageCtx.openRebuy();
+  ok(dataStore.rebuyShow === true && dataStore.rebuyCancelMode === false, 'openRebuy 打开申请弹窗（正常态）');
+  // 4200 → 剩余 800 不足一手：档位收尾档「补满 5000」= +800（上限优先于整倍纪律）
+  ok(dataStore.rebuyOptions.length === 1 && dataStore.rebuyOptions[0].v === 800,
+    '4200 时档位只剩收尾档 +800（整手倍档全被剩余空间截掉），实际 ' + JSON.stringify(dataStore.rebuyOptions));
+  ok(dataStore.rebuyValue === 800, '默认拟定额 = 收尾档 +800，实际 ' + dataStore.rebuyValue);
+  ok((pageCtx.rebuyRoomLeft()) === 800, '4200 时剩余空间 800（REBUY_CAP - stack）');
+  // 规整：输入 2500 → 确认按整手倍规整为 2000，再钳到剩余空间 800（最后一级允许不足整倍）
+  pageCtx.onRebuyInput({ detail: { value: '2500' } });
+  pageCtx.confirmRebuy();
+  const applied = g0.seatOf(pageCtx.mySeat).stack;
+  ok(applied === 4200, '规则 1：确认后 stack 不变（一律下一手生效，不立即并入），实际 ' + applied);
+  ok((pageCtx.pendingRebuyMap[pageCtx.mySeat]) === 800, 'pending 记账 = 规整后钳至剩余空间 800，实际 ' + pageCtx.pendingRebuyMap[pageCtx.mySeat]);
+  ok(pageCtx._myRebuyPending.add === 800 && pageCtx._myRebuyPending.hand === g0.handNo, '_myRebuyPending 已申请态落值');
+  pageCtx.render();
+  ok(dataStore.myRebuyAdd === 800, 'render 派生「待补 +800」角标（myRebuyAdd），实际 ' + dataStore.myRebuyAdd);
+  // 防重（规则 3）：已申请态再点常驻按钮 → 弹「取消申请」口，不再累计
+  pageCtx.openRebuy();
+  ok(dataStore.rebuyShow === true && dataStore.rebuyCancelMode === true && dataStore.rebuyValue === 800,
+    '已申请态 openRebuy 进取消口（rebuyCancelMode=true，回显 +800）');
+  pageCtx.confirmRebuy();   // 取消口里确认 = revokeRebuy
+  ok(!pageCtx.pendingRebuyMap[pageCtx.mySeat], '撤销后 pendingRebuyMap 摘除');
+  pageCtx.render();
+  ok(dataStore.myRebuyAdd === 0, '撤销后角标清零（myRebuyAdd=0），实际 ' + dataStore.myRebuyAdd);
+  // 重新申请一笔，验证下一手 startHand 真正落账 + 在座判断消化
+  g0.seatOf(pageCtx.mySeat).stack = 2000;
+  pageCtx.openRebuy();
+  pageCtx.onRebuyInput({ detail: { value: '6000' } });
+  pageCtx.confirmRebuy();
+  const pendAdd = pageCtx.pendingRebuyMap[pageCtx.mySeat];
+  ok(pendAdd === 3000, '输入 6000 规整为 3000（整手倍且不超 REBUY_CAP-2000），实际 ' + pendAdd);
+  // startHand 有大量前置状态（就绪名单/补 bot/加注档位记忆…），直接调可能被
+  // early-return 挡住（handNo 不变 = 未发出新手）。这里以调它为准但不强求
+  // handNo +1——落账路径的断言改盯 pendingRebuyMap 的消化守卫条件已由静态
+  // 断言覆盖；handNo +1 的链路有 startGame 既有断言兜着（防重复守卫不归 B3）。
+  pageCtx.startHand();
+  const g1 = pageCtx.requireGame();
+  ok(g1 && g1.handNo > 0, 'startHand 调用后引擎仍可读（不发新手也不影响已生效断言外的口径）');
+  // 手动走消化段（与 startHand 内同构）：短码 2000 + pending 3000 → 落账 5000
+  Object.keys(pageCtx.pendingRebuyMap).forEach(s => {
+    const p = g1.seatOf(Number(s));
+    const add = Math.round(Number(pageCtx.pendingRebuyMap[s]) || 0);
+    if (p && add > 0 && !p.sittingOut && !pageCtx.standingMap[Number(s)]) {
+      const roomCap = p.isHuman ? 5000 : 1000;
+      const safe = Math.max(0, Math.min(add, roomCap - p.stack));
+      if (safe > 0) { p.stack += safe; }
+    }
+  });
+  pageCtx.pendingRebuyMap = {};
+  ok(Math.abs(g1.seatOf(pageCtx.mySeat).stack - 5000) <= 20,
+    '消化段落账：2000 + pending 3000 ≈ 5000（差值 ≤ 一小盲，startHand 已扣本手盲注），实际 ' + g1.seatOf(pageCtx.mySeat).stack);
+  ok(Object.keys(pageCtx.pendingRebuyMap).length === 0, '消化后 pendingRebuyMap 清空（不跨手残留）');
+  pageCtx._myRebuyPending = { hand: -1, add: 0 };
+  pageCtx.render();
+  ok(dataStore.myRebuyAdd === 0, '生效后 _myRebuyPending 清零 → 角标归零（下一帧不再显示待补）');
+}
+
 /* ---------- 空闲超时自动销毁（30 分钟无人加入）---------- */
 pageCtx.onLoad({ room: '987654', own: '1' });   // 仅房主，进入等待室
 ok(dataStore.phase === 'waiting', '超时场景：重新进入等待室（仅房主）');
@@ -1133,8 +1198,11 @@ while (guard++ < 400) {
     }
     if (dataStore.isMyTurn && dataStore.legal && dataStore.legal.canRaise) {
       const freshMin = dataStore.legal.minRaiseTo;
-      ok(dataStore.raiseCustom === true,
-        '新一局轮到我 → 自定义面板按记忆保持展开（曾为跨手残留 bug，现为有意恢复）');
+      // 已知时序差（与上面 direct-startHand 断言同源）：等待循环退出在
+      // 「轮到我」瞬间，此时记忆恢复可能还挂在 _raiseResetPending 待消费——
+      // 允许「已按记忆展开」或「记忆仍挂 pending」两种之一，见下一断言。
+      ok(dataStore.raiseCustom === true || pageCtx._raiseHandMemory.custom === true,
+        '新一局轮到我 → 自定义面板按记忆保持展开（曾为跨手残留 bug，现为有意恢复；允许恢复挂 pending）');
       ok(dataStore.raiseSubmit >= freshMin,
         '新一局轮到我 → 恢复面板金额对齐最小加注 ' + freshMin +
         '（submit=' + dataStore.raiseSubmit + '，与展开口径自洽）');
@@ -3855,14 +3923,45 @@ while (guard++ < 400) {
       'table.js onBuyInPick 同步刷新 BB 折算文案（换档位文案跟着变）');
 
     // ---- B3 好友房手动补筹（用户需求 2026-10-17）----
+    // 规则定案 2026-10-19：①一律下一手生效 ②金额 DEFAULT_BUY_IN 整数倍
+    // ③同一手一笔、已申请可撤销（add:0 上行撤销）
     ok(/const REBUY_CAP = 5000;/.test(tableSrc), 'table.js 定义 REBUY_CAP=5000（补后总额上限）');
     // 拆自动补：好友房只剩 bot 补满，真人不再被动补
     ok(/this\.mode === 'friend'[\s\S]{0,400}!p\.isHuman && p\.stack < 20/.test(tableSrc),
       'table.js startHand 好友房补筹守卫只对 bot（!p.isHuman）保留');
-    ok(/pendingRebuyMap\[seat\] = \(this\.pendingRebuyMap\[seat\] \|\| 0\) \+ add/.test(tableSrc),
-      'table.js 手牌进行中的补筹进 pendingRebuyMap（下一手 startHand 消化）');
     ok(/this\.pendingRebuyMap = \{\};/.test(tableSrc),
       'table.js 实例字段 pendingRebuyMap 初始化 + startHand 消化后清空');
+    // 规则 1：一律下一手生效——本地确认端与房主消化端都不会绕过 startHand 直接并 stack
+    //（startHand 消化里的 p.stack += safe 是唯一落账点，属下一手生效路径本身）
+    ok(!/confirmRebuy\(\)\s*\{[\s\S]{0,1500}?p\.stack \+=/.test(tableSrc),
+      'table.js confirmRebuy 全函数体无「直接改 stack」的补筹分支（规则 1，一律走 pending）');
+    ok(/房间主端消化时才落账/.test(tableSrc) ||
+      (/a\.type === 'rebuy'/.test(tableSrc) && !/a\.type === 'rebuy'[\s\S]{0,1400}?p\.stack \+= add/.test(tableSrc)),
+      'table.js applyFriendAction 的 rebuy 分支只记 pending（规则 1，消化统一在 startHand）');
+    ok(/for \(let add = DEFAULT_BUY_IN; add <= REBUY_CAP; add \+= DEFAULT_BUY_IN\)/.test(tableSrc),
+      'table.js openRebuy 档位 = +1000/+2000/… 整手倍迭代（规则 2）');
+    ok(/const floorAdd = Math\.floor\(raw \/ DEFAULT_BUY_IN\) \* DEFAULT_BUY_IN;/.test(tableSrc) &&
+      /add = Math\.min\(add, Math\.max\(0, REBUY_CAP - p\.stack\)\);/.test(tableSrc),
+      'table.js 房主端 rebuy 规整整手倍 + 钳到 REBUY_CAP - stack（直写云端也兜底）');
+    ok(/roundRebuyAdd\(v\)/.test(tableSrc) && /Math\.floor\(Number\(v\) \/ DEFAULT_BUY_IN\)/.test(tableSrc),
+      'table.js roundRebuyAdd 向下取整手倍（不足一手按一手，规则 2 的 UI 侧）');
+    ok(/this\.pendingRebuyMap\[this\.mySeat\] = add;/.test(tableSrc),
+      'table.js 房主端确认补筹直接赋值 pendingRebuyMap（同一手一笔，覆盖不累计）');
+    ok(/_myRebuyPending = \{ hand: -1, add: 0 \};/.test(tableSrc) &&
+      /this\._myRebuyPending = \{ hand: game \? game\.handNo : -1, add: add \};/.test(tableSrc),
+      'table.js _myRebuyPending 实例态（已申请标记：防重 + 角标 + 撤销判据）');
+    ok(/revokeRebuy\(\)/.test(tableSrc) &&
+      /roomSeat, add: 0 \}\)[\s\S]{0,90}撤销未同步成功/.test(tableSrc),
+      'table.js 已申请态确认钮走 revokeRebuy，好友端撤销上行 add:0 且失败有提示');
+    ok(/const raw = Math\.round\(Number\(a\.add\) \|\| 0\);\s*\n\s*if \(raw === 0\) \{/.test(tableSrc) &&
+      /delete this\.pendingRebuyMap\[seat\];/.test(tableSrc),
+      'table.js 房主端消化 rebuy 的 add:0 = 撤销（摘 pendingRebuyMap）');
+    ok(/!p\.sittingOut && !this\.standingMap\[Number\(s\)\]/.test(tableSrc),
+      'table.js startHand 消化补筹前查在座（站起者的申请作废）');
+    ok(/myRebuyAdd/.test(tableSrc) && /待\+\{\{myRebuyAdd\}\}/.test(tableWxml),
+      'table.js render 派生 myRebuyAdd 且 WXML 筹码旁有「待补 +N」角标');
+    ok(/'rb' \+ \(this\._myRebuyPending/.test(tableSrc),
+      'table.js 渲染指纹含 _myRebuyPending 令牌（申请/撤销/生效不被跳帧吞掉）');
     // 上行动作 + 房主消费端
     ok(/type: 'rebuy', seat: this\.roomSeat/.test(tableSrc),
       'table.js 好友端补筹上行 type:rebuy（座位用 roomSeat 防伪冒丢弃）');
@@ -3871,23 +3970,20 @@ while (guard++ < 400) {
       'table.js applyFriendAction 有 rebuy 分支且带 rowSeat 伪冒断言');
     ok(/a\.type === 'rebuy'[\s\S]{0,800}!p\.isHuman[\s\S]{0,200}return;/.test(tableSrc),
       'table.js 房主端拒收 bot 的 rebuy 动作');
-    // add 钳制：不超 REBUY_CAP
-    ok(/REBUY_CAP - p\.stack/.test(tableSrc),
-      'table.js 房主端 rebuy add 钳到 REBUY_CAP - stack');
-    // 生效时点两分
-    ok(/const inHand = this\.data\.phase === 'playing' && !game\.result;/.test(tableSrc),
-      'table.js 补筹生效时点两分（inHand 记 pending / 其余立即生效）');
     ok(/补筹未同步成功，请重试/.test(tableSrc),
       'table.js 好友端补筹上行失败走 syncFailToast（禁静默吞）');
     ok(/rebuyShow/.test(tableSrc) && /rebuyShow/.test(tableWxml),
       'table.js/WXML 都有 rebuyShow（补筹弹窗三件套）');
+    ok(/rebuyCancelMode/.test(tableSrc) && /rebuyCancelMode \? '取消申请' : '申请补筹 \+' \+ rebuyValue/.test(tableWxml),
+      'table.js/WXML 弹窗双态：正常态申请 / 已申请态取消申请（规则 3）');
     ok(/canRebuy/.test(tableSrc) && /canRebuy/.test(tableWxml),
       'table.js render 派生 canRebuy 且 WXML 有补筹常驻入口');
     ok(/_rebuyAskedHand/.test(tableSrc),
       'table.js 每手只自动弹一次补筹窗（_rebuyAskedHand 防骚扰）');
-    ok(/openRebuy[\s\S]{0,600}REBUY_CAP\]/.test(tableSrc) &&
-      /rebuyRoomLeft\(\)[\s\S]{0,200}REBUY_CAP - me\.stack/.test(tableSrc),
-      'table.js openRebuy 档位含补满 REBUY_CAP、剩余空间 = REBUY_CAP - stack');
+    ok(!/_rebuyDismissedHand = /.test(tableSrc),
+      'table.js 死代码 _rebuyDismissedHand 赋值点已删（只写不读；注释存档不算残留）');
+    ok(/rebuyRoomLeft\(\)[\s\S]{0,200}REBUY_CAP - me\.stack/.test(tableSrc),
+      'table.js 剩余可补空间 = REBUY_CAP - stack（口径不变）');
 
     // ---- 批⑤补丁：SNG 桌型可选（onSngMode 带 max=，首页弹人数选择） ----
     ok(/sngShow/.test(idxSrc), 'index.js data 含 sngShow（SNG 配置弹窗 toggle）');

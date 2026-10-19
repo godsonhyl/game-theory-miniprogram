@@ -393,6 +393,8 @@ Page({
     rebuySeated: false,    // 弹窗打开时的「我在座」快照（提交前校验）
     rebuyValue: 0,         // 本次拟定补入额（正数）
     rebuyOptions: [],      // 档位行 [{ v: add, t: 描述 }]，打开时按 stack 现算
+    rebuyCancelMode: false, // 「已申请 +N」态：确认钮换「取消申请」（规则 3）
+    myRebuyAdd: 0,         // 我本手已申请的补筹额（下一手生效，「待补 +N」角标用）
 
     // 行动计时环（render 里随模式刷新：remote 30s / 单机 20s，供 wxml 与测试读）
     timerMax: 20,
@@ -574,8 +576,10 @@ Page({
     flySeed = 0;
     this.emoteSeen = 0;        // 镜像端已放过气泡的表情 ts 高水位（防轮询重放）
     const s = settings.get();
-    // B3：补筹弹窗在本手是否已询问/已补过——防每手结算重复弹窗骚扰
+    // B3：补筹弹窗在本手是否已询问——防每手结算重复弹窗骚扰
     this._rebuyAskedHand = -1;
+    // B3 规则 3：我本手已申请的补筹 { hand, add }（防重复累计 + 撤销入口判据）
+    this._myRebuyPending = { hand: -1, add: 0 };
     // C7：加注档位会话记忆（preset 键 + 自定义面板展开偏好）。setRaiseTo 写入、
     // render 重置帧恢复（校验当前街档位表，失效回 'min'）。纯实例字段不进指纹。
     this._raiseHandMemory = { preset: 'min', custom: false };
@@ -1231,15 +1235,23 @@ Page({
     this.setData({ buyInShow: false, buyInSeat: -1 });
   },
 
-  /* ---------- B3 好友房手动补筹（用户需求 2026-10-17）----------
-   * 输光不再被动等系统补：玩家自己决定何时补、补多少（弹窗档位 + 自定义），
-   * 补后总额封顶 REBUY_CAP。bot 仍由房主端自动补（演示态）。
-   * 生效时点两分：就绪/结算阶段立即并入筹码；手牌进行中记 pendingRebuyMap
-   * 由下一手 startHand 消化——进行中改 stack 会破坏当手 legality/边池口径。
-   * 房主端直接改引擎；好友端（remoteMode）上行 type:'rebuy' 动作由房主消化，
-   * 自己置「已申请」态，快照广播回来后界面自然更新。 */
+  /* ---------- B3 好友房手动补筹（用户需求 2026-10-17；规则定案 2026-10-19）----------
+   * 输光不再被动等系统补：玩家自己决定何时补、补多少，补后总额封顶 REBUY_CAP。
+   * bot 仍由房主端自动补（演示态）。三条硬规则（用户评审 2026-10-19）：
+   *   1. 一律下一手生效：任何时点（对局中/就绪/结算）确认都只记 pendingRebuyMap，
+   *      startHand 发牌前统一消化——进行中改 stack 破坏当手 legality/边池；
+   *      就绪阶段点了补筹再点「准备就绪」，下一手开局即带着新筹码（用户原话场景）。
+   *   2. 金额必须是 DEFAULT_BUY_IN（1000）的整数倍：+1000/+2000/+3000…，
+   *      受 REBUY_CAP - stack 钳制（最后一级可不足整倍，例 stack=4200 → +800）。
+   *   3. 同一手只能有一笔申请：确认后置「已申请」，重复点提示不累计；
+   *      「已申请」态可取消（用户确认：误操作不该罚一手）。房主端摘除本地
+   *      pendingRebuyMap[mySeat] 即可；好友端 pending 钱在房主机里，取消也走
+   *      rebuy 动作上行（add:0 = 撤销），房主端消化时与在途申请相消。
+   * 实例字段 _myRebuyPending = { hand, add }：我本手已申请的补筹（供防重 +
+   * 「待补 +N」角标；镜像端下一帧快照回来前先本地顶着，防轮询窗口重复点）。
+   * 历史死代码 _rebuyDismissedHand（只写不读）已整段删除；canRebuyNow 开头
+   * 原「remoteMode 未初始化」空 if 连注释带条件删除（onLoad 已初始化，无窗口）。 */
   canRebuyNow() {
-    if (this.mode !== 'friend' || this.remoteMode === undefined) { /* remoteMode 未初始化前不看 */ }
     if (this.mode !== 'friend') return false;
     const me = game && game.seatOf(this.mySeat);
     if (!me || !me.isHuman || me.sittingOut) return false;
@@ -1254,30 +1266,50 @@ Page({
     return Math.max(0, REBUY_CAP - me.stack);
   },
 
-  /** 打开补筹弹窗：档位 = 补到 1000/2000/封顶，按剩余空间过滤与折算 */
+  /** 补筹额规整（规则 2）：向下取 DEFAULT_BUY_IN 整数倍，不足一手按一手计，
+   *  再钳到剩余空间（最后一级允许不足整倍——上限优先于整倍纪律）。 */
+  roundRebuyAdd(v) {
+    const left = this.rebuyRoomLeft();
+    if (left <= 0) return 0;
+    const n = Math.floor(Number(v) / DEFAULT_BUY_IN);
+    const add = (n >= 1 ? n : 1) * DEFAULT_BUY_IN;
+    return Math.min(add, left);
+  },
+
+  /** 打开补筹弹窗：档位 = +1000/+2000/+3000…（整手倍数，规则 2），按剩余空间截断；
+   *  本手已申请过 → 弹「取消申请」态（规则 3：不重复累计，给反悔出口）。 */
   openRebuy() {
     if (!this.canRebuyNow()) return;
+    const me = game.seatOf(this.mySeat);
+    const pend = this._myRebuyPending || {};
+    const pendingMine = game && pend.hand === game.handNo && pend.add > 0;
+    if (pendingMine) {
+      this.setData({
+        rebuyShow: true,
+        rebuySeated: true,
+        rebuyValue: pend.add,
+        rebuyOptions: [],
+        rebuyCancelMode: true    // 「已申请 +N」态：确认钮换「取消申请」
+      });
+      return;
+    }
     if (this.rebuyRoomLeft() <= 0) {
       wx.showToast({ title: '已到补筹上限', icon: 'none' });
       return;
     }
-    const me = game.seatOf(this.mySeat);
-    const left = this.rebuyRoomLeft();
-    const targets = [DEFAULT_BUY_IN, DEFAULT_BUY_IN * 2, REBUY_CAP];
+    const first = this.roundRebuyAdd(DEFAULT_BUY_IN);
     const opts = [];
-    targets.forEach(t => {
-      const add = t - me.stack;
-      if (add > 0 && add <= left && !opts.some(o => o.v === add)) {
-        opts.push({ v: add, t: '补到 ' + t });
-      }
-    });
-    if (opts.length === 0) opts.push({ v: left, t: '补满 ' + REBUY_CAP });
-    const first = Math.min(left, DEFAULT_BUY_IN - me.stack > 0 ? DEFAULT_BUY_IN - me.stack : left);
+    for (let add = DEFAULT_BUY_IN; add <= REBUY_CAP; add += DEFAULT_BUY_IN) {
+      if (add > this.rebuyRoomLeft()) break;
+      opts.push({ v: add, t: '+' + add });
+    }
+    if (opts.length === 0) opts.push({ v: this.rebuyRoomLeft(), t: '补满 ' + REBUY_CAP });   // 不足整倍的收尾档
     this.setData({
       rebuyShow: true,
       rebuySeated: true,
-      rebuyValue: Math.max(1, first),
-      rebuyOptions: opts
+      rebuyValue: first,
+      rebuyOptions: opts,
+      rebuyCancelMode: false
     });
   },
 
@@ -1290,20 +1322,25 @@ Page({
   onRebuyInput(e) {
     let v = parseInt(e.detail.value, 10);
     if (isNaN(v) || v < 1) v = 1;
+    // 输入预览保持原值，规整（整倍）在确认时统一做——输入中途强制跳秒数反焦
     this.setData({ rebuyValue: Math.min(v, this.rebuyRoomLeft()) });
   },
 
   cancelRebuy() {
-    this.setData({ rebuyShow: false });
-    this._rebuyDismissedHand = game ? game.handNo : -1;   // 本手不再自动弹
+    this.setData({ rebuyShow: false, rebuyCancelMode: false });
   },
 
-  /** 确认补筹：房主直接改引擎；好友端上行 rebuy 动作，自己置「已申请」 */
+  /** 确认补筹：一律记 pending 下一手生效（规则 1）；本手已申请过则先撤销旧的
+   *  再记新的（弹窗进不来这分支——openRebuy 已拦截，双保险）。
+   *  房主端写本地 pendingRebuyMap；好友端上行 rebuy 动作（add:0 = 撤销申请）
+   *  由房主消化，自己置「已申请」态，快照广播回来后界面自然更新。 */
   confirmRebuy() {
-    if (!this.canRebuyNow()) { this.setData({ rebuyShow: false }); return; }
-    const add = Math.min(Math.max(1, Math.round(this.data.rebuyValue || 0)), this.rebuyRoomLeft());
-    this.setData({ rebuyShow: false });
-    this._rebuyDismissedHand = game ? game.handNo : -1;   // 成功补过，本手不再弹
+    if (!this.canRebuyNow()) { this.setData({ rebuyShow: false, rebuyCancelMode: false }); return; }
+    if (this.data.rebuyCancelMode) { this.revokeRebuy(); return; }
+    const add = this.roundRebuyAdd(this.data.rebuyValue || 0);
+    if (add <= 0) { this.setData({ rebuyShow: false, rebuyCancelMode: false }); return; }
+    this.setData({ rebuyShow: false, rebuyCancelMode: false });
+    this._myRebuyPending = { hand: game ? game.handNo : -1, add: add };
     if (this.remoteMode) {
       // 缺 zone 提示不走常见 todo：好友端没有引擎权威，写本地会被下一帧快照卷回。
       // 上行给房主消化；失败提示用户（禁静默吞——SILENT_OK_COUNT 守卫）。
@@ -1311,19 +1348,35 @@ Page({
         .catch(() => this.syncFailToast('补筹未同步成功，请重试'));
       wx.showToast({ title: '已申请补筹 +' + add, icon: 'none' });
       this.pushChat(this.mySeat, this.meLabel(false), '申请补筹 +' + add);
+      this.render();
       return;
     }
-    // 房主端：手牌进行中记 pending（不打断当手），否则立即生效
-    const p = game.seatOf(this.mySeat);
-    const inHand = this.data.phase === 'playing' && !game.result;
-    if (inHand) {
-      this.pendingRebuyMap[this.mySeat] = (this.pendingRebuyMap[this.mySeat] || 0) + add;
-    } else {
-      p.stack += add;
-      if (this.startStacks[this.mySeat] !== undefined) this.startStacks[this.mySeat] += add;
-    }
+    // 房主端：一律记 pending（规则 1），下一手 startHand 发牌前统一消化
+    this.pendingRebuyMap[this.mySeat] = add;
     this.pushChat(this.mySeat, this.meLabel(false), '补筹 +' + add);
     this.forcePublish();   // 立即广播（置 _lastPlayFp=null 穿透写库脏检查）
+    this.render();
+  },
+
+  /** 撤销本手已申请的补筹（规则 3：已申请态可取消）。房主端摘本地记录；
+   *  好友端 pending 钱记在房主机的 pendingRebuyMap，同样走 rebuy 动作
+   *  （add:0 = 撤销）由房主消化撤销。生效后（startHand 已消化）不可撤——
+   *  UI 只在 _myRebuyPending 未过期时给入口，这里再加 handNo 断言双保险。 */
+  revokeRebuy() {
+    this.setData({ rebuyShow: false, rebuyCancelMode: false });
+    const pend = this._myRebuyPending || {};
+    if (!game || pend.hand !== game.handNo || !(pend.add > 0)) return;
+    this._myRebuyPending = { hand: -1, add: 0 };
+    if (this.remoteMode) {
+      roomSync.pushAction(this.roomNo, { type: 'rebuy', seat: this.roomSeat, add: 0 })
+        .catch(() => this.syncFailToast('撤销未同步成功，请重试'));
+      wx.showToast({ title: '已撤销补筹申请', icon: 'none' });
+      this.render();
+      return;
+    }
+    delete this.pendingRebuyMap[this.mySeat];
+    this.pushChat(this.mySeat, this.meLabel(false), '撤销补筹');
+    this.forcePublish();
     this.render();
   },
 
@@ -1683,25 +1736,29 @@ Page({
     }
     if (a.type === 'rebuy') {
       // B3 好友手动补筹：rowSeat 断言同防伪冒——好友不能替他人补筹。
+      // 规则 1（一律下一手生效）：一律记 pendingRebuyMap 由 startHand 统一
+      // 消化，无「立即生效」分支——进行中改 stack 破坏当手口径；就绪阶段申请
+      // 的也一样下一手开局到账，行为全时点一致可预期。
       if (Number(a.seat) !== Number(a.rowSeat)) return;
       const p = game.seatOf(seat);
       if (!p) return;
       if (!p.isHuman) return;                       // bot 拒收（房主端自动补）
-      // add 由行主自报，双重钳制：正数、补后不超 REBUY_CAP
-      let add = Math.round(Number(a.add) || 0);
-      if (add <= 0) return;
+      const raw = Math.round(Number(a.add) || 0);
+      if (raw === 0) {
+        // add:0 = 撤销本手已申请的补筹（规则 3：已申请态可取消）
+        delete this.pendingRebuyMap[seat];
+        this.forcePublish();
+        return;
+      }
+      if (raw < 0) return;
+      // add 由行主自报，规整 + 钳制：整手倍（规则 2，镜像端已规整、这里再兜一
+      // 层防直写云端）、补后不超 REBUY_CAP。同一手一笔（规则 3）：后值覆盖，不累计。
+      const floorAdd = Math.floor(raw / DEFAULT_BUY_IN) * DEFAULT_BUY_IN;
+      let add = floorAdd >= DEFAULT_BUY_IN ? floorAdd : DEFAULT_BUY_IN;
       add = Math.min(add, Math.max(0, REBUY_CAP - p.stack));
       if (add <= 0) return;
-      // 就绪/结算阶段立即生效；手牌进行中记 pending，startHand 统一消化
-      const inHand = this.data.phase === 'playing' && !game.result;
-      if (inHand) {
-        this.pendingRebuyMap[seat] = (this.pendingRebuyMap[seat] || 0) + add;
-      } else {
-        p.stack += add;
-        if (this.startStacks[seat] !== undefined) this.startStacks[seat] += add;
-        this.render();
-      }
-      this.pushChat(seat, p.name, '补筹 +' + add);
+      this.pendingRebuyMap[seat] = add;
+      this.pushChat(seat, p.name, '申请补筹 +' + add);
       this.forcePublish();
       return;
     }
@@ -3121,18 +3178,24 @@ Page({
         }
       });
     }
-    // B3：真人手动补筹消化——手牌进行中申请的补筹记在 pendingRebuyMap，
-    // 下一手发牌前统一生效（不打断当手的 legality 与边池计算）。
+    // B3：真人手动补筹消化——申请一律记在 pendingRebuyMap（规则 1：下一手
+    // 生效），下一手发牌前统一切入。规则 2 时已把 add 规成整手倍，这里只补
+    // 撤销后站起等边角：人已不在座（站起/超时自动站起）→ 补筹作废，钱不白给。
+    // 已生效的 _myRebuyPending 到这里清（下一手开局，角标自然消失）。
     if (this.pendingRebuyMap && game) {
       Object.keys(this.pendingRebuyMap).forEach(s => {
         const p = game.seatOf(Number(s));
         const add = Math.round(Number(this.pendingRebuyMap[s]) || 0);
-        if (p && add > 0) {
+        if (p && add > 0 && !p.sittingOut && !this.standingMap[Number(s)]) {
           const roomCap = p.isHuman ? REBUY_CAP : DEFAULT_BUY_IN;
           const safe = Math.max(0, Math.min(add, roomCap - p.stack));
           if (safe > 0) {
             p.stack += safe;
             if (this.startStacks[p.seat] !== undefined) this.startStacks[p.seat] += safe;
+            if (Number(s) === Number(this.mySeat) && this._myRebuyPending) {
+              this._myRebuyPending = { hand: -1, add: 0 };
+              this.setData({ myRebuyAdd: 0 });
+            }
           }
         }
       });
@@ -3420,6 +3483,10 @@ Page({
         // 令牌进指纹——render fp 不含 actionSeat，房主端 applyFriendAction 写
         // map 后若其余成分恰好全同，不加令牌气泡会被跳过分支吞掉。
         'ax' + this._actEpoch,
+        // B3 规则 3：已申请补筹是独立实例状态（非 stack 派生），必须以 epoch
+        // 式字段进指纹——申请/撤销/生效的瞬间若其余成分未变，不加则角标变化
+        // 会被跳过分支吞掉（与 _actEpoch 同理）。
+        'rb' + (this._myRebuyPending ? this._myRebuyPending.hand + ':' + this._myRebuyPending.add : ''),
         this.myStanding ? 1 : 0,
         this.pendingSit ? 1 : 0, // 影响 mySeated（坐下待下一手入局）的派生态
         this.data.resultModal ? 'rm' : '',  // 结算弹窗开/关状态
@@ -3799,6 +3866,11 @@ Page({
         // 派生输入 mode/isHuman/sittingOut/stack/standing/mySeated 全在指纹内。
         canRebuy: this.mode === 'friend' && !!me && !!me.isHuman && !me.sittingOut &&
                   !standing && mySeated && me.stack < REBUY_CAP,
+        // B3 规则 3 的可见反馈：本手已申请的补筹额（下一手生效），筹码数字旁
+        // 「待补 +N」角标。镜像端在快照回来前由 _myRebuyPending 本地顶着。
+        myRebuyAdd: (this._myRebuyPending && game &&
+          this._myRebuyPending.hand === game.handNo && this._myRebuyPending.add > 0)
+          ? this._myRebuyPending.add : 0,
         // 我的区域（底部）
         myCards,
         myStack: meP ? meP.stack : 0,
@@ -5258,8 +5330,9 @@ Page({
     this.render();   // 同步底部状态行（等待准备就绪 / 已坐下待入局）
     this.publishPlay();
 
-    // B3：好友房我筹码不足（< 1 个大盲）且本手没弹过补筹窗 → 自动弹一次。
-    // 就绪阶段补筹立即生效（不进 pendingRebuyMap），补完正好赶上发下一手。
+    // B3 好友房自动弹补筹窗：我筹码不足 1 大盲且本手没弹过 → 自动弹一次。
+    // 弹的是申请表单（规则 1：下一手生效）——就绪阶段「补完再点准备」是
+    // 用户提出的核心场景，开局即带着新筹码。
     if (this.mode === 'friend' && game && game.handNo !== this._rebuyAskedHand) {
       this._rebuyAskedHand = game.handNo;
       const me = game.seatOf(this.mySeat);

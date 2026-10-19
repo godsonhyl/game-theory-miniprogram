@@ -599,6 +599,10 @@
 
 .mystk { flex: none; display: flex; flex-direction: column; align-items: flex-end; }
 .ms-v { font-size: calc(4.4 * var(--uh)); font-weight: 800; color: var(--gold); line-height: 1.1; }
+/* B3 规则 3 可见反馈：已申请补筹（下一手生效）在筹码数字旁挂角标——申请
+   到生效之间隔着等待，玩家必须时刻看得见「这笔钱在路上」。金色主数字里
+   用浅金缩小一号区分主次。 */
+.ms-pend { font-size: calc(2.4 * var(--uh)); font-weight: 700; color: #f3c98b; opacity: .9; }
 .ms-l { font-size: calc(2.4 * var(--uh)); color: var(--mut); }
 /* P1-7：底部我的筹码区下的 VPIP 小字——字号略小 + 色减淡，挤在「筹码」标注下
    一句微读牌数据，不抢主信息层级 */

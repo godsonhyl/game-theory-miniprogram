@@ -310,7 +310,7 @@
             <text class="pos-tag" wx:if="{{mySB}}">SB</text>
             <text class="pos-tag" wx:if="{{myBB}}">BB</text>
           </view>
-          <text class="ms-v">{{myStackText}}</text>
+          <text class="ms-v">{{myStackText}}<text wx:if="{{myRebuyAdd > 0}}" class="ms-pend"> 待+{{myRebuyAdd}}</text></text>
           <text class="ms-l">筹码</text>
           <!-- P1-7：滚动 VPIP 小字（仅 AI 局进指纹）。样本不足显示「--」——
                VPIP 1~2 手方差太大，数据不足时宁空不误导。 -->
@@ -353,21 +353,22 @@
     </view>
   </view>
 
-  <!-- B3 好友房手动补筹：输光后自己决定补多少（补后总额 ≤ 5000） -->
+  <!-- B3 好友房手动补筹（规则定案 2026-10-19）：档位 = +1000/+2000…整手倍；
+       一律下一手生效；同一手一笔可撤销。已申请态弹窗换「取消申请」口。 -->
   <view class="help-mask" wx:if="{{rebuyShow}}" bindtap="cancelRebuy">
     <view class="buyin-dialog" catchtap="onBlockTap">
-      <text class="buyin-title">补筹</text>
-      <text class="buyin-sub">当前 {{myStack}} · 补后不超 5000</text>
-      <view class="buyin-opts">
+      <text class="buyin-title">{{rebuyCancelMode ? '已申请补筹' : '补筹'}}</text>
+      <text class="buyin-sub">{{rebuyCancelMode ? '已申请 +' + rebuyValue + ' · 下一局开局生效' : '当前 ' + myStack + ' · 补后不超 5000 · 下一局生效'}}</text>
+      <view class="buyin-opts" wx:if="{{!rebuyCancelMode}}">
         <view class="bopt {{rebuyValue === item.v ? 'on' : ''}}" wx:for="{{rebuyOptions}}" wx:key="v"
               data-v="{{item.v}}" bindtap="onRebuyPick">{{item.t}}</view>
       </view>
-      <view class="rc-edit">
+      <view class="rc-edit" wx:if="{{!rebuyCancelMode}}">
         <input class="rc-input" type="number" value="{{rebuyValue}}" bindinput="onRebuyInput" />
       </view>
       <view class="buyin-btns">
-        <button class="btn-ghost sbtn" bindtap="cancelRebuy">取消</button>
-        <button class="btn-primary sbtn" bindtap="confirmRebuy">补筹 +{{rebuyValue}}</button>
+        <button class="btn-ghost sbtn" bindtap="cancelRebuy">{{rebuyCancelMode ? '关闭' : '取消'}}</button>
+        <button class="btn-primary sbtn" bindtap="confirmRebuy">{{rebuyCancelMode ? '取消申请' : '申请补筹 +' + rebuyValue}}</button>
       </view>
     </view>
   </view>
