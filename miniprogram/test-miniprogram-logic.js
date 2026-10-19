@@ -3561,6 +3561,23 @@ while (guard++ < 400) {
     ok(/淘汰赛进行中，不可中途加入/.test(tableSrc),
       'table.js chooseSeat 拦 SNG 中途加入（phase=playing 时 toast）');
 
+    // ---- B5 滑杆步进自适应（玩家审视 2026-10-17）----
+    ok(/Math\.ceil\(\(raiseMax - raiseMin\) \/ 120\)/.test(tableSrc),
+      'table.js render 步进 ceil((raiseMax-raiseMin)/120)（滑杆拖格数封顶）');
+    ok(/v >= max - step/.test(tableSrc),
+      'table.js onRaiseSlider 末格落全下（v>=max-step 直接取 max）');
+    ok(tableSrc.indexOf('const step = this.data.raiseStep || this.blindStep();') > -1,
+      'table.js onRaiseSlider 使用 render 写入的 raiseStep（缺省回退 blindStep）');
+
+    // ---- B6 买入弹窗 BB 文案动态化（玩家审视 2026-10-17）----
+    ok(/calcBuyInBB/.test(tableSrc), 'table.js 定义 calcBuyInBB（买入额折算 BB）');
+    ok(/buyInBBText/.test(tableSrc) && /buyInBBText/.test(tableWxml),
+      'table.js/WXML 都用 buyInBBText（弹窗文案动态）');
+    ok(tableSrc.indexOf('选择带入筹码（盲注 10/20，1000 ≈ 50BB）') === -1,
+      'table.js/WXML 不再残留写死的「盲注 10/20」买入文案');
+    ok(/onBuyInPick[\s\S]{0,300}buyInBBText: this\.calcBuyInBB\(v\)/.test(tableSrc),
+      'table.js onBuyInPick 同步刷新 BB 折算文案（换档位文案跟着变）');
+
     // ---- 批⑤补丁：SNG 桌型可选（onSngMode 带 max=，首页弹人数选择） ----
     ok(/sngShow/.test(idxSrc), 'index.js data 含 sngShow（SNG 配置弹窗 toggle）');
     ok(/sngMax/.test(idxSrc), 'index.js data 含 sngMax（SNG 桌型人数）');

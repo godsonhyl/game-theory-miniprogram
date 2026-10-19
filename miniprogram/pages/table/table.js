@@ -363,6 +363,7 @@ Page({
     buyInShow: false,     // 买入选择弹窗
     buyInSeat: -1,        // 准备入座的座位号
     buyInValue: DEFAULT_BUY_IN,
+    buyInBBText: 50,   // B6：买入额折算 BB 文案（默认 1000/20），弹窗文案动态用
     buyInOptions: BUY_IN_OPTIONS.map(v => ({ v: v, t: String(v) })),
 
     // 行动计时环（render 里随模式刷新：remote 30s / 单机 20s，供 wxml 与测试读）
@@ -1147,15 +1148,29 @@ Page({
     this.setData({
       buyInShow: true,
       buyInSeat: seat,
-      buyInValue: this.buyInStack[seat]
+      buyInValue: this.buyInStack[seat],
+      buyInBBText: this.calcBuyInBB(this.buyInStack[seat])
     });
   },
 
-  /** 选买入额档位 */
+  /**
+   * B6（玩家审视 2026-10-17）：买入额折算 BB 文案。
+   * 弹窗 Woods 文案「盲注 10/20，1000 ≈ 50BB」原是写死的——涨盲后 10/20
+   * 与实际盲注脱钩，玩家没法按 BB 口径估量买入额。waiting 期 game 可能
+   * 还没建（null），此时退回页面初始盲注 data.blindText（10/20），与
+   * 建局实际盲注一致（建局盲注 = 游戏选项传入，初始就这一档）。
+   */
+  calcBuyInBB(value) {
+    const bb = (game && game.bb) ? game.bb : Number(String(this.data.blindText || '10/20').split('/')[1]) || 20;
+    const v = Number(value) || DEFAULT_BUY_IN;
+    return Math.round(v / bb);
+  },
+
+  /** 选买入额档位：同步刷新 BB 折算文案 */
   onBuyInPick(e) {
     const v = Number(e.currentTarget.dataset.v);
     if (!v) return;
-    this.setData({ buyInValue: v });
+    this.setData({ buyInValue: v, buyInBBText: this.calcBuyInBB(v) });
   },
 
   cancelBuyIn() {
@@ -3291,8 +3306,15 @@ Page({
       // 自定义下注面板的上下限：MAX = 全下金额（raiseTo 可达上限），最小值由合法下注决定
       const raiseMin = (isMyTurn && legal) ? legal.minRaiseTo : 0;
       const raiseMax = (isMyTurn && legal) ? legal.maxRaiseTo : 0;
-      // 步进 = 小盲注：滑杆与 ± 按钮都以它为单位，金额永不为零头
-      const raiseStep = isMyTurn ? this.blindStep() : 0;
+      // B5（玩家审视 2026-10-17）：滑杆步进自适应。
+      // 原步进恒 = 小盲（默认 10），深筹局（如 max 3000）要拖 300 格——滑杆根本
+      // 不可用。步进 = max(小盲, ceil(区间跨度/120))：滑杆拖格数封顶 ≈ 120，
+      // 小额局（跨度 < 1200）仍保持小盲精度不变。盲注吸附语义交给
+      // snapToBlind（失焦/± 按钮/滑杆 onRaiseSlider 内），步进变粗只是调值
+      // 粒度变化，「金额永不为零头」的舱壁不受影响。
+      const raiseStep = isMyTurn
+        ? Math.max(this.blindStep(), Math.ceil((raiseMax - raiseMin) / 120))
+        : 0;
       // 非我回合 / 不可加注时收起自定义面板，避免残留数值误导。
       // 每手首帧额外强制收起：上一手展开的面板不得跨手残留（好友房镜像端同理）。
       const raiseCustom = wasReset
@@ -4356,11 +4378,15 @@ Page({
     this.setRaiseTo(raiseTo, open ? 'custom' : this.data.raisePreset);
   },
 
-  // 滑杆拖动：按小盲注步长吸附（step 由 WXML 传入，控件本身也是离散步进）
+  // 滑杆拖动：按步长吸附。B5（2026-10-17）步进来自 render 的 raiseStep
+  // （大区间自适应变粗，小局仍为小盲），拖到顶部落 max 档（否则粗步进永远
+  // 差一拍够不到全下额）。
   onRaiseSlider(e) {
-    const step = this.blindStep();
+    const step = this.data.raiseStep || this.blindStep();
+    const max = Number((this.data.legal || {}).maxRaiseTo) || this.data.raiseMax || 0;
     let v = Number(e.detail.value);
-    if (step > 1) v = Math.round(v / step) * step;
+    if (max && v >= max - step) v = max;          // 最后一格直接落全下
+    else if (step > 1) v = Math.round(v / step) * step;
     this.setRaiseTo(v, 'custom');
   },
 

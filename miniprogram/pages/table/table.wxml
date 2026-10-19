@@ -330,7 +330,7 @@
   <view class="help-mask" wx:if="{{buyInShow}}" bindtap="cancelBuyIn">
     <view class="buyin-dialog" catchtap="onBlockTap">
       <text class="buyin-title">坐下 · {{buyInSeat + 1}} 号位</text>
-      <text class="buyin-sub">选择带入筹码（盲注 10/20，1000 ≈ 50BB）</text>
+      <text class="buyin-sub">盲注 {{blindText}}，{{buyInValue}} ≈ {{buyInBBText}}BB</text>
       <view class="buyin-opts">
         <view class="bopt {{buyInValue === item.v ? 'on' : ''}}" wx:for="{{buyInOptions}}" wx:key="v"
               data-v="{{item.v}}" bindtap="onBuyInPick">{{item.t}}</view>
