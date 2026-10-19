@@ -1167,6 +1167,29 @@ while (guard++ < 400) {
     ok(dataStore.raiseAllIn === true && dataStore.raiseSubmit === maxT,
       '点「最大」→ 按钮切换为「全下」（' + dataStore.raiseSubmit + ' = max ' + maxT + '）');
 
+    /* 全下二次确认（新手可玩性 review 2026-10-19）。
+     * 弃牌有 2.2s 二次确认，而全下——一次点击押上全部筹码——此前没有任何保护。
+     * 新手把滑杆拖到最右或在输入框误敲大数，点一下按钮就输光。
+     * 这里验证：第一次点只进入确认态、不动筹码；第二次点才真正全下。 */
+    {
+      const stackBeforeAllin = dataStore.myStack;
+      const handNoBefore = (pageCtx.data && pageCtx.data.handNo) || 0;
+      ok(dataStore.raiseAllIn === true, '前置：当前按钮处于全下档（raiseAllIn）');
+      pageCtx.onRaise();                       // 第一次点击
+      ok(dataStore.allinConfirm === true,
+        '首次点「全下」只进入确认态（allinConfirm=true），不立即提交');
+      ok(dataStore.myStack === stackBeforeAllin && dataStore.raiseAllIn === true,
+        '确认态下筹码未变（' + stackBeforeAllin + '），未真正全下');
+      pageCtx.clearAllinTimer();               // 停掉自动复位计时器，避免影响后续断言
+      pageCtx.doAct = (function (orig) {       // 桩掉真正提交，只看是否走到提交分支
+        return function (action) { this._lastAct = action; };
+      })(pageCtx.doAct);
+      pageCtx.onRaise();                       // 第二次点击
+      ok(pageCtx._lastAct === 'allin',
+        '再次点击才真正全下（走到 doAct("allin")），实际 ' + pageCtx._lastAct);
+      ok(dataStore.allinConfirm === false, '提交后确认态复位');
+    }
+
     // 越界保护：+ 不越过上限（全下额常是零头，不能被抬高一档）
     pageCtx.onCustomStep({ currentTarget: { dataset: { dir: '1' } } });
     ok(dataStore.raiseTo === maxT,
@@ -2578,7 +2601,12 @@ while (guard++ < 400) {
       'WXML：滑杆范围 最小加注 ~ 最大（全下金额）');
     ok(/raiseSubmit/.test(tableSrc) && /raiseAllIn/.test(tableSrc),
       'render 计算 raiseSubmit / raiseAllIn（按钮文案与实际提交同口径）');
-    ok(/raiseAllIn \? '全下'/.test(wxmlSrc), 'WXML：加注按钮按 raiseAllIn 显示「全下」');
+        // 全下二次确认上线后按钮文案变成嵌套三元（raiseAllIn ? (allinConfirm ? '再点全下' : '全下') : ...），
+    // 原正则只认扁平写法会误报。这里同时锁三件事：全下态文案、确认态文案、确认态样式类。
+    ok(/raiseAllIn \? \(allinConfirm \? '再点全下' : '全下'\)/.test(wxmlSrc),
+      'WXML：加注按钮按 raiseAllIn 显示「全下」，待确认时显示「再点全下」');
+    ok(/ab-raise \{\{allinConfirm \? 'confirm' : ''\}\}/.test(wxmlSrc),
+      'WXML：全下确认态挂 confirm 类（与弃牌确认同一套警示样式）');
     ok(/Math\.max\(legal\.minRaiseTo, Math\.round\(this\.data\.raiseTo \|\| 0\)\)/.test(tableSrc),
       'onRaise 钳制口径：低于最小加注按最小值提交（输入框填 0 也不会真下 0）');
   }
@@ -2912,7 +2940,12 @@ while (guard++ < 400) {
     });
     ok(/Math\.max\(legal\.minRaiseTo, Math\.round\(this\.data\.raiseTo \|\| 0\)\)/.test(tableSrc),
       'onRaise 钳制口径与按钮文案一致：低于最小加注按最小值提交');
-    ok(/raiseAllIn \? '全下'/.test(wxmlSrc), 'WXML：加注按钮按 raiseAllIn 显示「全下」');
+        // 全下二次确认上线后按钮文案变成嵌套三元（raiseAllIn ? (allinConfirm ? '再点全下' : '全下') : ...），
+    // 原正则只认扁平写法会误报。这里同时锁三件事：全下态文案、确认态文案、确认态样式类。
+    ok(/raiseAllIn \? \(allinConfirm \? '再点全下' : '全下'\)/.test(wxmlSrc),
+      'WXML：加注按钮按 raiseAllIn 显示「全下」，待确认时显示「再点全下」');
+    ok(/ab-raise \{\{allinConfirm \? 'confirm' : ''\}\}/.test(wxmlSrc),
+      'WXML：全下确认态挂 confirm 类（与弃牌确认同一套警示样式）');
     ok(!/onRaiseChange/.test(tableSrc) && !/onRaiseChange/.test(wxmlSrc),
       '旧滑杆回调 onRaiseChange 无死代码、无悬空绑定');
   }

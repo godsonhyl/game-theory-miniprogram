@@ -1203,6 +1203,34 @@ console.log('\n【9.5】AI 决策可复现性 + 下注尺度因子（玩家审�
   ok(weakCheckSlow === 0, '非坚果牌（顶对）绝不触发慢打，实际 ' + weakCheckSlow + '/300');
 }
 
+/* ⑧ 听牌术语正确性（新手可玩性 review 2026-10-19）。
+ *
+ * 病根：detectDraws 的顺子听牌子句把 stOuts.size（可补的点数个数）的判据
+ * 写反了语义——size===2（真正的两头顺、8 张补牌、最值钱的听牌之一）被叫做
+ * 「两头卡顺」（卡顺 = 中洞单张，自相矛盾），而 size>=3 反而叫「两头顺听牌」。
+ * AI 侧只用 outs 不看 desc 所以决策没错，但任何展示 desc 的地方（教学提示、
+ * 新手牌型标签）都会把人教错。
+ *
+ * 正确术语：1 个点数 = 卡顺（4 张）、2 个 = 两头顺（8 张）、3+ = 双向听。 */
+{
+  const C = (rankIdx, suit) => (rankIdx << 2) | suit;
+  // rank 索引：2=0 3=1 4=2 5=3 6=4 7=5 8=6 9=7 T=8 J=9 Q=10 K=11 A=12
+  // 两头顺：8-9 + T-J → 缺 7 或 Q，两个点数、各 4 张 = 8 张补牌
+  const oesd = P.detectDraws([C(6, 1), C(7, 1)], [C(8, 2), C(9, 3), C(0, 0)]);
+  ok(oesd.outs === 8, '两头顺（8-9 + T-J）补牌 8 张，实际 ' + oesd.outs);
+  ok(/两头顺/.test(oesd.desc) && !/卡顺/.test(oesd.desc),
+    '两头顺显示「两头顺听牌」而非「两头卡顺」（旧命名自相矛盾），实际「' + oesd.desc + '」');
+  // 卡顺：8-9 + J-Q → 只缺 T 一个点数 = 4 张补牌
+  const gut = P.detectDraws([C(6, 1), C(7, 1)], [C(9, 2), C(10, 3), C(0, 0)]);
+  ok(gut.outs === 4, '卡顺（8-9 + J-Q）补牌 4 张，实际 ' + gut.outs);
+  ok(/卡顺/.test(gut.desc) && !/两头/.test(gut.desc),
+    '卡顺只显示「卡顺听牌」不带「两头」，实际「' + gut.desc + '」');
+  // 同花听：4 张同花色 → 9 张补牌（术语没动，防回归）
+  const flush = P.detectDraws([C(12, 0), C(10, 0)], [C(7, 0), C(3, 0), C(9, 1)]);
+  ok(flush.outs === 9 && /同花/.test(flush.desc),
+    '同花听牌补牌 9 张且描述含「同花」，实际 ' + flush.outs + ' / ' + flush.desc);
+}
+
 console.log('\n【10】行动建议模块');
 const ga = P.createGame({ players: [mkPlayer(0, 1000, true), mkPlayer(1, 1000)], sb: 10, bb: 20, dealerSeat: 0, seed: 'adv' });
 ga.startHand();

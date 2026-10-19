@@ -364,6 +364,7 @@ let tick = 20;
 let aiStep = 0;
 let aiTimer = null;
 let foldTimer = null;   // 弃牌二次确认自动复位计时器
+let allinTimer = null;  // 全下二次确认自动复位计时器（与 foldTimer 同构）
 let myActText = '';
 let myActCls = '';
 
@@ -389,6 +390,8 @@ Page({
     raisePreset: '',
     isMyTurn: false,
     foldConfirm: false,   // 弃牌二次确认：首次点「弃牌」进入确认态，再点才真正弃牌
+    allinConfirm: false,  // 全下二次确认：首次点「全下」进入确认态，再点才真正全下
+                          // （押上全部筹码，比弃牌更该防误触——新手拖滑杆到最右即触发）
     currentPlayerName: '',
     advice: {},
     result: null,
@@ -3106,6 +3109,7 @@ Page({
     this.clearResultTimer();
     this.clearResultModalTimer();
     this.clearFoldTimer();
+    this.clearAllinTimer();   // 全下确认计时器与弃牌同构，销毁页同样要清（防泄漏）
     this.stopEngineWatch();
     this.stopSfxPump();
     this.stopSync();
@@ -3550,6 +3554,35 @@ Page({
       const tickMax = this.timerMax();
       // P0-1：指纹里引用的 me 必须在拼接前解析——引擎未起局时（等待室）me 可能为空
       const mePre = game.seatOf(this.mySeat);
+      /* 我当前的牌型名（新手可玩性 review 2026-10-19）。
+       * 病根：牌型名此前只在**摊牌之后**出现在赢家座位标签与结算弹窗上；牌局进行中
+       * 玩家只能看到两张底牌 + 公共牌，永远不知道「我现在是两对还是三条」。
+       * 新手最容易卡住的正是「一对和两对哪个大」「我这是不是顺子」——牌型速览
+       * 放在首页，人在牌桌上打牌时不会回去翻。
+       * 现在翻牌出现后（board ≥ 3 张）每街算一次最佳成手，显示在底牌下方。
+       * ⚠️ 只显示「牌型名」这一纯事实，不含任何行动建议，故不受合规门控
+       *   （renderAdvice 的 mode !== 'ai' 限制只针对「建议加注/弃牌」这类结论）。
+       * ⚠️ 必须**在指纹 fp 之前**算出来——fp 里 'hn' 段要用它，放到后面会踩
+       *   const 的 TDZ（ReferenceError: Cannot access before initialization）。
+       */
+      let myHandName = '';
+      if (mePre && mePre.hole && mePre.hole.length === 2 && game.board.length >= 3 && !this.myStanding) {
+        const ev = P.evaluate(mePre.hole.concat(game.board));
+        if (ev && ev.name) myHandName = ev.name;
+        /* 听牌提示（新手可玩性 review）：只报「牌型名」会误导新手——
+         * A♠Q♠ + 9♠5♠J♣ 判定为「高牌」，新手以为自己什么都没有，转头就弃掉
+         * 一手四张同花（还有两张牌可成同花，是最值钱的听牌之一）。
+         * 故当已成牌型只是「高牌」或「一对」时，额外看一眼有没有 8 张以上的出路
+         * （同花听/两头顺听=8~9 张），有就补一句「听牌」。
+         * 只加「听」这个事实，不给「该跟注还是加注」的结论，仍不属于行动建议。
+         */
+        if (myHandName === '高牌' || myHandName === '一对') {
+          const dr = P.detectDraws ? P.detectDraws(mePre.hole, game.board) : null;
+          if (dr && dr.outs >= 8 && game.board.length < 5) {
+            myHandName = myHandName + ' · ' + (dr.desc || '听牌') + ' ' + dr.outs + ' 张';
+          }
+        }
+      }
       const fp = [
         g.handNo, g.street, g.potTotal(), g.currentBet, g.actionSeat,
         (g.board || []).join(','),
@@ -3565,6 +3598,10 @@ Page({
         this.data.readyPhase ? 'rp' + (this.data.readyList || []).map(x => x.seat + (x.ready ? 1 : 0)).join(',') : '',
         this.data.readyLeft,
         this.data.foldConfirm ? 1 : 0,
+        // 全下确认态：按钮文案在「全下 / 再点全下」间切换，是独立实例状态
+        // （非 stack/bet 派生）——不进指纹会在其余成分恰好全同时被跳过分支吞掉，
+        // 玩家点了没反应（与 foldConfirm 同理，见其上方注释）。
+        this.data.allinConfirm ? 1 : 0,
         this.data.raiseTo,
         this.data.raiseCustom ? 1 : 0,
         tick,                    // 计时环残值——变化时必须重绘
@@ -3580,6 +3617,11 @@ Page({
         'rb' + (this._myRebuyPending ? this._myRebuyPending.hand + ':' + this._myRebuyPending.add : ''),
         this.myStanding ? 1 : 0,
         this.pendingSit ? 1 : 0, // 影响 mySeated（坐下待下一手入局）的派生态
+        // 我的当前牌型名（新手可玩性 review）。虽是 board+hole 的纯派生量、
+        // 顶层已覆盖 board 与 p.hole，但它是本轮新增的独立显示字段，按本仓库
+        // 「新增任何写入 render 的 setData 字段都要同步加进指纹」的约定显式登记，
+        // 避免将来 hole 的指纹口径调整时把它静默吞掉。
+        'hn' + myHandName,
         this.data.resultModal ? 'rm' : '',  // 结算弹窗开/关状态
         // P0-1：AI 桌输光/练习模式开关——派生 myAIBusted/aiUnlimitedTip 由二者驱动，
         // 不进指纹则设置切换或筹码归零瞬间的 mytip 切换会被跳过分支吞掉
@@ -3964,6 +4006,7 @@ Page({
           ? this._myRebuyPending.add : 0,
         // 我的区域（底部）
         myCards,
+        myHandName,          // 当前牌型名（翻牌后才有；新手「我这是什么牌」的答案）
         myStack: meP ? meP.stack : 0,
         // myzone 显示用紧凑格式（与座位环同口径）。myStack 保持数字——
         // 结算/补筹等数值口径照旧读 myStack，不受显示格式影响。
@@ -5131,10 +5174,28 @@ Page({
     // 且 bindblur 的补正只在失焦时发生——点「加注」按钮可能先走这里，故必须兜底。
     const amt = Math.max(legal.minRaiseTo, Math.round(this.data.raiseTo || 0));
     if (amt >= legal.maxRaiseTo) {
+      /* 全下二次确认（新手可玩性 review 2026-10-19）。
+       * 病根：弃牌这种「只损失已投入部分」的动作有 2.2s 二次确认，而全下——
+       * 一次点击押上全部筹码——反而没有任何保护。新手把滑杆拖到最右、
+       * 或在数字输入框里误敲一个大数，点一下按钮就输光。保护力度完全反了。
+       * 这里复用弃牌的确认态模式（同一 2.2s 窗口、同样的「再点一次才生效」），
+       * 文案随按钮切换到「再点全下」，给新手看清后果的机会。 */
+      if (!this.data.allinConfirm) {
+        this.setData({ allinConfirm: true });
+        if (allinTimer) clearTimeout(allinTimer);
+        allinTimer = setTimeout(() => { allinTimer = null; this.setData({ allinConfirm: false }); }, 2200);
+        return;
+      }
+      if (allinTimer) { clearTimeout(allinTimer); allinTimer = null; }
+      this.setData({ allinConfirm: false });
       this.doAct('allin', 0, '全下', 'act-a');
     } else {
       this.doAct('raise', amt, '加注 ' + amt, 'act-r');
     }
+  },
+
+  clearAllinTimer() {
+    if (allinTimer) { clearTimeout(allinTimer); allinTimer = null; }
   },
 
   doAct(action, amount, text, cls) {
@@ -5142,6 +5203,8 @@ Page({
     if (game.actionSeat !== this.mySeat || game.result) return;
     // 任何行动都先解除弃牌确认态（防确认态残留到下一回合）
     if (this.data.foldConfirm) { this.setData({ foldConfirm: false }); this.clearFoldTimer(); }
+    // 同理解除全下确认态：换动作/下一轮都不该带着上次的「待确认」
+    if (this.data.allinConfirm) { this.setData({ allinConfirm: false }); this.clearAllinTimer(); }
     // 批⑨：act 前 street 快照——game.act() 可能触发街推进，翻前计数必须取推进前的 street
     const streetBefore = game.street;
     const res = game.act(this.mySeat, action, amount);

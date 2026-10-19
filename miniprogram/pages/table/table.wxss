@@ -537,9 +537,27 @@
 .mybar .card .r { font-size: calc(4.4 * var(--uh)); }
 .mybar .card .s { font-size: calc(3.6 * var(--uh)); }
 .mybar .card.back { border-width: 2rpx; }
-.mycards { display: flex; align-items: center; flex: none; }
+.mycards { display: flex; align-items: center; flex: none; position: relative; }
 .mycards .card { margin-right: calc(1.2 * var(--uw)); }
 .mycards.folded { opacity: .35; }
+/* 当前牌型胶囊（新手可玩性 review 2026-10-19）：挂在底牌正下方，金色小字。
+   .mycards 是横向 flex 且 flex:none —— 胶囊塞进同一行会把底牌挤窄，
+   故用 absolute 定位到底牌容器下沿外侧（.mycards 已置 relative 作参照），
+   不改变底牌布局，也不参与 mybar 的高度预算（不撑高、不顶到下方按钮区）。
+   z-index 提到 3：myzone 与按钮条相邻，避免被相邻层盖住。 */
+.myhand {
+  position: absolute; left: 0; right: 0; top: 100%;
+  margin-top: calc(0.6 * var(--uh));
+  text-align: center;
+  font-size: calc(1.9 * var(--uh));
+  line-height: calc(2.2 * var(--uh));
+  color: #e8a33d;
+  font-weight: 600;
+  letter-spacing: .04em;
+  pointer-events: none;
+  white-space: nowrap;
+  z-index: 3;
+}
 
 .mymid {
   flex: 1; min-width: 0; display: flex; align-items: center; justify-content: center;
@@ -655,6 +673,12 @@
 .ab-fold { background: linear-gradient(160deg, #5f6874, #3f4854); }
 /* 弃牌二次确认态：高亮警示，避免误触一键弃牌 */
 .ab-fold.confirm {
+  background: linear-gradient(160deg, #d4504a, #a8332e);
+  color: #fff; animation: foldPulse 1s ease-in-out infinite;
+}
+/* 全下二次确认态（新手可玩性 review 2026-10-19）：押上全部筹码比弃牌后果更重，
+   故沿用同一套警示脉冲动画，让「再点全下」在视觉上必须被看见再点第二次。 */
+.ab-raise.confirm {
   background: linear-gradient(160deg, #d4504a, #a8332e);
   color: #fff; animation: foldPulse 1s ease-in-out infinite;
 }

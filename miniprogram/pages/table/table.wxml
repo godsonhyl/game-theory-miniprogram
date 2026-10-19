@@ -247,6 +247,10 @@
             <view class="card back"></view>
             <view class="card back"></view>
           </block>
+          <!-- 我的当前牌型（新手可玩性 review）：翻牌后才有，与底牌同帧刷新。
+               弃牌后不再显示 —— 已出局的人看到「两对」只会困惑「那我怎么没赢」。
+               纯事实展示，非行动建议，不受练习模式合规门控。 -->
+          <view class="myhand" wx:if="{{myHandName && !myFolded}}">{{myHandName}}</view>
         </view>
 
         <view class="mymid">
@@ -290,12 +294,17 @@
           <view class="mytip" wx:elif="{{readyPhase}}">{{myReady ? '已准备 · 等待其他人就绪…' : '上一手已结束 · 点「准备就绪」继续'}}</view>
           <view class="mytip" wx:elif="{{result}}">本手已结束 · 每人盈亏见结算弹窗或「查看结算」</view>
           <view class="mytip" wx:elif="{{myActText}}">{{myActText}}</view>
-          <view class="mytip coach" wx:elif="{{coachShow}}">💡 {{coachTip}}</view>
-          <view class="mytip" wx:elif="{{advice.text}}">
+          <!-- 教练提示与牌力分析**并列**，不再是 wx:elif 互斥（新手可玩性 review）。
+               病根：两者曾在同一条 wx:elif 链上，coachShow 在 AI 模式首手即为 true，
+               第一次行动时「胜率/赔率」整块被静态提示挤掉 —— 新手最需要数据的
+               那一次决策反而看不到任何数据，要到操作一次后（doAct 关 coachShow）
+               才显示。现在各自独立判断，同屏共存。 -->
+          <view class="mytip coach" wx:if="{{coachShow}}" bindtap="onCoachClose">💡 {{coachTip}}</view>
+          <view class="mytip" wx:if="{{advice.text}}">
             <view class="adv-main">胜率 {{advice.equityPct}} · 赔率 {{advice.potOdds}} · {{advice.text}}</view>
             <view class="adv-explain" wx:if="{{advice.explain}}">{{advice.explain}}</view>
           </view>
-          <view class="mytip" wx:else>等待 {{currentPlayerName}} 行动…</view>
+          <view class="mytip" wx:if="{{!coachShow && !advice.text}}">等待 {{currentPlayerName}} 行动…</view>
           <!-- 弃牌后/本手结束后（未结算面板时）：显眼的「站起退出本局」入口 -->
           <view class="stand-link" wx:if="{{canStand && !result && !readyPhase}}" bindtap="onMenuStand">站起退出本局</view>
           <!-- B3 好友房手动补筹：入座且筹码不足时随时可补（弹窗里自定金额） -->
@@ -330,8 +339,8 @@
         <button class="ab ab-call" bindtap="onCheckOrCall" disabled="{{!isMyTurn}}">
           {{legal.toCall > 0 ? ('跟注 ' + legal.toCall) : '过牌'}}
         </button>
-        <button class="ab ab-raise" bindtap="onRaise" disabled="{{!isMyTurn || !legal.canRaise}}">
-          {{raiseAllIn ? '全下' : (raiseSubmit ? (raiseVerb + ' ' + raiseSubmit) : raiseVerb)}}
+        <button class="ab ab-raise {{allinConfirm ? 'confirm' : ''}}" bindtap="onRaise" disabled="{{!isMyTurn || !legal.canRaise}}">
+          {{raiseAllIn ? (allinConfirm ? '再点全下' : '全下') : (raiseSubmit ? (raiseVerb + ' ' + raiseSubmit) : raiseVerb)}}
         </button>
       </view>
     </view>
