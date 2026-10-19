@@ -1245,6 +1245,64 @@ ok(adv && typeof adv.text === 'string' && adv.text.length > 0, '练习模式下�
 ok(adv.equity >= 0 && adv.equity <= 1, '胜率区间合法: ' + adv.equityPct);
 ok(['strong', 'weak', 'neutral', 'draw'].indexOf(adv.tone) !== -1, '色调字段合法: ' + adv.tone);
 
+/* ============================================================
+ * 【盲位轮转】D/SB/BB 必须落在活着的玩家上（2026-10-19 用户反馈）
+ *  - 庄位被淘汰 → 顺延到其后的第一个活人（不是跳回最小座位号）
+ *  - 大小盲同理；盲注必须真的投出去（淘汰位不能吞盲）
+ *  - 只剩 2 人（heads-up）仍有 D/SB/BB：庄家=小盲，另一人=大盲
+ * ============================================================ */
+{
+  // (1) 庄位（座位2）被淘汰 → 顺延到座位3
+  const gb = P.createGame({
+    players: [mkPlayer(0, 1000), mkPlayer(1, 1000), mkPlayer(2, 0), mkPlayer(3, 1000)],
+    sb: 10, bb: 20, dealerSeat: 2, seed: 'btn-bust'
+  });
+  const rb = gb.startHand();
+  ok(rb.ok, '庄位被淘汰：仍能正常开局');
+  strictEq(gb.dealerSeat, 3, '庄位（2）被淘汰 → 顺延到座位3（不是跳回座位0）');
+  strictEq(gb.sbSeat, 0, '小盲顺延到庄位左一（座位0）');
+  strictEq(gb.bbSeat, 1, '大盲顺延到庄位左二（座位1）');
+  ok([gb.dealerSeat, gb.sbSeat, gb.bbSeat].every(s => gb.seatOf(s).stack > 0),
+    'D/SB/BB 全部落在活着的玩家上');
+  strictEq(gb.seatOf(gb.sbSeat).bet, 10, '小盲真的投出 10（淘汰位不会吞掉盲注）');
+  strictEq(gb.seatOf(gb.bbSeat).bet, 20, '大盲真的投出 20');
+  ok(gb.seatOf(2).hole.length === 0, '被淘汰座位不发牌');
+
+  // (2) heads-up：3 人桌淘汰 1 人 → 剩 2 个活人仍有 D/SB/BB
+  const gh = P.createGame({
+    players: [mkPlayer(0, 1000), mkPlayer(1, 1000), mkPlayer(2, 0)],
+    sb: 10, bb: 20, dealerSeat: 0, seed: 'hu-bust'
+  });
+  const rh = gh.startHand();
+  ok(rh.ok, '剩 2 个活人（heads-up）仍能开局');
+  strictEq(gh.dealerSeat, 1, 'heads-up：按钮轮到座位1');
+  strictEq(gh.sbSeat, 1, 'heads-up：庄家即小盲（座位1）');
+  strictEq(gh.bbSeat, 0, 'heads-up：另一人为大盲（座位0）');
+  strictEq(gh.seatOf(1).bet, 10, 'heads-up 小盲真的投出 10');
+  strictEq(gh.seatOf(0).bet, 20, 'heads-up 大盲真的投出 20');
+  strictEq(gh.actionSeat, 1, 'heads-up 翻前由小盲（按钮）先行动');
+
+  // (3) 连续轮转（含 heads-up）：每手淘汰上一手庄家，D/SB/BB 始终在活人上
+  const g4 = P.createGame({
+    players: [mkPlayer(0, 1000), mkPlayer(1, 1000), mkPlayer(2, 1000), mkPlayer(3, 1000)],
+    sb: 10, bb: 20, dealerSeat: 0, seed: 'btn-seq'
+  });
+  let allLive = true, allBlinds = true, handsRun = 0;
+  for (let h = 0; h < 6; h++) {
+    // 先把上一手的庄家清零（模拟淘汰），再开下一手
+    if (h > 0) { const pd = g4.seatOf(g4.dealerSeat); if (pd && pd.stack > 0) pd.stack = 0; }
+    const r = g4.startHand();
+    if (!r.ok) break;
+    handsRun++;
+    const live = g4.players.filter(p => p.stack > 0).map(p => p.seat);
+    if (![g4.dealerSeat, g4.sbSeat, g4.bbSeat].every(s => live.indexOf(s) >= 0)) allLive = false;
+    if (!(g4.seatOf(g4.sbSeat).bet > 0 && g4.seatOf(g4.bbSeat).bet > 0)) allBlinds = false;
+  }
+  ok(handsRun >= 3, '连续淘汰轮转至少推进 3 手（实际 ' + handsRun + '）');
+  ok(allLive, '连续轮转（含 heads-up）：D/SB/BB 始终落在活着的玩家上');
+  ok(allBlinds, '连续轮转（含 heads-up）：每手都真的投出小盲/大盲');
+}
+
 console.log('\n' + '='.repeat(52));
 if (fails.length === 0) {
   console.log('全部通过：' + pass + ' 项断言 ✓');

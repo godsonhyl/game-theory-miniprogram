@@ -1052,16 +1052,29 @@
       for (let c = 0; c < 52; c++) game.deck.push(c);
       shuffle(game.deck, game.rng);
 
-      const seats = game.inHandPlayers().map(p => p.seat).sort((a, b) => a - b);
+      // ⚠️ 盲位/按钮只能落在「活着的玩家」上（2026-10-19 用户反馈）：
+      // inHandPlayers() 只排除 sittingOut，**包含已淘汰（stack≤0）座位**——用它
+      // 轮转会让 D/SB/BB 落到淘汰位：盲注 postBlind min(盲注,0)=0 → 本手无盲注、
+      // 且只剩 2 个活人时 seats.length 仍 >2 → heads-up 分支永不触发。
+      // 上面已把 stack≤0 标成 folded，activePlayers() 即「本手活着的玩家」。
+      const seats = game.activePlayers().map(p => p.seat).sort((a, b) => a - b);
       if (seats.length < 2) {
         game.over = true;
         game.logMsg('不足 2 名玩家，牌局结束', 'warn');
         return { ok: false, error: 'not enough players' };
       }
 
-      // 按钮轮转
+      // 按钮轮转：从上一手庄位顺时针顺延一位。
+      // 若上一手庄位已被淘汰（不在活人名单），**顺延到庄位之后的第一个活人**
+      // （按座位号环绕），而不是跳回最小座位号——后者会让按钮凭空倒退。
       const dIdx = seats.indexOf(game.dealerSeat);
-      const btnSeat = dIdx === -1 ? seats[0] : seats[(dIdx + 1) % seats.length];
+      let btnSeat;
+      if (dIdx === -1) {
+        btnSeat = seats.find(s => s > game.dealerSeat);
+        if (btnSeat === undefined) btnSeat = seats[0];   // 环绕回最小活人座位
+      } else {
+        btnSeat = seats[(dIdx + 1) % seats.length];
+      }
       game.dealerSeat = btnSeat;
 
       const order = [];
