@@ -663,9 +663,6 @@ Page({
     this._rebuyAskedHand = -1;
     // B3 规则 3：我本手已申请的补筹 { hand, add }（防重复累计 + 撤销入口判据）
     this._myRebuyPending = { hand: -1, add: 0 };
-    // C7：加注档位会话记忆（preset 键 + 自定义面板展开偏好）。setRaiseTo 写入、
-    // render 重置帧恢复（校验当前街档位表，失效回 'min'）。纯实例字段不进指纹。
-    this._raiseHandMemory = { preset: 'min', custom: false };
     // AI 桌无限练习：true = 旧行为每手自动补满；false（默认）= 真枪实弹，我输光即本桌结束。
     // 放 this （实例字段）而非 data：参与 startHand 守卫与 render 指纹，属页面级常量而非渲染态。
     this.aiUnlimited = !!s.aiUnlimited;
@@ -3927,9 +3924,6 @@ Page({
       const isMyTurn = game.actionSeat === this.mySeat && !result && !standing;
       let legal = null;
       let raiseTo = 0;
-      // C7：自定义面板的恢复意图（null = 无恢复，走原有收起/保留逻辑）。
-      // 必须与 legal 同期声明——恢复判断要读 legal.canRaise。
-      let raiseCustomLocal = null;
       // 跨手重置的触发条件 = 「手数前进」，而不是「走过 startHand()」。
       // ⚠️ 曾经只挂在 startHand() 上，结果好友房复发「一直高亮上一局的」：
       // 镜像端根本不走 startHand()——enterRemote() 直接 loadSnapshot 房主快照
@@ -3968,24 +3962,11 @@ Page({
             : (this.data.raiseTo >= legal.minRaiseTo ? this.data.raiseTo : legal.minRaiseTo);
         }
       }
-      // C7（玩家审视 2026-10-17）：档位会话记忆恢复。
-      // 每手/每街重置帧把高亮恢复成「玩家上一手惯用的档位」（而不是一刀切回
-      // 最小），连续打牌少一次点击。只记 preset 键不记金额——金额随新一手
-      // pot/stack 语义全变，记金额必错；键恢复时由『最小额 + 档位口径』当场重算。
-      // 恢复前校验该档在当前街的档位表内（翻前 BB 档与翻后比例档键不同，
-      // 跨手跨街恢复可能失效 → 回退最小档自洽）。自定义面板的展开记忆
-      // （custom）只在玩家真的用自定义口径提交过时恢复。
-      const streetPresets = this.presetsForStreet(game ? game.street : P.STREET.PREFLOP);
-      const memPreset = (this._raiseHandMemory && this._raiseHandMemory.preset) || 'min';
-      const memCustom = !!(this._raiseHandMemory && this._raiseHandMemory.custom);
-      const presetRestore = wasReset
-        ? (streetPresets.some(x => x.k === memPreset) && memPreset !== 'custom' ? memPreset : 'min')
-        : this.data.raisePreset;
-      if (wasReset && memCustom && streetPresets.some(x => x.k === 'custom') && legal && legal.canRaise) {
-        // 恢复自定义面板展开 + 金额对齐最小额（原 onCustomTap 的「展开即对齐」口径）
-        raiseCustomLocal = true;
-        raiseTo = legal.minRaiseTo;
-      }
+      // 2026-10-19 用户明确要求：每一局开始（以及每次重置：换街 / 跟注额变化）
+      // 一律回到「最小」档、并收起自定义面板——**不再恢复上一手的档位记忆**。
+      // 旧的 C7「档位会话记忆」会把高亮一直停在玩家上次选的 50%，看起来像
+      // 「高亮卡住/又出现」（用户反复反馈）。现在可见高亮与金额都从保守档起步。
+      const presetRestore = wasReset ? 'min' : this.data.raisePreset;
       // 自定义下注面板的上下限：MAX = 全下金额（raiseTo 可达上限），最小值由合法下注决定
       const raiseMin = (isMyTurn && legal) ? legal.minRaiseTo : 0;
       const raiseMax = (isMyTurn && legal) ? legal.maxRaiseTo : 0;
@@ -3999,15 +3980,11 @@ Page({
         ? Math.max(this.blindStep(), Math.ceil((raiseMax - raiseMin) / 120))
         : 0;
       // 非我回合 / 不可加注时收起自定义面板，避免残留数值误导。
-      // 每手首帧额外强制收起：上一手展开的面板不得跨手残留（好友房镜像端同理）。
-      // ⚠️ C7：C7 的自定义面板恢复优先于这里的收起（玩家惯用自定义口径时
-      // 下一手应回到面板，而不是每次都被收掉）；两者都在同一帧写入 setData，
-      // 不产生中间态。
-      const raiseCustom = raiseCustomLocal !== null
-        ? raiseCustomLocal
-        : (wasReset
-            ? false
-            : (isMyTurn && legal && legal.canRaise ? this.data.raiseCustom : false));
+      // 重置帧（新一手 / 换街 / 跟注额变化）一律强制收起：上一手展开的面板
+      // 不得跨手残留（好友房镜像端同理）；也不再按记忆自动展开。
+      const raiseCustom = wasReset
+        ? false
+        : (isMyTurn && legal && legal.canRaise ? this.data.raiseCustom : false);
       // 档位条只在「轮到我且真的可以加注」时显示。只能跟注/全下时（canRaise=false：
       // 筹码不足，或被不足额全下封锁）档位没有任何意义，留着只会显示一个点不动的
       // 高亮（真机「高亮 50% 却只能跟注」）。JS 预计算，避免 WXML 写复合逻辑。
@@ -4024,7 +4001,7 @@ Page({
       // ⚠️ 高亮与金额必须「每帧同源」（2026-10-19 第三次复发修复）。
       // 只在「重置帧」重算有一个致命漏洞：重置帧可能发生在「不是我的回合」
       // （新一街前位对手先下注 → street/currentBet 变、actionSeat 不是我）：
-      // 高亮按 C7 记忆恢复成 p50，但金额因 isMyTurn=false 没算（仍为 0）；
+      // 旧实现里高亮按 C7 记忆恢复成 p50，但金额因 isMyTurn=false 没算（仍为 0）；
       // 等轮到我时 epoch 不再变化、wasReset=false，金额被钳回 minRaiseTo，
       // 于是又出现「高亮 50% + 加注=最小」的矛盾态（真机截图实锤）。
       // 修法：只要轮到我且可加注，每帧都按当前高亮档、用本帧最新 legal 重算
@@ -4084,7 +4061,7 @@ Page({
         raisePresets: this.presetsForStreet(game.street),
         // 档位高亮与金额必须同帧写入同一个 setData：分两次写会出现
         //「高亮已回『最小』但金额还是上一手」的中间态被渲染出来。
-        // C7：重置帧恢复会话记忆档（校验通过时），非重置帧保持原值；
+        // 重置帧一律回 'min'（2026-10-19 取消 C7 记忆）；非重置帧保持玩家当前选择。
         // presetTarget 兜底失败回落最小也反映在这一帧。
         raisePreset: presetFinal,
         // 档位条可见性（可加注才显示）：与 raisePreset 同帧写入，避免
@@ -5115,18 +5092,8 @@ Page({
     const submit = min ? Math.max(min, v) : v;
     const patch = { raiseTo: v, raiseSubmit: submit, raiseAllIn: !!(max && submit >= max) };
     if (preset !== undefined) patch.raisePreset = preset;
-    // C7（玩家审视 2026-10-17）：玩家主动选的档位记进会话记忆，下一手轮到我时
-    // 高亮直接回到该档（见 resetRaiseState/render 的 C7 段）。只记 preset 键，
-    // 不记金额——金额语义（pot/stack 尺度）随新手牌全变，记金额必错。
-    // onCustomTap 展开面板传 'custom'，恰好同时完成「custom=true」的记忆。
-    if (preset !== undefined && preset !== 'custom') {
-      this._raiseHandMemory = {
-        preset: preset,
-        custom: (this._raiseHandMemory && this._raiseHandMemory.custom) || false
-      };
-    } else if (preset === 'custom') {
-      this._raiseHandMemory = { preset: 'custom', custom: true };
-    }
+    // 不再写「档位会话记忆」（2026-10-19 用户要求每局重置到最小）：
+    // 高亮只在当前这一街内保持玩家手选，重置帧统一回 'min'。
     this.setData(patch);
     return patch;
   },
@@ -5148,19 +5115,12 @@ Page({
    * 上一手旧值 —— 只 setData 会造成「高亮已重置为最小，金额却还是上一手的」。
    * render() 用这个实例字段做一次覆盖，读写都在同步路径上，绕开 setData 时序。
    *
-   * C7（玩家审视 2026-10-17）：档位选择做会话记忆——玩家点过的档位键记进
-   * `this._raiseHandMemory = { preset, custom }`（setRaiseTo 写入，见其注释），
-   * resetRaiseState 只做保底归一（尚未点过任何档位时回 'min'/false）。
-   * render 的重置帧读该记忆恢复高亮与金额（见 render 内 C7 段）——本方法的
-   * setData 'min' 是旧值的兜底，恢复逻辑以 render 为单一来源，二者不冲突。
+   * 2026-10-19：取消 C7「档位会话记忆」——每局/每街重置一律回 'min' 并收起
+   * 自定义面板（用户要求「每一局开始不要高亮或默认最小」）。render 的重置帧
+   * 直接以 'min' 重算金额（见 render），与本方法的 setData 同为保守档，不冲突。
    */
   resetRaiseState() {
     this._raiseResetPending = true;
-    // C7：记忆字段保底归一（首次游玩尚未点过任何档位时才落默认值）。
-    this._raiseHandMemory = {
-      preset: (this._raiseHandMemory && this._raiseHandMemory.preset) || 'min',
-      custom: (this._raiseHandMemory && this._raiseHandMemory.custom) || false
-    };
     this.setData({
       raisePreset: 'min',
       raiseTo: 0,

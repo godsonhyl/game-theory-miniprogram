@@ -1257,28 +1257,16 @@ while (guard++ < 400) {
     // ⚠️ 只断言「档位高亮 + 自定义面板」这两个纯 UI 态，不在此处断言金额：
     // startHand 内部会 advance()，AI 行动会合法地改写 raiseTo/raiseSubmit，
     // 金额的正确断言在下方「新一局轮到我」那块（那里语义才成立）。
-    // C7 口径（玩家审视 2026-10-17）：重置帧恢复「会话记忆」。上一块先点了
-    // 100% 档（记忆 preset='p100'）又展开自定义面板（onCustomTap 把记忆推进为
-    // {preset:'custom', custom:true}）——最后一次交互是自定义口径，新一手应恢复
-    // 展开\t自定义面板（高亮由展开的面板本身承载，档位条高亮回 min）。
+    // 2026-10-19 用户明确要求：每一局开始一律回「最小」并收起自定义面板
+    // （取消 C7 档位会话记忆）。上一块制造了脏状态（选 100% + 展开自定义面板），
+    // 开新一局后必须高亮回 min、面板收起，不再「一直高亮上一手的 100%」。
     pageCtx.startHand();
-
-    // startHand 会经 advance() 让 AI 合法行动、render 用 setData 异步落值——
-    // 单独跑/全量跑时序差可让「记忆恢复」尚未走到位。同步路径上有
-    // _raiseResetPending（见下一断言块）保证高亮/金额一致，这里允许两种
-    // 表现之一：面板已按记忆恢复展开，或恢复仍挂在 pending（下一帧落值）。
-    const customRestored = dataStore.raiseCustom === true ||
-      pageCtx._raiseHandMemory.custom === true;
-    ok(customRestored,
-      'C7 开新一局 → 自定义面板按记忆恢复展开（脏状态是 ' + dirtyCustom + '）');
     ok(dataStore.raisePreset === 'min',
-      'C7 开新一局 → 最后一次交互是自定义 → 档位条高亮回最小（实际 ' + dataStore.raisePreset +
-      '，自定义由展开面板承载，不重复高亮档位条）');
-    // 记忆本体：两次交互推进会话记忆
-    ok(pageCtx._raiseHandMemory && pageCtx._raiseHandMemory.preset === 'custom',
-      'C7 onPresetTap→onCustomTap 把记忆推进为 custom（最后交互口径为准）');
-    ok(pageCtx._raiseHandMemory.custom === true,
-      'C7 onCustomTap 把自定义偏好写进 _raiseHandMemory.custom');
+      '开新一局 → 高亮回「最小」（实际 ' + dataStore.raisePreset + '，不再记忆上一手的 100% 档）');
+    ok(dataStore.raiseCustom === false,
+      '开新一局 → 自定义面板收起（不再按记忆自动展开，实际 ' + dataStore.raiseCustom + '）');
+    ok(pageCtx._raiseHandMemory === undefined,
+      'C7 档位会话记忆已移除（_raiseHandMemory 不再存在）');
 
     // 关键：setData 异步 —— startHand 里 reset 后紧接着的 render 同帧
     // 读 this.data.raiseTo 拿到的还是旧值。必须靠 _raiseResetPending 实例字段
@@ -1292,10 +1280,7 @@ while (guard++ < 400) {
       require('path').join(__dirname, 'pages/table/table.js'), 'utf8');
     guardResetRaiseState(tableSrc2);
 
-    // ---- 行为闭环：新一局轮到我时，面板恢复与金额必须同源（C7 口径） ----
-    // 记忆是自定义口径（onCustomTap 是最后一次交互）→ 面板恢复展开、金额对齐
-    // 最小加注（原 onCustomTap「展开即对齐」口径）。一键没点过档位时记忆回
-    // 'min'，金额= 最小加注（旧口径语义，同样被覆盖在这里）。
+    // ---- 行为闭环：新一局轮到我时，高亮=最小、金额=最小加注（保守档起步） ----
     {
       const t0 = Date.now();
       while (Date.now() - t0 < 40000 &&
@@ -1308,14 +1293,11 @@ while (guard++ < 400) {
     }
     if (dataStore.isMyTurn && dataStore.legal && dataStore.legal.canRaise) {
       const freshMin = dataStore.legal.minRaiseTo;
-      // 已知时序差（与上面 direct-startHand 断言同源）：等待循环退出在
-      // 「轮到我」瞬间，此时记忆恢复可能还挂在 _raiseResetPending 待消费——
-      // 允许「已按记忆展开」或「记忆仍挂 pending」两种之一，见下一断言。
-      ok(dataStore.raiseCustom === true || pageCtx._raiseHandMemory.custom === true,
-        '新一局轮到我 → 自定义面板按记忆保持展开（曾为跨手残留 bug，现为有意恢复；允许恢复挂 pending）');
-      ok(dataStore.raiseSubmit >= freshMin,
-        '新一局轮到我 → 恢复面板金额对齐最小加注 ' + freshMin +
-        '（submit=' + dataStore.raiseSubmit + '，与展开口径自洽）');
+      ok(dataStore.raisePreset === 'min',
+        '新一局轮到我 → 高亮为「最小」（实际 ' + dataStore.raisePreset + '）');
+      ok(dataStore.raiseSubmit === freshMin,
+        '新一局轮到我 → 加注金额 = 最小加注 ' + freshMin + '（实际 ' + dataStore.raiseSubmit + '）');
+      ok(dataStore.raiseCustom === false, '新一局轮到我 → 自定义面板保持收起');
     } else {
       ok(false, '新一局后未能推进到「轮到我且可加注」，无法验证金额与高亮自洽' +
         '（isMyTurn=' + !!dataStore.isMyTurn + ' canRaise=' +
@@ -1344,13 +1326,12 @@ while (guard++ < 400) {
     pageCtx._lastRenderFp = null;   // 强制走完整渲染，绕开指纹跳过分支
     pageCtx.render();
 
-    // C7 口径：恢复以「最后一次交互」为准——onCustomTap 把记忆推进为
-    // {preset:'custom', custom:true} → 重置帧恢复展开面板，档位条高亮回最小。
+    // 2026-10-19：手数前进（镜像端不走 startHand）也必须回「最小」并收起面板。
     ok(dataStore.raisePreset === 'min',
-      '★ 手数前进但未走 startHand → 最后交互为自定义 → 档位条高亮回最小（实际 ' +
-      dataStore.raisePreset + '，脏值 ' + dirtyPreset + '；面板承载高层选择）');
-    ok(dataStore.raiseCustom === true,
-      '★ 手数前进但未走 startHand → 自定义面板按记忆恢复展开（实际 ' + dataStore.raiseCustom + '）');
+      '★ 手数前进但未走 startHand → 高亮回「最小」（实际 ' + dataStore.raisePreset +
+      '，脏值 ' + dirtyPreset + '）');
+    ok(dataStore.raiseCustom === false,
+      '★ 手数前进但未走 startHand → 自定义面板收起（实际 ' + dataStore.raiseCustom + '）');
     if (dataStore.isMyTurn && dataStore.legal && dataStore.legal.canRaise) {
       ok(dataStore.raiseTo === dataStore.legal.minRaiseTo,
         '重置帧轮到我 → 面板恢复金额对齐最小加注 ' + dataStore.legal.minRaiseTo +
@@ -1361,11 +1342,11 @@ while (guard++ < 400) {
     }
   }
 
-  /* ---------- 回归：高亮与金额跨「非我回合的重置」错位（2026-10-19 复发） ----------
-   * 病根：重置帧（street/currentBet 变）若发生在「不是我的回合」，高亮会按 C7
-   * 记忆恢复成 p50/bb30，但金额因 isMyTurn=false 没算；等轮到我时 epoch 不再变、
-   * wasReset=false，金额被钳回 minRaiseTo → 「高亮 50% + 加注=最小」矛盾态。
-   * 修复：只要轮到我且可加注，每帧都按当前高亮档重算金额（presetTarget 传本帧 legal）。 */
+  /* ---------- 回归：非我回合的重置也必须回「最小」，且金额与高亮同源 ----------
+   * 场景：街/跟注额变化的重置发生在「不是我的回合」（前位对手先下注），随后轮到我。
+   * 必须：重置帧高亮回 min、金额清零；轮到我时金额按 min 重算。
+   * 2026-10-19 取消 C7 记忆后，「高亮 50% + 加注=最小」从机制上消失；
+   * 这里锁住「重置回 min」+「每帧同源」两条不变量。 */
   {
     pageCtx.onLoad({ room: '300099', own: '1' });
     pageCtx.addBot();
@@ -1381,9 +1362,6 @@ while (guard++ < 400) {
     me.folded = false; me.allIn = false; me.canRaise = true; me.actedBet = null;
     if (!(me.stack > 400)) me.stack = 5000;
     gm.currentBet = Math.max(20, Number(gm.currentBet) || 0);
-    // 高亮档按当前街选合法键：翻前用 bb30，翻后用 p50
-    const presetKey = (gm.street === 'preflop') ? 'bb30' : 'p50';
-    pageCtx._raiseHandMemory = { preset: presetKey, custom: false };
     pageCtx._raiseEpoch = null;             // 强制下一帧视为重置
     pageCtx._raiseResetPending = true;
 
@@ -1392,11 +1370,11 @@ while (guard++ < 400) {
     pageCtx._lastRenderFp = null;
     pageCtx.render();
     ok(dataStore.isMyTurn === false, '帧A：isMyTurn=false（非我回合的重置）');
-    ok(dataStore.raisePreset === presetKey,
-      '帧A：高亮按记忆恢复为 ' + presetKey + '（实际 ' + dataStore.raisePreset + '）');
+    ok(dataStore.raisePreset === 'min',
+      '帧A：重置帧高亮回「最小」（实际 ' + dataStore.raisePreset + '）');
     ok(dataStore.raiseTo === 0, '帧A：非我回合金额暂为 0（实际 ' + dataStore.raiseTo + '）');
 
-    // 帧 B：轮到我，epoch 不变（不触发重置）→ 必须仍按高亮档重算金额
+    // 帧 B：轮到我，epoch 不变（不触发重置）→ 金额按 min 重算
     gm.actionSeat = my;
     pageCtx._lastRenderFp = null;
     const origPT = pageCtx.presetTarget;
@@ -1409,13 +1387,13 @@ while (guard++ < 400) {
     pageCtx.render();
     pageCtx.presetTarget = origPT;
     if (dataStore.isMyTurn && dataStore.legal && dataStore.legal.canRaise) {
-      ok(pageCtx.__ptCalled && pageCtx.__ptCalled.v === presetKey,
-        '★ 帧B（非重置、轮到我）仍按高亮档 ' + presetKey + ' 重算金额（不再只在重置帧算）');
+      ok(pageCtx.__ptCalled && pageCtx.__ptCalled.v === 'min',
+        '★ 帧B（非重置、轮到我）按高亮档 min 重算金额（每帧同源）');
       ok(pageCtx.__ptCalled && pageCtx.__ptCalled.hasLegal === true,
         '★ 重算传入本帧 legal（不读上一帧 this.data.legal）');
       ok(dataStore.raiseSubmit === dataStore.legal.maxRaiseTo && dataStore.raiseAllIn === true,
         '★ 金额跟随高亮档（哨兵=全下额→按钮变全下）：submit=' + dataStore.raiseSubmit);
-      ok(dataStore.raisePreset === presetKey, '帧B：高亮保持 ' + presetKey + '（与金额同源）');
+      ok(dataStore.raisePreset === 'min', '帧B：高亮保持 min（与金额同源）');
     } else {
       ok(false, '帧B 未能形成「轮到我且可加注」（isMyTurn=' + !!dataStore.isMyTurn +
         ' canRaise=' + !!(dataStore.legal && dataStore.legal.canRaise) + '），无法验证同源');
