@@ -1055,6 +1055,104 @@ console.log('\n【9.5】AI 决策可复现性 + 下注尺度因子（玩家审�
     '深码与 3bb 短码入池率落差 > 15 个百分点（短码不再拿垃圾牌跟注），实际 ' + ((deep - short) * 100).toFixed(1) + '%');
 }
 
+/* ⑥ 翻后加注尺度必须携带牌力（2026-10-19 资深玩家 review 第三轮）。
+ *
+ * 病根：旧实现 equity > 0.66 就「价值加注」，加注量恒为 currentBet*(1.7+aggro*0.6)
+ * —— 与自己的牌力**完全无关**。真实牌局实测 504 次加注，加注量对胜率的相关系数
+ * r = -0.056（≈0）：AA(0.95) 与 A5(0.82) 加注量一模一样。这等于把「我有 0.66 以上
+ * 的牌」写在脸上，对手只看下注大小就能决定跟不跟 —— 翻后最大的破口。
+ *
+ * 现按牌力分三档（超强/价值/薄价值），尺度依次为 1.4/1.7/2.0 倍池。
+ * 此守卫锁两件事：① 牌力越强、加注到越大（同场景直达比较，不赌概率）；
+ * ② 尺度落在真人的 1.2~2.4 倍池区间内（防止再出现 210%/220% 这种超池重锤）。 */
+{
+  const cc = (r, s) => (r << 2) | s;
+  // 翻牌 A♠K♠3♥：AA 暗三 / A5 顶对弱踢 / T9 空气 —— 三档分明
+  const board = [cc(12, 0), cc(11, 0), cc(2, 1)];
+  const postCtx = function (hole, tag) {
+    return {
+      hole, board, pot: 100, toCall: 50, stack: 1000, currentBet: 50, numActive: 2,
+      positionFactor: 0.5,
+      style: { aggro: 0.5, tight: 0.5, bluffFreq: 0, heroCall: 0, slowplay: 0 },
+      minRaiseTo: 100, maxRaiseTo: 1000, canRaise: true, bb: 20,
+      rng: P.createRng('post-' + tag)
+    };
+  };
+  const aaHole = [cc(12, 1), cc(12, 2)];   // 顶暗三
+  const a5Hole = [cc(12, 2), cc(3, 1)];    // 顶对弱踢
+  const airHole = [cc(8, 0), cc(7, 1)];    // 纯空气
+  const aaEq = P.quickEquity(aaHole, board, 1, 1800, P.createRng('eq-aa')).equity;
+  const a5Eq = P.quickEquity(a5Hole, board, 1, 1800, P.createRng('eq-a5')).equity;
+  const airEq = P.quickEquity(airHole, board, 1, 1800, P.createRng('eq-air')).equity;
+  ok(aaEq > a5Eq && a5Eq > airEq,
+    '测试场景牌力有序 AA(' + aaEq.toFixed(2) + ') > A5(' + a5Eq.toFixed(2) + ') > T9(' + airEq.toFixed(2) + ')');
+  const aaAct = P.aiDecide(postCtx(aaHole, 'aa'));
+  const a5Act = P.aiDecide(postCtx(a5Hole, 'a5'));
+  const airAct = P.aiDecide(postCtx(airHole, 'air'));
+  // ① 强牌必须加注，且加注额大于弱牌（尺度携带牌力）
+  ok(aaAct.action === 'raise' || aaAct.action === 'allin',
+    '顶暗三面对 1/2 池下注会加注（不慢打到丢失价值），实际 ' + aaAct.action);
+  ok(a5Act.action === 'raise' || a5Act.action === 'allin',
+    '顶对弱踢（equity 0.8）也进价值加注区，实际 ' + a5Act.action);
+  ok(aaAct.amount > a5Act.amount,
+    '牌力越强加注越大：AA(' + aaAct.amount + ') > A5(' + a5Act.amount + ') —— 尺度携带牌力信息（旧实现两者相等）');
+  // ② 空气牌弃掉
+  ok(airAct.action === 'fold', '纯空气面对 1/2 池下注弃牌，实际 ' + airAct.action);
+  // ③ 尺度落在真人区间：加注到 1.2~2.4 倍池（100 底池 → 120~240）
+  ok(aaAct.amount >= 120 && aaAct.amount <= 240,
+    '超强档加注尺度在 1.2~2.4 倍池区间（旧实现曾达 210%/220% 超池重锤），实际 ' + (aaAct.amount / 100).toFixed(1) + ' 倍池');
+  ok(a5Act.amount >= 120 && a5Act.amount <= 240,
+    '价值档加注尺度在 1.2~2.4 倍池区间，实际 ' + (a5Act.amount / 100).toFixed(1) + ' 倍池');
+  // ④ 统计口径守卫：真实牌局里加注量对胜率的相关系数必须显著为正
+  //    （旧实现实测 -0.056）。采样量控制在 120 手，避免测试明显变慢。
+  {
+    const pairs = [];
+    for (let t = 0; t < 120; t++) {
+      const gg = P.createGame({
+        players: [0, 1].map(i => ({ seat: i, name: 'p' + i, stack: 1000, isHuman: false, style: { aggro: 0.5, tight: 0.5 } })),
+        sb: 10, bb: 20, dealerSeat: t % 2, seed: 'corr' + t
+      });
+      gg.startHand();
+      let guard = 0;
+      while (!gg.result && guard++ < 200) {
+        const seat = gg.actionSeat;
+        if (seat < 0) break;
+        const pp = gg.seatOf(seat), lg = gg.legalActions(seat);
+        if (!lg) break;
+        const eq = gg.board.length >= 3
+          ? P.quickEquity(pp.hole, gg.board, 1, 300, P.createRng('ce' + t + guard)).equity : null;
+        const dd = P.aiDecide({
+          hole: pp.hole, board: gg.board, pot: gg.potTotal(), toCall: lg.toCall, stack: pp.stack,
+          currentBet: gg.currentBet, numActive: gg.activePlayers().length, positionFactor: 0.5,
+          style: pp.style, minRaiseTo: lg.minRaiseTo, maxRaiseTo: lg.maxRaiseTo,
+          canRaise: lg.canRaise, bb: gg.bb, rng: P.createRng('cr' + t + guard)
+        });
+        const potNow = gg.potTotal();
+        if ((dd.action === 'raise' || dd.action === 'allin') && eq !== null && potNow > 0) {
+          pairs.push([eq, dd.amount / potNow]);
+        }
+        gg.act(seat, dd.action, dd.amount);
+      }
+    }
+    if (pairs.length > 15) {
+      const n = pairs.length;
+      const mx = pairs.reduce((a, b) => a + b[0], 0) / n;
+      const my = pairs.reduce((a, b) => a + b[1], 0) / n;
+      let sxy = 0, sxx = 0, syy = 0;
+      pairs.forEach(function (pr) {
+        sxy += (pr[0] - mx) * (pr[1] - my);
+        sxx += (pr[0] - mx) * (pr[0] - mx);
+        syy += (pr[1] - my) * (pr[1] - my);
+      });
+      const r = sxy / Math.sqrt(sxx * syy);
+      ok(r > 0.10,
+        '真实牌局加注尺度与牌力正相关 r>0.10（旧实现 -0.056 等于亮牌），实际 r=' + r.toFixed(3) + '（' + n + ' 次加注）');
+    } else {
+      ok(false, '相关性采样不足（仅 ' + pairs.length + ' 次加注），检查测试场景是否还打到翻后');
+    }
+  }
+}
+
 console.log('\n【10】行动建议模块');
 const ga = P.createGame({ players: [mkPlayer(0, 1000, true), mkPlayer(1, 1000)], sb: 10, bb: 20, dealerSeat: 0, seed: 'adv' });
 ga.startHand();

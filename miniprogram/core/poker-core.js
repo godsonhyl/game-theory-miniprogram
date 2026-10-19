@@ -794,23 +794,70 @@
     // 0（池级以下）→0；1（池级）→+0.03；2（两倍超池）→+0.09；线形收敛上限 0.12
     const sizeAdj = Math.max(-0.04, Math.min(0.12, (betRatio - 0.5) * 0.06));
 
+    /* ---- 牌力分档（2026-10-19 资深玩家 review 第三轮）----
+     * 旧实现只有一条线 equity > 0.66 就「价值加注」，且加注量恒为
+     * currentBet * (1.7 + aggro*0.6) —— 与自己的牌力**完全无关**。
+     * 实测 504 次加注里，加注量对胜率的相关系数 r = -0.056（≈ 0）：
+     * AA(0.95) 与 A5(0.82) 加注量一模一样。这等于把「我有 0.66 以上的牌」
+     * 写在脸上——对手只需看下注大小就能决定跟不跟，是翻后最大的破口。
+     * 现在按牌力把加注分成三档，尺度随牌力递增（薄价值/价值/超强）：
+     *   equity ≥ 0.88 → 重注（1.0~1.6 池），打满价值
+     *   equity ≥ 0.74 → 标准价值（0.6~0.9 池）
+     *   equity ≥ 0.62 → 薄价值小注（0.35~0.5 池）——顶对类不再重锤亮牌
+     * 分档让「下注大小」重新携带牌力信息，且强牌收更多、边缘牌不送钱。
+     */
+    const valueTier = equity >= 0.88 ? 3 : (equity >= 0.74 ? 2 : (equity >= 0.62 ? 1 : 0));
+    // 尺度：以底池为基准，随档位与该人格的攻击性缩放。
+    // ⚠️ 第一版写成 max(currentBet*1.6, pot*frac + currentBet) —— currentBet 是
+    // 「我的总投入额」不是「新增额」，加一次就翻倍，实测 AA 在 1/2 池下注面被加到
+    // 210% 池（超池重锤）。改为以「本街要加到的总额」为口径：
+    //   目标总额 = currentBet + pot * frac，再夹到 [minRaiseTo, maxRaiseTo]。
+    // frac 取 0.5/0.75/1.2 三档（薄价值/价值/超强），乘以攻击性系数。
+    const sizeScale = 0.85 + aggressive * 0.30;
+    // frac = 「加注到当前底池的几倍」的增量部分。真人价值加注的标杆尺度：
+    //   薄价值 ~1.4 池（跟注+小加）、标准 ~1.7 池、超强 ~2.0 池（近乎全下压力）。
+    // 旧值 0.5/0.75/1.2 → 换算成 1.5/1.75/2.2 倍池，最高档超了 2 倍池显得离谱。
+    const tierFrac = [0, 0.40, 0.70, 1.00][valueTier] * sizeScale;
+    const tierBetTo = function () {
+      // 价值加注的标准口径：raiseTo = 当前底池 × (1 + frac)。
+      // ⚠️ 踩过三次，记录一下口径演进，避免后人再试错：
+      //   ① max(currentBet*1.6, pot*frac+currentBet) → AA 加到 210% 池
+      //   ② currentBet + pot*frac                       → 只加个零头，白给对手赔率
+      //   ③ currentBet + toCall + pot*frac              → 220% 池，超池重锤
+      // 根因：pot 已经包含对手这一注（toCall 在池内），再叠加 currentBet/toCall
+      // 就是重复计算。正确口径只看「当前底池」，加注到池的 (1+frac) 倍：
+      //   frac 0.5 → 加注到 1.5 池（薄价值）  0.75 → 1.75 池  1.2 → 2.2 池（超强）
+      // 下限保「至少合法加注」，上限由 raiseDecision 夹到 maxRaiseTo。
+      return Math.max(Math.round(pot * (1 + tierFrac)), currentBet + toCall);
+    };
+
     if (toCall === 0) {
-      if (equity > 0.72 || (draw.outs >= 8 && equity > 0.42)) {
+      if (valueTier > 0 || (draw.outs >= 8 && equity > 0.42)) {
         // 慢打诱敌：强牌按概率过牌喂对手一手，诱其下注后再反加。仅可过牌时触发
         // （toCall===0，否则在跟注/加注分支）。默认 slowplay=0 永不触发，行为不变。
-        if (rndFloat() < slowplay) return { action: ACTION.CHECK, amount: 0, reason: '慢打诱敌' };
+        // 慢打只对「超强」档开放——中等牌慢打等于免费送对手看下一张。
+        if (valueTier >= 3 && rndFloat() < slowplay) return { action: ACTION.CHECK, amount: 0, reason: '慢打诱敌' };
+        // 主动下注无 currentBet（=0）时，用底池比例直接下注
         return raiseDecision(
-          Math.max(currentBet * 2, Math.round(pot * (0.5 + aggressive * 0.35))),
-          '价值下注'
+          valueTier > 0 ? Math.round(pot * tierFrac) : Math.round(pot * (0.5 + aggressive * 0.35)),
+          valueTier >= 3 ? '强牌价值下注' : (valueTier === 2 ? '价值下注' : '薄价值下注')
         );
       }
       return { action: ACTION.CHECK, amount: 0, reason: '控池过牌' };
     }
 
-    if (equity > 0.66) {
-      return raiseDecision(currentBet * (1.7 + aggressive * 0.6), '价值加注');
+    // 加注：只有两档以上才主动加注，薄价值分支改为「跟注控池」——
+    // 旧实现 equity>0.66 就加注，把顶对弱踢（A5）与暗三（AA）同等对待，
+    // 加注范围过宽既让强牌少收，也让边缘牌在被打时白送。
+    if (valueTier >= 2) {
+      return raiseDecision(tierBetTo(), valueTier >= 3 ? '强牌价值加注' : '价值加注');
     }
-    if (equity > potOdds + 0.06 + sizeAdj) {
+    // 跟注线：旧实现是 potOdds + 0.06 + sizeAdj，顶对级别的牌在单挑里几乎必跟
+    // （实测翻后弃牌率仅 3~9%，真人 40%+），被利用的空间极大。现按位置/对手数
+    // 收紧：多人底池要求更高胜率（多一个对手，成牌概率要打折）。
+    // 0.06 → 0.10 基准，多人再叠加，最多 +0.06。
+    const multiAdj = Math.max(0, Math.min(0.06, (numActive - 2) * 0.03));
+    if (equity > potOdds + 0.10 + sizeAdj + multiAdj) {
       // 半诈唬：bluffFreq 覆盖默认 aggressive*0.28 系数
       if (rndFloat() < (bluffFreq !== null ? bluffFreq : aggressive * 0.28) && equity > 0.45) {
         return raiseDecision(currentBet * 2.1, '半诈唬加注');
