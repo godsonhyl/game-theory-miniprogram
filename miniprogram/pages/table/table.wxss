@@ -240,14 +240,13 @@
 
 /* ---------- 座位（仅对手） ---------- */
 .seat {
-  /* 锚点默认是块中心（pie）：x/y 落在座位块中间，块向四外延伸。
-     down 排布（紧凑视口）改锚点为块顶，整块只向下延伸——见下方 .seat.down。 */
+  /* 锚点是块中心（pie）：x/y 落在座位块中间，块向四外延伸。
+     2026-10-19 评审收口：down 排布（锚点=块顶）已删除——纵向尺寸全为 uh
+     相对量，块高/池位比值不随视口变化，「窄视口触发」在数学上不存在。 */
   position: absolute; transform: translate(-50%, -50%);
   width: 104rpx; display: flex; flex-direction: column; align-items: center;
   z-index: 3;
 }
-/* down 排布：锚点 = 块顶 */
-.seat.down { transform: translate(-50%, 0); }
 .seat.folded { opacity: .38; }
 .seat.standing { opacity: .42; }
 /* 批⑤：SNG 淘汰——声明在 folded/standing 之后，灰显+去色覆盖二者；
@@ -281,10 +280,9 @@
 }
 
 /* 本轮下注胶囊 —— 2026-10-19 布局改造（B）：
- * 默认（pie 环）浮在锚点「上方」：座位块以锚点为中心，下注若挂在块底会继续
+ * 浮在锚点「上方」：座位块以锚点为中心，下注若挂在块底会继续
  * 向下延伸，把顶排块底再推低 ~4uh，正好撞上底池。浮到上方后不参与下方高度，
- * 且「钱在桌上、朝桌心方向」的观感更符合真实牌桌。
- * down 排布（.seat.down）另见文件后半段：改为压在同一名字名牌下沿。 */
+ * 且「钱在桌上、朝桌心方向」的观感更符合真实牌桌。 */
 .seat-bet {
   /* #14 批一：本轮下注额加一档可读性（700 字重+字号 2.8→3uh）——过程数字与
      筹码同读性；tight 桌单独回缩防 8/9 人桌溢出 */
@@ -398,7 +396,8 @@
    这里的层序保留，作为「两侧座位偶尔轻微压到牌背」时的兜底。
    ⚠️ 牌是座位壳（.seat）的直接子元素，而 .seat 自带 z-index:3 会建出
    stacking context —— 这里的 z-index 只在座位壳内部有效，压不过
-   z-index:5 的底池/公共牌。真正的隔离靠「块不进底池带」（见 down 排布）。
+   z-index:5 的底池/公共牌。真正的隔离靠「块不进底池带」（锚点天花板由
+   ringPositions 按块高常量现算）。
    ⚠️ 仍须显式 z-index:1：在 .seat 的层叠上下文里，z-index:auto 的定位元素
    会被 .act-bubble(z-index:4) 压下去——行动气泡会盖住亮出的牌。 */
 .seat-cards { display: flex; margin-top: calc(0.4 * var(--uh)); position: relative; z-index: 1; }
@@ -432,21 +431,12 @@
 .act-r { background: linear-gradient(160deg, #c98a2a, #a76d15); }
 .act-a { background: linear-gradient(160deg, #e56a58, #c44a3a); }
 
-/* ---------- down 排布（紧凑视口 · table.js ringPositions 判型） ----------
- * 触发条件：视口太矮/座位块占比过大，pie 环怎么摆都塞不进顶部留白
- * （顶排块底会侵入底池盘面）。此时顶排锚点 = 块「顶」，整块只向下延伸，
- * 永远不进底池带；下注胶囊改为压在名牌下沿——钱和名字绑在一起，
- * 视觉上仍是「这一位押了多少」。我只（底部中央）不启用，保持 pie。
- *
- * 块高预算：头像 8.6 + 名牌 3.6 + SB/BB 3.9 + 牌背 10.3 ≈ 26.4uh（tight ≈ 22.4uh），
- * 与 table.js 的 SEAT_H_PX_UH / SEAT_H_PX_UH_TIGHT 同源——改这里的尺寸必须同步常量。 */
-.seat.down .seat-bet {
-  bottom: auto; top: calc(100% - 0.2 * var(--uh));
-  font-size: calc(2.6 * var(--uh));
-}
-.seat.down.tight .seat-bet { font-size: calc(2.4 * var(--uh)); }
-/* 行动气泡在 down 排布里改挂块顶（块底已贴到下带，再往下会压住公共牌） */
-.seat.down .act-bubble { bottom: auto; top: calc(-1.6 * var(--uh)); }
+/* ---------- 座位块高预算（与 table.js 常量同源，2026-10-19 评审收口） ----------
+ * down 排布段已删除：纵向尺寸全部以 uh（视口百分比）表达，块高/池位的比值
+ * 不随视口变化，「窄视口触发 down」在数学上不存在（table.js ringPositions
+ * 头注释有完整推导）。改头像/名牌/SB/BB/牌背任一尺寸，必须同步
+ * table.js 的 SEAT_H_PX_UH / SEAT_H_PX_UH_TIGHT，否则行为级几何断言会红：
+ *   头像 8.6 + 名牌 3.6 + SB/BB 3.9 + 牌背 10.3 ≈ 26.4uh（tight 桌 ≈ 22.4uh）。 */
 
 /* ---------- 就绪条（牌桌下沿 · 文档流 · 约 12uh） ----------
  * 结算摘要条同样走文档流；每人盈亏明细改为独立结算弹窗（resultModal），

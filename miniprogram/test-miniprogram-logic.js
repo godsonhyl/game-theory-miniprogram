@@ -2507,7 +2507,7 @@ while (guard++ < 400) {
     ok(/function ringPositions\(/.test(tableSrc), '存在统一座位环函数 ringPositions（锚定我的座位为底部中央）');
 
     // ② 渲染所有玩家（含我）都在环上：render 用 ringPositions(allSeats, mySeat)
-    ok(/ringPositions\(allSeats, this\.mySeat, this\._uhPx\)/.test(tableSrc), 'render 用 ringPositions 含我的座位（WPK 式：我也在牌桌环上，并传视口 _uhPx 判型）');
+    ok(/ringPositions\(allSeats, this\.mySeat\)/.test(tableSrc), 'render 用 ringPositions 含我的座位（WPK 式：我也在牌桌环上）');
     ok(/buildWaitSeats[\s\S]*ringPositions\(list\.map\(s => s\.seat\)/.test(tableSrc), '等待室 buildWaitSeats 用 ringPositions（开局坐标连续无跳变）');
 
     // ③ 座位号 / 牌背 / 弃牌确认在视图与样式中
@@ -2763,12 +2763,11 @@ while (guard++ < 400) {
     const ry = Number((feltSrc.match(/ry = (?:big \? )?(\d+)/) || [0, 0])[1]);
     ok(cy > 0 && ry > 0, 'ringPositions 椭圆参数可解析 cy=' + cy + ' ry=' + ry);
     ok(cy - ry >= 10, '座位带最低点 ' + (cy - ry) + '% （≥10%，留出块延伸空间）');
-    // 2026-10-19 布局改造后，上界不再写裸数字：pie 按 potTop - 块高/2、
-    // down 按 potTop - 块高 - 下注额外高度 推得；pie/down 选型看「块高对折是否塞得进」。
-    ok(/const pieMaxY = potTop - halfUh;/.test(feltSrc) &&
-      /const downMaxY = potTop - blockUh - SEAT_BET_EXTRA_UH;/.test(feltSrc) &&
-      /const tight = pieMaxY < halfUh;/.test(feltSrc),
-      '对手座位锚点上界由「底池上沿 − 块高」推得（pie/down 两式都不下探到底池区）');
+    // 2026-10-19 布局改造后，上界不再写裸数字：pie 式推导
+    //   锚点 y + 块高/2 ≤ 底池胶囊上沿 − RING_GAP_UH 空隙
+    // down 排布已删（纵向尺寸全为 uh 相对量，「窄视口触发」在数学上不存在）。
+    ok(/const pieMaxY = potTop - blockUh \/ 2 - RING_GAP_UH;/.test(feltSrc),
+      '对手座位锚点上界由「底池上沿 − 半块 − 空隙」推得（顶排块底不进底池区）');
     ok(/\.pot-row \{[\s\S]{0,400}?z-index: 5/.test(wxssSrc),
       '.pot-row z-index 5 高于 .seat(3)：底池不被牌背盖住');
     ok(/\.board-row \{[\s\S]{0,200}?z-index: 5/.test(wxssSrc),
@@ -2777,23 +2776,28 @@ while (guard++ < 400) {
       '底池/公共牌有 ::before 不透明底盘（重叠时不透出牌背花纹）');
     ok(/\.seat-cards \.card-xs \+ \.card-xs \{ margin-left: calc\(-[\d.]+ \* var\(--uw\)\)/.test(wxssSrc),
       '座位两张手牌叠放（负 margin），座位块高度显著下降');
-    /* ---- 行为级几何回归（2026-10-19 用户反馈：顶排筹码/下注被底池遮挡） ----
+    /* ---- 行为级几何回归（2026-10-19 用户反馈：顶排筹码/下注被底池遮挡；同日评审收口） ----
      * 病根不是 z-index 而是「块底落进了底池带」：旧版底池 top:22% 时上沿约 18.6%，
      * 而顶排块底到 30.5%（块 26.4% + 下注 3.4%），被压住的是最该读的数字。
      * 这里**按真实几何数值**断言，而不只查源码字面量：把 ringPositions 抠出来
-     * 实际跑一遍，逐座位算「块顶/块底」，要求顶排块底不越过底池上沿。 */
+     * 实际跑一遍，逐座位算「块顶/块底」，要求顶排块底不越过底池上沿。
+     * POT_PILL_H 实测口径 7.6（行高 1.35 × 4.8 + padding 1.0 + 边框），旧估 6.8
+     * 会让顶排压住底池约 1px——评审抓出后收窄。 */
     {
       const potY = Number((feltSrc.match(/const POT_ANCHOR = \{ x: 50, y: (\d+) \};/) || [0, 0])[1]);
       const pillH = Number((feltSrc.match(/const POT_PILL_H = ([\d.]+);/) || [0, 0])[1]);
       const blockUh = Number((feltSrc.match(/const SEAT_H_PX_UH = ([\d.]+);/) || [0, 0])[1]);
-      const betExtra = Number((feltSrc.match(/const SEAT_BET_EXTRA_UH = ([\d.]+);/) || [0, 0])[1]);
-      ok(potY > 0 && pillH > 0 && blockUh > 0 && betExtra > 0,
-        '几何常量可解析：底池 ' + potY + '% · 胶囊 ' + pillH + 'uh · 块高 ' + blockUh + 'uh · 下注 ' + betExtra + 'uh');
+      const gapUh = Number((feltSrc.match(/const RING_GAP_UH = ([\d.]+);/) || [0, 0])[1]);
+      ok(potY > 0 && pillH > 0 && blockUh > 0 && gapUh >= 0,
+        '几何常量可解析：底池 ' + potY + '% · 胶囊 ' + pillH + 'uh · 块高 ' + blockUh + 'uh · 空隙 ' + gapUh + 'uh');
+      ok(pillH >= 7.4, 'POT_PILL_H 按实测口径取值（≥7.4uh：行高 1.35 × 4.8字号 + padding + 边框，不再低估）');
       // 底池上沿（%）：底池胶囊顶边
       const potTop = potY - pillH / 2;
-      // 把 ringPositions 与依赖常量抠出来独立求值（不依赖页面实例的 render）
+      // 把 ringPositions 与依赖常量抠出来独立求值（不依赖页面实例的 render）。
+      // 常量截取：POT_ANCHOR 到 POT_PILL_H 为止的整段（两块常量间夹着 SEAT/RING 系列，
+      // 逐条抠容易漏——上次改动就在这里漏截过）。
       const consts = (feltSrc.match(/const POT_ANCHOR[\s\S]*?const POT_PILL_H = [\d.]+;/) || [''])[0];
-      const fnSrc = (feltSrc.match(/function ringPositions\(seatSet, mySeat, uhPx\) \{[\s\S]*?\n\}/) || [''])[0];
+      const fnSrc = (feltSrc.match(/function ringPositions\(seatSet, mySeat\) \{[\s\S]*?\n\}/) || [''])[0];
       ok(consts.length > 0 && fnSrc.length > 0, 'ringPositions 与几何常量可从源码中独立求值');
       if (consts && fnSrc) {
         const sandbox = { exports: {} };
@@ -2802,37 +2806,34 @@ while (guard++ < 400) {
           consts + '\nconst _ringCache = {};\n' + fnSrc + '\nmodule.exports = ringPositions;')(sandbox, sandbox.exports);
         const ring = sandbox.exports;
         let worstSeat = '', worstGap = 99, overflow = '';
-        [375, 320].forEach(vh => {
+        [375, 320, 280].forEach(vh => {
           [2, 3, 4, 6, 9].forEach(n => {
             const seats = [];
             for (let i = 0; i < n; i++) seats.push(i);
-            const pos = ring(seats, 0, vh / 100);
+            const pos = ring(seats, 0);
             const L = pos.__layout || {};
             const blk = L.blockPct || blockUh;
             for (let s = 1; s < n; s++) {          // s=0 是「我」，在底部，不参与顶部判定
               const p = pos[s];
               if (!p) continue;
-              // down：锚点 = 块顶，下注压在块底下方；pie：锚点 = 块中心，下注浮在上方
-              const bot = L.tight ? p.y + blk + betExtra : p.y + blk / 2;
-              const top = L.tight ? p.y : p.y - blk / 2;
+              // pie：锚点 = 块中心，下注浮在上方不占块底
+              const bot = p.y + blk / 2;
+              const top = p.y - blk / 2;
               if (bot > potTop + 0.01) overflow += ' [' + vh + 'px/' + n + '人/座位' + s + ' 底' + bot.toFixed(1) + '>池' + potTop.toFixed(1) + ']';
               if (potTop - bot < worstGap) { worstGap = potTop - bot; worstSeat = vh + 'px/' + n + '人/s' + s; }
               if (top < 0) overflow += ' [' + vh + 'px/' + n + '人/座位' + s + ' 顶' + top.toFixed(1) + '<0]';
             }
           });
         });
-        ok(overflow === '', '顶排座位块（20 种人数×视口组合）均未侵入底池带、也未顶出牌桌' + (overflow ? '：' + overflow : ''));
-        ok(worstGap > -0.01, '最紧的一组仍有 ' + worstGap.toFixed(1) + '% 余量（' + worstSeat + '）');
+        ok(overflow === '', '顶排座位块（30 种人数×视口组合）均未侵入底池带、也未顶出牌桌' + (overflow ? '：' + overflow : ''));
+        ok(worstGap >= gapUh - 0.05, '最紧的一组距底池仍留 ' + worstGap.toFixed(1) + '% ≥ RING_GAP_UH ' + gapUh + '（' + worstSeat + '）');
       }
       // 下注胶囊已浮到锚点上方（pie）：不占块底高度——这是修复成立的前提
       ok(/\.seat-bet \{[\s\S]{0,900}?position: absolute; left: 50%; bottom: calc\(100% \+ 0\.6 \* var\(--uh\)\)/.test(wxssSrc),
         '.seat-bet 浮到座位块上方（absolute + bottom:100%），不再向下撑高块底');
-      // down 排布兜底仍在：锚点改块顶 + 下注挂名字下沿
-      ok(/\.seat\.down \{ transform: translate\(-50%, 0\); \}/.test(wxssSrc) &&
-        /\.seat\.down \.seat-bet \{/.test(wxssSrc),
-        'down 排布兜底存在（窄视口下锚点=块顶、下注挂名牌下沿）');
-      ok(/s\.seat !== anchor|isMe\) \? '' : 'down'/.test(feltSrc) || /!pos\.__layout \|\| !pos\.__layout\.tight \|\| isMe/.test(feltSrc),
-        'down 排布不作用于「我」（底部中央保持 pie，不与 myzone 挤）');
+      // down 排布已删：不再有down class / 判型残留（防后人按失效注释再抄回来）
+      ok(!/\.seat\.down \{/.test(wxssSrc) && !/__layout\.tight/.test(feltSrc) && !/'down'/.test(feltSrc),
+        'down 排布（不可达的窄视口兜底）已连根拔除，仅存于注释的推导记录');
     }
     ok(/class="sb-main">开始游戏</.test(wxmlSrc) &&
        /class="sb-sub" wx:if="\{\{!canStart\}\}">至少 2 人</.test(wxmlSrc),
