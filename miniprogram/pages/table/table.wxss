@@ -1194,6 +1194,8 @@
 }
 .bopt.on { background: linear-gradient(160deg, #f4d78a, #d9a441 60%, #b8791f); color: #1a1a1a; border-color: transparent; }
 .buyin-btns { display: flex; align-items: center; }
+/* B3 补筹弹窗：复用 buyin-dialog 三件套，仅输入行留出边距 */
+.buyin-dialog .rc-edit { justify-content: center; margin-bottom: calc(1.2 * var(--uh)); }
 
 /* ============================================================
  * 牌桌互动与氛围（设计文档 2026-10-15 §2）

@@ -292,6 +292,8 @@
           <view class="mytip" wx:else>等待 {{currentPlayerName}} 行动…</view>
           <!-- 弃牌后/本手结束后（未结算面板时）：显眼的「站起退出本局」入口 -->
           <view class="stand-link" wx:if="{{canStand && !result && !readyPhase}}" bindtap="onMenuStand">站起退出本局</view>
+          <!-- B3 好友房手动补筹：入座且筹码不足时随时可补（弹窗里自定金额） -->
+          <view class="stand-link" wx:if="{{canRebuy}}" bindtap="openRebuy">补筹</view>
           <!-- 站起观战中：显眼的「坐下加入游戏」入口（不进 ⋯ 菜单也能找到） -->
           <view class="stand-link" wx:if="{{myStanding && !mySeated && !readyPhase}}" bindtap="onMenuSit">坐下加入游戏</view>
         </view>
@@ -338,6 +340,25 @@
       <view class="buyin-btns">
         <button class="btn-ghost sbtn" bindtap="cancelBuyIn">取消</button>
         <button class="btn-primary sbtn" bindtap="confirmBuyIn">坐下（{{buyInValue}}）</button>
+      </view>
+    </view>
+  </view>
+
+  <!-- B3 好友房手动补筹：输光后自己决定补多少（补后总额 ≤ 5000） -->
+  <view class="help-mask" wx:if="{{rebuyShow}}" bindtap="cancelRebuy">
+    <view class="buyin-dialog" catchtap="onBlockTap">
+      <text class="buyin-title">补筹</text>
+      <text class="buyin-sub">当前 {{myStack}} · 补后不超 5000</text>
+      <view class="buyin-opts">
+        <view class="bopt {{rebuyValue === item.v ? 'on' : ''}}" wx:for="{{rebuyOptions}}" wx:key="v"
+              data-v="{{item.v}}" bindtap="onRebuyPick">{{item.t}}</view>
+      </view>
+      <view class="rc-edit">
+        <input class="rc-input" type="number" value="{{rebuyValue}}" bindinput="onRebuyInput" />
+      </view>
+      <view class="buyin-btns">
+        <button class="btn-ghost sbtn" bindtap="cancelRebuy">取消</button>
+        <button class="btn-primary sbtn" bindtap="confirmRebuy">补筹 +{{rebuyValue}}</button>
       </view>
     </view>
   </view>

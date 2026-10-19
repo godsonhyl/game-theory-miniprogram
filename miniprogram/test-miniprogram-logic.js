@@ -3578,6 +3578,41 @@ while (guard++ < 400) {
     ok(/onBuyInPick[\s\S]{0,300}buyInBBText: this\.calcBuyInBB\(v\)/.test(tableSrc),
       'table.js onBuyInPick 同步刷新 BB 折算文案（换档位文案跟着变）');
 
+    // ---- B3 好友房手动补筹（用户需求 2026-10-17）----
+    ok(/const REBUY_CAP = 5000;/.test(tableSrc), 'table.js 定义 REBUY_CAP=5000（补后总额上限）');
+    // 拆自动补：好友房只剩 bot 补满，真人不再被动补
+    ok(/this\.mode === 'friend'[\s\S]{0,400}!p\.isHuman && p\.stack < 20/.test(tableSrc),
+      'table.js startHand 好友房补筹守卫只对 bot（!p.isHuman）保留');
+    ok(/pendingRebuyMap\[seat\] = \(this\.pendingRebuyMap\[seat\] \|\| 0\) \+ add/.test(tableSrc),
+      'table.js 手牌进行中的补筹进 pendingRebuyMap（下一手 startHand 消化）');
+    ok(/this\.pendingRebuyMap = \{\};/.test(tableSrc),
+      'table.js 实例字段 pendingRebuyMap 初始化 + startHand 消化后清空');
+    // 上行动作 + 房主消费端
+    ok(/type: 'rebuy', seat: this\.roomSeat/.test(tableSrc),
+      'table.js 好友端补筹上行 type:rebuy（座位用 roomSeat 防伪冒丢弃）');
+    ok(/if \(a\.type === 'rebuy'\)/.test(tableSrc) &&
+      /a\.type === 'rebuy'[\s\S]{0,600}Number\(a\.seat\) !== Number\(a\.rowSeat\)/.test(tableSrc),
+      'table.js applyFriendAction 有 rebuy 分支且带 rowSeat 伪冒断言');
+    ok(/a\.type === 'rebuy'[\s\S]{0,800}!p\.isHuman[\s\S]{0,200}return;/.test(tableSrc),
+      'table.js 房主端拒收 bot 的 rebuy 动作');
+    // add 钳制：不超 REBUY_CAP
+    ok(/REBUY_CAP - p\.stack/.test(tableSrc),
+      'table.js 房主端 rebuy add 钳到 REBUY_CAP - stack');
+    // 生效时点两分
+    ok(/const inHand = this\.data\.phase === 'playing' && !game\.result;/.test(tableSrc),
+      'table.js 补筹生效时点两分（inHand 记 pending / 其余立即生效）');
+    ok(/补筹未同步成功，请重试/.test(tableSrc),
+      'table.js 好友端补筹上行失败走 syncFailToast（禁静默吞）');
+    ok(/rebuyShow/.test(tableSrc) && /rebuyShow/.test(tableWxml),
+      'table.js/WXML 都有 rebuyShow（补筹弹窗三件套）');
+    ok(/canRebuy/.test(tableSrc) && /canRebuy/.test(tableWxml),
+      'table.js render 派生 canRebuy 且 WXML 有补筹常驻入口');
+    ok(/_rebuyAskedHand/.test(tableSrc),
+      'table.js 每手只自动弹一次补筹窗（_rebuyAskedHand 防骚扰）');
+    ok(/openRebuy[\s\S]{0,600}REBUY_CAP\]/.test(tableSrc) &&
+      /rebuyRoomLeft\(\)[\s\S]{0,200}REBUY_CAP - me\.stack/.test(tableSrc),
+      'table.js openRebuy 档位含补满 REBUY_CAP、剩余空间 = REBUY_CAP - stack');
+
     // ---- 批⑤补丁：SNG 桌型可选（onSngMode 带 max=，首页弹人数选择） ----
     ok(/sngShow/.test(idxSrc), 'index.js data 含 sngShow（SNG 配置弹窗 toggle）');
     ok(/sngMax/.test(idxSrc), 'index.js data 含 sngMax（SNG 桌型人数）');
