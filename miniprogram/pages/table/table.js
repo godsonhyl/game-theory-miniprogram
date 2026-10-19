@@ -127,6 +127,14 @@ const CHAT_TEXT_SET = QUICK_TALK.concat(EMOJIS);
 /** 聊天队列广播上限：房主行 state 里保留的最近聊天条数（镜像端只渲染面板，不存历史）。 */
 const CHAT_QUEUE_MAX = 8;
 
+/**
+ * C5（玩家审视 2026-10-17）：底池中心的 felt% 坐标 —— 筹码飞行（下注飞出/
+ * 收池飞回）的锚点。必须与 table.wxss 的 .pot-row `top:22%` 同源：原先 JS
+ * 硬编码 (50,32)、wxss 是 22%，飞进底池的筹码视觉上落在池下方一截
+ * （「筹码没进池」的错觉）。改任何一处必须同步另一处（两侧注释均已标注）。
+ */
+const POT_ANCHOR = { x: 50, y: 22 };
+
 /** 花色配色（四色牌）：0♠ 黑 / 1♣ 绿 / 2♦ 蓝 / 3♥ 红 */
 const SUIT_CLS = ['s-spade', 's-club', 's-diamond', 's-heart'];
 
@@ -3700,7 +3708,8 @@ Page({
     return cat;
   },
 
-  /** 座位坐标 → felt 内百分比（筹码飞行起/终点）。带缓存，同帧同 seat 复用。 */
+  /** 座位坐标 → felt 内百分比（筹码飞行起/终点）。带缓存，同帧同 seat 复用。
+   *  落点常量 POT_ANCHOR 见文件头（C5：与 .pot-row top 同源）。 */
   _fxPos(seat) {
     const allSeats = game.players.map(p => p.seat);
     const pos = ringPositions(allSeats, this.mySeat);
@@ -3714,14 +3723,14 @@ Page({
     const from = this._fxPos(seat);
     const n = 5 + (Math.abs(flySeed) % 3);   // 5~7 枚
     const chips = [];
-    // dx/dy = 底池中心(50,32) − 座位坐标，作为 transform 位移量（vw/vh 口径，
+    // dx/dy = 底池锚点 − 座位坐标，作为 transform 位移量（vw/vh 口径，
     // 见 wxss @keyframes flyChip：translate(calc(var(--dx)*1vw),calc(var(--dy)*1vh))）。
     // 座位环均在 felt 内，felt 宽≈100vw，故 x 方向 vw 与 felt% 近似；y 方向 felt
     // 高<100vh，位移会略过冲，但 opacity 在到位前已淡出（氛围特效不追求精确落点）。
     for (let i = 0; i < n; i++) {
       chips.push({
         x: from.x, y: from.y,
-        dx: +(50 - from.x).toFixed(1), dy: +(32 - from.y).toFixed(1),
+        dx: +(POT_ANCHOR.x - from.x).toFixed(1), dy: +(POT_ANCHOR.y - from.y).toFixed(1),
         delay: i * 0.04, key: 'o' + flySeed + '_' + i
       });
     }
@@ -3737,7 +3746,7 @@ Page({
     const chips = [];
     for (let i = 0; i < n; i++) {
       chips.push({
-        x: 50, y: 32,
+        x: POT_ANCHOR.x, y: POT_ANCHOR.y,
         tx: +to.x.toFixed(1), ty: +to.y.toFixed(1),
         delay: i * 0.05, key: 'i' + flySeed + '_' + i
       });
@@ -4035,6 +4044,15 @@ Page({
     if (this.data.phase !== 'playing') return;
     const events = (game && game.events) || [];
     if (this.sfxSeq > events.length) this.sfxSeq = events.length;   // 重建后收敛
+    // C6（玩家审视 2026-10-17）：轮到我行动的 false→true 边沿移到 soundOn 分支外——
+    // 静音模式下同样把遮挡座位的聊天浮层收起（浮层遮挡对操作是实打实的伤害，
+    // 与声音无关）。边沿用 this.sfxWasMyTurn 记忆，两分支各自推进保持口径一致。
+    const myTurn = !!this.data.isMyTurn;
+    if (myTurn && !this.sfxWasMyTurn && !(game && game.result)) {
+      if (this.data.soundOn) sfx.play('turn');
+      if (this.data.chatOpen) this.setData({ chatOpen: false });   // 浮层掀起，行动条露出
+    }
+    this.sfxWasMyTurn = myTurn;
     if (this.data.soundOn) {
       while (this.sfxSeq < events.length) {
         const e = events[this.sfxSeq++];
@@ -4053,16 +4071,11 @@ Page({
           case 'hand_end':
             sfx.play((e.winners || []).indexOf(this.mySeat) >= 0 ? 'win' : 'end');
             break;
-          // turn 事件不在此处理：统一走下方 isMyTurn 边沿（镜像端也有）
+          // turn 事件不在此处理：统一走上方 isMyTurn 边沿（镜像端也有）
         }
       }
-      // 轮到我行动：false→true 边沿播提示音（含镜像端；只在游戏中且无结算时）
-      const myTurn = !!this.data.isMyTurn;
-      if (myTurn && !this.sfxWasMyTurn && !(game && game.result)) sfx.play('turn');
-      this.sfxWasMyTurn = myTurn;
     } else {
       this.sfxSeq = events.length;         // 静音模式也要推进序号，开声音后不补播
-      this.sfxWasMyTurn = !!this.data.isMyTurn;
     }
   },
 
@@ -5298,6 +5311,17 @@ Page({
           // 最后 5s：行动条紧迫脉冲（与座位计时环 timerUrgent、5s/3s 警告音同阈值）
           myTimerUrgent: tick <= 5 && tick > 0
         });
+        // C1（玩家审视 2026-10-17）：我方分支同时局部刷新我在座位环上的计时环。
+        // ⚠️ 环下标必须用 this.data.seats 按 seat 找——座位环含空位，与
+        // game.players 的下标不同构（评审时曾用 players.findIndex 出过错）。
+        const myRingIdx = this.data.seats.findIndex(s => s && s.seat === this.mySeat);
+        if (myRingIdx >= 0 && this.data.seats[myRingIdx].timer !== undefined) {
+          this.setData({
+            ['seats[' + myRingIdx + '].timer']: tick,
+            ['seats[' + myRingIdx + '].timerPct']: Math.max(0, Math.round(tick / tickMax * 100)),
+            ['seats[' + myRingIdx + '].timerUrgent']: tick <= 5 && tick > 0
+          });
+        }
         // 行动倒计时警告：剩余 5s/3s 各滴答一声，避免误超时代弃
         if ((tick === 5 || tick === 3) && this.sfxWarnedTick !== tick) {
           this.sfxWarnedTick = tick;

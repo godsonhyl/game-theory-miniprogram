@@ -1322,6 +1322,7 @@ while (guard++ < 400) {
   {
     guardTimerNoResidue(tableSrc);
     guardTimerMaxUnified(tableSrc);
+    guardUxBatch1(tableSrc, wxssSrc);
   }
 
   /* ---------- 边池归属显示（玩家审视 2026-10-17）---------- */
@@ -2593,7 +2594,7 @@ while (guard++ < 400) {
     ok(cy - ry >= 10, '座位带最低点 ' + (cy - ry) + '% （≥10%，留出块延伸空间）');
     const yMax = Number((feltSrc.match(/y = Math\.max\(\d+, Math\.min\((\d+)/) || [0, 999])[1]);
     ok(yMax < 80, '对手座位锚点 y 上界 ' + yMax + '%（<80%，不下探到公共牌区）');
-    ok(/\.pot-row \{[\s\S]{0,200}?z-index: 5/.test(wxssSrc),
+    ok(/\.pot-row \{[\s\S]{0,400}?z-index: 5/.test(wxssSrc),
       '.pot-row z-index 5 高于 .seat(3)：底池不被牌背盖住');
     ok(/\.board-row \{[\s\S]{0,200}?z-index: 5/.test(wxssSrc),
       '.board-row z-index 5 高于 .seat(3)：公共牌不被牌背盖住');
@@ -2742,6 +2743,12 @@ while (guard++ < 400) {
       '对手回合按行动座位局部 setData seats[actIdx].timer（消除跳秒）');
     ok(/timer: !readyPhase && game\.actionSeat === p\.seat \? tick : ''/.test(tableSrc),
       '对手环只在行动座位显示 tick（非行动座位为空串，环隐藏）');
+    // C1（玩家审视 2026-10-17）：我方分支同样局部刷新座位环上的计时环。
+    // ⚠️ 环下标用 data.seats 按 seat 找（含空位，与 game.players 下标不同构）。
+    ok(/const myRingIdx = this\.data\.seats\.findIndex\(s => s && s\.seat === this\.mySeat\);/.test(stBody),
+      'startTimer 我方分支定位座位环下标用 data.seats.findIndex（按 seat，非 players 下标）');
+    ok(/seats\[' \+ myRingIdx \+ '\]\.timerPct'/.test(stBody),
+      'startTimer 我方分支局部写座位环 timer/timerPct/timerUrgent（我的环不再冻结）');
   }
 
   /* 超时口径统一（玩家审视 2026-10-17）：remote 模式本地计时环与房主 30s 代弃同源。
@@ -2755,6 +2762,25 @@ while (guard++ < 400) {
     ok(!/tick = TICK_MAX;/.test(tableSrc),
       '不再有硬编码 tick = TICK_MAX（口径由 timerMax() 单点供给）');
     ok(/tick \/ tickMax \* 100/.test(stBody), '计时环百分比按 tickMax 归一（remote 环走满 30s）');
+  }
+
+  /* C1/C6/C5 UI 批守卫（玩家审视 2026-10-17）：
+   * C6 —— myTurn 边沿检测必须挪到 soundOn 分支外（静音时聊天浮层同样收起）；
+   * C5 —— 筹码飞行动画落点 POT_ANCHOR 与 .pot-row top 同源（22%）。 */
+  function guardUxBatch1(tableSrc, wxssSrc) {
+    const dsBody = (tableSrc.match(/drainSfx\(\) \{[\s\S]*?\n  \},/) || [''])[0];
+    ok(/const myTurn = !!this\.data\.isMyTurn;/.test(dsBody) &&
+      /if \(myTurn && !this\.sfxWasMyTurn/.test(dsBody) &&
+      /if \(this\.data\.chatOpen\) this\.setData\(\{ chatOpen: false \}\)/.test(dsBody) &&
+      dsBody.indexOf('const myTurn') < dsBody.indexOf("if (this.data.soundOn) {"),
+      'C6 myTurn 边沿与收 chatOpen 都在 soundOn 分支外（静音模式同样掀浮层）');
+    ok(/const POT_ANCHOR = \{ x: 50, y: 22 \};/.test(tableSrc),
+      'C5 底池锚点常量 POT_ANCHOR={x:50,y:22}（与 .pot-row top 同源）');
+    ok(/dx: \+\(POT_ANCHOR\.x - from\.x\)\.toFixed\(1\)/.test(tableSrc) &&
+      /x: POT_ANCHOR\.x, y: POT_ANCHOR\.y/.test(tableSrc),
+      'C5 飞出/收池动画落点都走 POT_ANCHOR（不再硬编码 50,32）');
+    ok(/top: 22%/.test(wxssSrc) && /POT_ANCHOR\.y 同步/.test(tableSrc + wxssSrc),
+      'C5 .pot-row top:22% 与 wxss 注释标明与 POT_ANCHOR.y 同步');
   }
 
   /* 边池归属 + 非摊牌赢池自愿亮牌（玩家审视 2026-10-17）：
