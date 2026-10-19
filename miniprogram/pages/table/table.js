@@ -436,6 +436,12 @@ Page({
     // 好友房的机器人沿用默认梯度（好友房 Bot 不该比真人强太多）
     this.level = ((this.mode === 'ai' || this.mode === 'sng') && opts.level) ? opts.level : 'advanced';
     this.roomNo = opts.room || '';
+    // 结束房入口（好友房「有对战」被关闭后 status='ended'）：进房不跑引擎，
+    // 直接跳复盘页按房间列出每局（满足「进房间看每一局复盘」）。
+    if (opts.ended === '1' && this.roomNo) {
+      wx.redirectTo({ url: '/pages/replay/replay?room=' + this.roomNo });
+      return;
+    }
     // own=1 表示从「我的房间」或创建流程进入（房主）；分享/输入房间号进入视为访客
     this.isOwner = this.mode === 'friend' ? opts.own === '1' : true;
     this.roomClosed = false;   // 每次进出页面重置：房间是否已被本页关闭
@@ -4492,6 +4498,15 @@ Page({
     // 全量；观战/中途退出价值低不缓存）。失败静默（体验优化，不阻断结算）。
     if (game && game.events && game.events.length && game.result && !this.remoteMode) {
       replayStore.addReplay(game, this.mySeat, this.data.mode);
+      // 云端落库复盘（仅好友房、权威端）：把本局逐街事件流存到 poker_hand_replays，
+      // 供「进房看每局复盘」。失败静默降级——复盘是体验增强，绝不懈怠结算主流程。
+      if (this.roomNo) {
+        const payload = replayStore.buildReplayPayload(game, this.mySeat, this.data.mode);
+        if (payload) {
+          auth.saveHandReplay(this.roomNo, game.handNo, payload).catch(e =>
+            console.error('[table] 复盘云端落库失败', JSON.stringify({ room: this.roomNo, hand: game.handNo, err: e && e.message })));
+        }
+      }
       // 高光时刻判定与存档：同样仅权威端（镜像端无 game.result.evals 全量）。
       // 判定规则在此处（store 层只存不判）——此时 game.result.evals/winners 已算完、
       // winStreaks 已被 renderAmbience 的 _bumpStreaks 更新（先于 showResultModal）、

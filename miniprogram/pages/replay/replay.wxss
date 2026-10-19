@@ -95,3 +95,26 @@
 .hc-r { font-size: calc(3 * var(--uh)); font-weight: 700; line-height: 1; }
 .hc-s { font-size: calc(2.6 * var(--uh)); line-height: 1.2; }
 .sd-hand { font-size: calc(2.4 * var(--uh)); color: #8fa8a0; margin-left: auto; }
+
+/* 房间复盘模式：房间号条 + 每局 chip */
+.room-bar { display: flex; align-items: center; gap: calc(3 * var(--uw)); }
+.room-bar-info { flex: 1; overflow: hidden; }
+.room-bar-no { font-size: calc(3 * var(--uh)); font-weight: 700; color: #e8f4f0; }
+.hand-chips {
+  white-space: nowrap; margin-top: calc(2.4 * var(--uh));
+  background: rgba(0,0,0,.25); border-radius: calc(2.4 * var(--uh)); padding: calc(1 * var(--uh));
+}
+.hand-chip {
+  display: inline-flex; flex-direction: column; align-items: center; justify-content: center;
+  min-width: calc(16 * var(--uw)); padding: calc(1.2 * var(--uh)) calc(2 * var(--uw));
+  margin-right: calc(1.2 * var(--uw)); border-radius: calc(2 * var(--uh));
+  background: rgba(255,255,255,.06); vertical-align: middle;
+}
+.hand-chip.cur { background: #e8a33d; }
+.hand-chip.cur .hc-no, .hand-chip.cur .hc-net { color: #1a3a36; }
+.hc-no { font-size: calc(2.6 * var(--uh)); color: #c8e0db; }
+.hc-net { font-size: calc(2.4 * var(--uh)); color: #8fa8a0; }
+.hand-chip.up .hc-net { color: #6ee7a0; }
+.hand-chip.down .hc-net { color: #ff8a72; }
+.hand-empty { display: inline-block; padding: calc(1.4 * var(--uh)) calc(2 * var(--uw)); color: #8fa8a0; font-size: calc(2.6 * var(--uh)); }
+.room-loading { text-align: center; color: #8fa8a0; font-size: calc(2.8 * var(--uh)); padding: calc(3 * var(--uh)) 0; }

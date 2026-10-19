@@ -237,6 +237,10 @@
   background: rgba(229,72,77,.08);
 }
 .room-del:active { background: rgba(229,72,77,.2); }
+/* 已结束房：保留 7 天可回看复盘——灰化降级，与进行中房区分 */
+.room-card.ended { border-style: dashed; border-color: rgba(255,255,255,.16); }
+.room-card.ended .room-no { color: #c8d6d0; }
+.room-card.ended .room-enter { color: #6ee7a0; }
 
 /* 顶部右侧：房卡 + 设置齿轮 */
 .hero-right { display: flex; align-items: center; }

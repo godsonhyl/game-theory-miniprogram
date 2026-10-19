@@ -1,6 +1,26 @@
 <view class="replay-page">
-  <!-- 顶栏：手数 / 模式 / 我的盈亏 -->
-  <view class="rp-head">
+  <!-- 房间复盘模式：房间号 + 每局选择 + 返回（进 ended 好友房触发） -->
+  <block wx:if="{{roomMode}}">
+    <view class="room-bar">
+      <view class="rp-back" bindtap="onBack">‹</view>
+      <view class="room-bar-info">
+        <text class="room-bar-no">房间 {{roomNo}} · 共 {{roomHandCount}} 局</text>
+      </view>
+    </view>
+    <scroll-view class="hand-chips" scroll-x="true">
+      <view class="hand-chip {{roomSelIdx === i ? 'cur' : ''}} {{item.net > 0 ? 'up' : (item.net < 0 ? 'down' : '')}}"
+            wx:for="{{handList}}" wx:for-item="item" wx:for-index="i" wx:key="key"
+            data-i="{{i}}" bindtap="onRoomHandTap">
+        <text class="hc-no">第{{item.handNo}}局</text>
+        <text class="hc-net">{{item.net > 0 ? '+' + item.net : (item.net < 0 ? item.net : '±0')}}</text>
+      </view>
+      <view class="hand-empty" wx:if="{{!roomLoading && roomHandCount === 0}}">暂无复盘（仅房主可看）</view>
+    </scroll-view>
+    <view wx:if="{{roomLoading}}" class="room-loading">复盘加载中…</view>
+  </block>
+
+  <!-- 顶栏：手数 / 模式 / 我的盈亏（非房间模式） -->
+  <view class="rp-head" wx:else>
     <view class="rp-back" bindtap="onBack">‹</view>
     <view class="rp-meta">
       <text class="rp-hand">第 {{handNo}} 手 · {{mode === 'ai' ? 'AI 对战' : '好友房'}}</text>

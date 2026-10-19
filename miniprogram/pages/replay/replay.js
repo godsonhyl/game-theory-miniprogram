@@ -10,6 +10,7 @@
 const P = require('../../core/poker-core.js');
 const replayStore = require('../../utils/replay-store');
 const highlightStore = require('../../utils/highlight-store');
+const { auth } = require('../../utils/auth');
 
 /** 街定义：索引 0..4 对应翻前→摊牌 */
 const STREETS = [
@@ -112,10 +113,19 @@ Page({
     curActions: [],       // 当前街动作行（带玩家名）
     players: [],
     godView: false,       // 上帝视角：展开所有底牌
-    showHandResult: false // 摊牌街：是否显示成手/赢家
+    showHandResult: false, // 摊牌街：是否显示成手/赢家
+    // —— 房间复盘模式（进 ended 好友房触发）——
+    roomMode: false,       // 是否房间复盘模式
+    roomNo: '',            // 房间号
+    roomLoading: false,    // 拉取复盘列表加载中
+    roomHandCount: 0,      // 房间内复盘局数
+    handList: [],          // 每局摘要：{ key, handNo, net, won, createdAt }
+    roomSelIdx: -1         // 当前选中局索引
   },
 
   onLoad(query) {
+    const room = query.room;
+    if (room) { this._enterRoomMode(room); return; }
     const date = Number(query.date);
     const from = query.from;   // 来源：默认 replay-store 缓存；'highlight' = 高光存档
     let rec;
@@ -131,26 +141,83 @@ Page({
       setTimeout(() => wx.navigateBack(), 800);
       return;
     }
+    this._renderRec(rec);
+  },
+
+  /**
+   * 房间复盘模式：进 ended 好友房触发（table 页 redirectTo 到此）。
+   * 拉取该房间的全部云端复盘（poker_hand_replays），列出每一局供选择回看。
+   * 仅房主可读（rpc 按 owner_id 校验）；非房主 rows 为空 → 显示「暂无复盘」。
+   */
+  async _enterRoomMode(room) {
+    this.setData({ roomMode: true, roomNo: room, roomLoading: true });
+    let rows = [];
+    try { rows = await auth.listRoomReplays(room); }
+    catch (e) { rows = []; }
+    this._roomRows = Array.isArray(rows) ? rows : [];
+    if (!this._roomRows.length) {
+      this.setData({ roomLoading: false, roomHandCount: 0, handList: [] });
+      return;
+    }
+    // 每局摘要：handNo / 我的净盈亏 / 胜负 / 时间（数组按 hand_no 升序）
+    const handList = this._roomRows.map(r => {
+      const rec = r.payload || {};
+      return {
+        key: r.id,
+        handNo: rec.handNo || 0,
+        net: this._handNet(rec),
+        won: !!(rec.result && rec.result.winners && rec.result.winners.indexOf(rec.mySeat) !== -1),
+        createdAt: r.created_at
+      };
+    });
+    this.setData({ roomLoading: false, roomHandCount: handList.length, handList: handList });
+    this._loadRoomHand(handList.length - 1);   // 默认选中最新一手
+  },
+
+  /** 单局净盈亏：获奖 - 我本手投入（投入从 events 反算，含盲注虚拟事件） */
+  _handNet(rec) {
     const streets = buildStreets(rec);
-    // 我的盈亏 = 我本手的投入金额（盲注+各街动作）的负数 + 获奖金额。
-    // 投入金额可精确从 events 反算（含盲注虚拟事件），不依赖 table.js 的
-    // startStacks（复盘收割时未存起始筹码）。即 net = 获奖 - 我本手投入。
     const myPut = streets.reduce((s, st) => s + st.actions
       .filter(a => a.seat === rec.mySeat)
       .reduce((t, a) => t + (a.amount || 0), 0), 0);
     const myAward = (rec.result.awards || []).filter(a => a.seat === rec.mySeat)
       .reduce((s, a) => s + (a.amount || 0), 0);
-    const myNet = myAward - myPut;
+    return myAward - myPut;
+  },
+
+  /** 选中房间内第 idx 局并渲染 */
+  _loadRoomHand(idx) {
+    const row = this._roomRows && this._roomRows[idx];
+    const rec = row && row.payload;
+    if (!rec) return;
+    this._renderRec(rec);
+    this.setData({ roomSelIdx: idx });
+  },
+
+  /** 渲染某一局 rec（本地或云端 payload 通用，结构同源） */
+  _renderRec(rec) {
+    const streets = buildStreets(rec);
+    const myPut = streets.reduce((s, st) => s + st.actions
+      .filter(a => a.seat === rec.mySeat)
+      .reduce((t, a) => t + (a.amount || 0), 0), 0);
+    const myAward = (rec.result.awards || []).filter(a => a.seat === rec.mySeat)
+      .reduce((s, a) => s + (a.amount || 0), 0);
     this._rec = rec;
     this.setData({
-      date: rec.date,
+      date: rec.date || 0,
       handNo: rec.handNo,
       mode: rec.mode,
-      myNet: myNet,
+      myNet: myAward - myPut,
       streets: streets,
       players: buildPlayers(rec, false)
     });
     this.gotoStreet(0);
+  },
+
+  /** 房间模式：点每局 chip 切换手 */
+  onRoomHandTap(e) {
+    const i = Number(e.currentTarget.dataset.i);
+    this._loadRoomHand(i);
   },
 
   /** 切到第 i 街：刷新公共牌 / 底池 / 动作行 */

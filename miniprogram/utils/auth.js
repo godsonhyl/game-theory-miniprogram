@@ -331,13 +331,20 @@ const auth = {
     throw new Error('房间号生成失败，请重试');
   },
 
-  /** 关闭房间（建房成功但扣卡失败时的回滚） */
+  /**
+   * 关闭房间（用户主动删除 / 离房清理 / 建房回滚共用）。
+   * 服务端权威化：改走 rpc `poker_close_room`——
+   *   房间「有对战」（last_hand_at 已置 或 已有复盘记录）则置 status='ended'
+   *   并设 expires_at = now()+7天（保留 7 天可回看复盘，不立即销毁）；
+   *   无对战（等待中即关）则置 status='closed'（立即从列表移除）。
+   *   房主校验在服务端（owner_id = auth.uid()），客户端伪造不了。
+   * @returns {Promise<{ok:boolean,status?:string,expires_at?:string}>}
+   */
   async closeRoom(roomNo) {
-    const { error } = await cloud.database
-      .from(T.room)
-      .update({ status: 'closed' })
-      .eq('room_no', roomNo);
+    const { data, error } = await cloud.database
+      .rpc('poker_close_room', { p_room: roomNo });
     if (error) throw new Error(error.message || '关闭房间失败');
+    return data;
   },
 
   /** 按房间号查房间（房间对所有登录用户可读，便于好友加入） */
@@ -353,20 +360,76 @@ const auth = {
     return data;
   },
 
-  /** 读取「我创建的」仍在进行的房间（首页"我的房间"用） */
+  /**
+   * 读取「我创建的」房间（首页"我的房间"用）。
+   * 服务端权威化：改走 rpc `poker_list_my_rooms`——
+   *   服务端按 auth.uid() 过滤 owner，返回 status='active' 或（status='ended'
+   *   且 expires_at >= now()）的房间，按 created_at 倒序。已过期的 ended 房
+   *   由服务端直接过滤，无需客户端再算。
+   * @returns {Promise<Array>} 房间对象数组（含 status / expires_at / 原字段）
+   */
   async listMyRooms(limit = 20) {
-    const profile = await this.ensureProfile();
-    const uid = profile && profile.owner_id;
-    let q = cloud.database
+    const { data, error } = await cloud.database
+      .rpc('poker_list_my_rooms', {});
+    if (error) throw new Error(error.message || '读取房间失败');
+    if (data && data.ok && Array.isArray(data.rows)) return data.rows;
+    return (data && data.rows) ? data.rows : [];
+  },
+
+  /**
+   * 保存一局复盘到云端（好友房、权威端结算时调用）。upsert 幂等（同 room+hand 覆盖）。
+   * payload 为 replay-store 构建的逐街事件流对象。失败抛错由调用方静默降级。
+   * @param {string} roomNo
+   * @param {number} handNo
+   * @param {object} payload
+   */
+  async saveHandReplay(roomNo, handNo, payload) {
+    const { data, error } = await cloud.database
+      .rpc('poker_save_hand_replay', { p_room: roomNo, p_hand: handNo, p_payload: payload });
+    if (error) throw new Error(error.message || '保存复盘失败');
+    return data;
+  },
+
+  /**
+   * 列出房间全部复盘（按 hand_no 升序），用于进房后的"每一局复盘"浏览。
+   * 仅房主可读（rpc 内按 owner_id = auth.uid() 校验）。
+   * @param {string} roomNo
+   * @returns {Promise<Array>} 复盘行数组（含 hand_no / payload / created_at）
+   */
+  async listRoomReplays(roomNo) {
+    const { data, error } = await cloud.database
+      .rpc('poker_list_room_replays', { p_room: roomNo });
+    if (error) throw new Error(error.message || '读取复盘失败');
+    if (data && data.ok && Array.isArray(data.rows)) return data.rows;
+    return [];
+  },
+
+  /**
+   * 读取房间（不限 status，供进 ended 房复盘用）。房主可读自己任意状态的房间；
+   * 非房主按 RLS 口径只能读到 active。不强制 status，由调用方据返回 status 决定
+   * 走「续局」还是「复盘浏览」。
+   * @param {string} roomNo
+   */
+  async findRoomForReplay(roomNo) {
+    const { data, error } = await cloud.database
       .from(T.room)
       .select('*')
-      .eq('status', 'active')
-      .order('created_at', { ascending: false })
-      .limit(limit);
-    if (uid) q = q.eq('owner_id', uid);
-    const { data, error } = await q;
-    if (error) throw new Error(error.message || '读取房间失败');
-    return data || [];
+      .eq('room_no', roomNo)
+      .maybeSingle();
+    if (error) throw new Error(error.message || '查询房间失败');
+    return data;
+  },
+
+  /**
+   * 彻底删除房间（房主手动清除 ended 房，连其复盘一并删）。
+   * 区别于 closeRoom（保留 7 天的软结束）：purge 是真删除，立即从库与列表消失。
+   * @param {string} roomNo
+   */
+  async purgeRoom(roomNo) {
+    const { data, error } = await cloud.database
+      .rpc('poker_purge_room', { p_room: roomNo });
+    if (error) throw new Error(error.message || '删除房间失败');
+    return data;
   },
 
   /**

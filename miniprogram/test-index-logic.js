@@ -51,10 +51,12 @@ global.Page = cfg => { currentPage = cfg; };
 // 两个新鲜房间 + 一个限时已到期的僵尸房（30 分钟房，建于 2 小时前）
 const authMod = require('./utils/auth');
 const NOW = Date.now();
+// 三个房间都带 status:'active' —— 新 loadMyRooms 的僵尸清理只针对 active 房
+// （ended 房保留 7 天，不能在此被重置计时），缺 status 会让 999999 永不进 stale。
 authMod.auth.listMyRooms = () => Promise.resolve([
-  { room_no: '123456', mode: 'friend', max_players: 6, created_at: new Date(NOW - 3600e3).toISOString() },
-  { room_no: '654321', mode: 'friend', max_players: 6, created_at: new Date(NOW - 3600e3).toISOString() },
-  { room_no: '999999', mode: 'friend', max_players: 6, duration_min: 30, created_at: new Date(NOW - 2 * 3600e3).toISOString() }
+  { room_no: '123456', mode: 'friend', max_players: 6, status: 'active', created_at: new Date(NOW - 3600e3).toISOString() },
+  { room_no: '654321', mode: 'friend', max_players: 6, status: 'active', created_at: new Date(NOW - 3600e3).toISOString() },
+  { room_no: '999999', mode: 'friend', max_players: 6, status: 'active', duration_min: 30, created_at: new Date(NOW - 2 * 3600e3).toISOString() }
 ].filter(r => (global.__closed || []).indexOf(r.room_no) === -1));
 // 桩掉 createRoom：记录入参，返回固定房间号（避免真实网络请求）
 authMod.auth.createRoom = (mode, maxPlayers, durationMin) => {
@@ -64,7 +66,12 @@ authMod.auth.createRoom = (mode, maxPlayers, durationMin) => {
 // 桩掉 closeRoom：记录被关闭的房间号（避免真实网络请求）
 authMod.auth.closeRoom = roomNo => {
   global.__closed = (global.__closed || []).concat(roomNo);
-  return Promise.resolve();
+  return Promise.resolve({ ok: true, status: 'closed' });
+};
+// 桩掉 purgeRoom（ended 房彻底清除，连复盘一起删）：同样记录房间号
+authMod.auth.purgeRoom = roomNo => {
+  global.__closed = (global.__closed || []).concat(roomNo);
+  return Promise.resolve({ ok: true });
 };
 
 require('./pages/index/index.js');
@@ -445,6 +452,66 @@ const pageCtx = Object.assign({}, cfg, {
   pageCtx.onJoinConfirm();
   ok(global.__nav === null, 'joining 期间连点不重复触发加入');
   pageCtx.joining = false;
+
+  /* ---------- 房间保留 7 天 + 复盘入口（新需求 2026-10-18） ----------
+   * 行为：listMyRooms 返回 ended 房（expires_at 在未来）→ 列表标记为 ended、
+   *   剩余天数 > 0、进入文案「复盘」、liveText「复盘 · 剩 X 天」；点卡片进房带 ended=1。 */
+  {
+    const realList = authMod.auth.listMyRooms;
+    const expAt = new Date(NOW + 3 * 86400e3).toISOString();
+    authMod.auth.listMyRooms = () => Promise.resolve([
+      { room_no: '222222', mode: 'friend', max_players: 6, status: 'ended', expires_at: expAt, created_at: new Date(NOW - 3600e3).toISOString() }
+    ]);
+    await pageCtx.loadMyRooms();
+    const er = dataStore.myRooms.find(r => r.roomNo === '222222');
+    ok(!!er && er.ended === true, 'ended 房标记为 ended');
+    ok(er && er.daysLeft === 3, 'ended 房剩余天数按 expires_at 计算: ' + (er && er.daysLeft));
+    ok(er && er.enterLabel === '复盘', 'ended 房进入文案为「复盘」（区别于「继续/进入」）: ' + (er && er.enterLabel));
+    ok(er && er.liveText.indexOf('复盘') >= 0, 'ended 房 liveText 含「复盘」: ' + (er && er.liveText));
+    authMod.auth.listMyRooms = realList;
+
+    // 点 ended 房卡片 → 进入带 ended=1（table 据此跳复盘浏览，不跑引擎）
+    global.__nav = null;
+    pageCtx.onEnterRoom({ currentTarget: { dataset: { room: '222222', ended: true, max: 6, dur: 0 } } });
+    ok(global.__nav && global.__nav.indexOf('ended=1') > 0, 'ended 房进入带 ended=1: ' + global.__nav);
+  }
+
+  /* ---------- 结构守卫：auth 新 rpc 桥接 ---------- */
+  {
+    const authSrc = require('fs').readFileSync(require('path').join(__dirname, 'utils/auth.js'), 'utf8');
+    ok(/poker_close_room/.test(authSrc), 'auth.closeRoom 走 rpc poker_close_room');
+    ok(/poker_list_my_rooms/.test(authSrc), 'auth.listMyRooms 走 rpc poker_list_my_rooms');
+    ok(/async saveHandReplay\(/.test(authSrc), 'auth 暴露 saveHandReplay（结算云端落库）');
+    ok(/async listRoomReplays\(/.test(authSrc), 'auth 暴露 listRoomReplays（进房看复盘）');
+    ok(/async purgeRoom\(/.test(authSrc), 'auth 暴露 purgeRoom（彻底清除 ended 房）');
+    ok(/async findRoomForReplay\(/.test(authSrc), 'auth 暴露 findRoomForReplay（不限 status 查房）');
+  }
+
+  /* ---------- 结构守卫：迁移文件 5 个 rpc + 复盘表 + 7 天逻辑 ---------- */
+  {
+    const fs = require('fs');
+    const migDir = require('path').join(__dirname, '..', 'migrations');
+    const files = fs.readdirSync(migDir).filter(f => /002-room-retention-replay/.test(f));
+    ok(files.length === 1, '存在房间保留迁移文件 002-room-retention-replay.sql');
+    if (files.length === 1) {
+      const m = fs.readFileSync(require('path').join(migDir, files[0]), 'utf8');
+      ['poker_close_room', 'poker_save_hand_replay', 'poker_list_room_replays', 'poker_list_my_rooms', 'poker_purge_room']
+        .forEach(n => ok(m.indexOf(n) >= 0, '迁移含 rpc ' + n));
+      ok(/poker_hand_replays/.test(m), '迁移新建复盘表 poker_hand_replays');
+      ok(/expires_at/.test(m), '迁移为 poker_rooms 加 expires_at 列');
+      ok(/interval '7 days'/.test(m), 'close_room 有对战→ ended + 7 天逻辑');
+    }
+  }
+
+  /* ---------- 结构守卫：table 对 ended=1 跳复盘；replay 房间模式 ---------- */
+  {
+    const tableSrc = require('fs').readFileSync(require('path').join(__dirname, 'pages/table/table.js'), 'utf8');
+    ok(/ended === '1'[\s\S]*?redirectTo[\s\S]*?replay/.test(tableSrc),
+      'table 对 ended=1 重定向到 replay 页（不跑引擎）');
+    const replaySrc = require('fs').readFileSync(require('path').join(__dirname, 'pages/replay/replay.js'), 'utf8');
+    ok(/_enterRoomMode/.test(replaySrc), 'replay 页有房间复盘模式 _enterRoomMode');
+    ok(/listRoomReplays/.test(replaySrc), 'replay 页调 auth.listRoomReplays 拉全部复盘');
+  }
 
   if (failures.length === 0) {
     console.log('首页逻辑测试全部通过：' + passes + ' 项断言 ✓');
