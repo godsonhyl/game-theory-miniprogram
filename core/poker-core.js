@@ -370,6 +370,21 @@
    * ========================================================== */
 
   /**
+   * 平分零头的派发序：按钮左一位（本手首个行动者）优先，按钮本人排最后。
+   * TDA 规则：奇数筹码给「离按钮左侧最近、仍在手内的玩家」。
+   * dist=0 是按钮本人 → 排队尾；其余按距按钮行动序升序。
+   * seats 必须是升序座位号列表（showdown 处已按此构造，可直接复用）。
+   */
+  function oddChipOrder(ties, dealerSeat, seats) {
+    const n = seats.length;
+    const key = s => {
+      const d = (seats.indexOf(s) - seats.indexOf(dealerSeat) + n) % n;
+      return d === 0 ? n : d - 1;
+    };
+    return ties.slice().sort((a, b) => key(a) - key(b));
+  }
+
+  /**
    * 按承诺额分层切分边池，并合并「资格集合完全相同」的相邻层。
    * 例：A 承诺 100、B 承诺 300、C 全下 50
    *   → 主池 150（A/B/C）  +  边池 300（A/B）
@@ -476,6 +491,35 @@
         : (stOuts.size === 2 ? '两头卡顺' : '卡顺听牌'));
     }
 
+    // 对子补牌（2026-10-17 评审补充：原先只算同花/顺子，一对永远显示「无听牌」）。
+    // 仅处理到对子为止的成牌（上方已排除顺子及以上，剩下只可能是 PAIR/HIGH）。
+    if (made.cat === HAND.PAIR) {
+      const pairRank = made.ranks[0];
+      const holePair = rankOf(hole[0]) === rankOf(hole[1]);
+      const boardHasPair = board.some(c => rankOf(c) === pairRank);
+      if (holePair && !boardHasPair) {
+        // 纯口袋对：自身点数剩 2 张 → 三条/四条
+        for (let s = 0; s < 4; s++) {
+          const card = cardId(rankOf(hole[0]), s);
+          if (!known[card]) outCards[card] = 1;
+        }
+        flags.push('口袋对听三条');
+      } else {
+        // 底对/中对（一张底牌与公共牌成对）：自身点数 + 2 张踢脚 → 两对/三条
+        const pairHole = rankOf(hole[0]) === pairRank ? hole[0] : hole[1];
+        const other = rankOf(hole[0]) === pairRank ? hole[1] : hole[0];
+        [pairRank, rankOf(other)].forEach(r => {
+          if (r < 0) return;
+          for (let s = 0; s < 4; s++) {
+            const card = cardId(r, s);
+            if (!known[card]) outCards[card] = 1;
+          }
+        });
+        void pairHole;   // 仅为可读性保留
+        flags.push('底对听两对/三条');
+      }
+    }
+
     return { outs: Math.min(Object.keys(outCards).length, 15), desc: flags.join(' + ') };
   }
 
@@ -522,7 +566,7 @@
 
     // 预分配池跨迭代复用：rest 只读不改（固定未用牌序），每迭代开头用复制循环把
     // rest 灌回 pool 复位到洗牌前干净态，再原地 Fisher-Yates。省去每迭代分配 ~50
-    // 元素数组的开销（蒙特卡洛内层热路径：AI 翻牌后 420 iter、建议 1800 iter）。
+    // 元素数组的开销（蒙特卡洛内层热路径：AI 翻牌后 800 iter、建议 1800 iter）。
     // 不变性：每迭代复位后 pool 起态完全一致 → 同 seed 同 rng 同结果（确定性回放）。
     const pool = rest.slice();
     for (let it = 0; it < iters; it++) {
@@ -636,9 +680,16 @@
     const raiseDecision = function (desiredTo, reason) {
       if (ctx.canRaise === false || !hasRange) {
         // 加注权被封锁（他人不足额全下）/ 退化路径无合法区间：
-        // 不加注，全下或跟注二选一（二者无需区间即可保证合法）
-        if (stack > 0 && (ctx.canRaise === false || maxRaiseTo > currentBet)) {
-          if (ctx.canRaise === false) return { action: ACTION.ALLIN, amount: stack, reason: reason + '（加注被封锁，转全下）' };
+        // 不加注，跟注或跟注全下二选一（均无需区间即可保证合法）。
+        // ⚠️ 被封锁时全下仅在「跟注全下」（筹码追不上跟注额）时合法——
+        //    act() 对 target > currentBet 的全下一律拒绝（2026-10-17 闸门）。
+        if (ctx.canRaise === false) {
+          if (stack > 0 && stack <= toCall) {
+            return { action: ACTION.ALLIN, amount: stack, reason: reason + '（加注被封锁，跟注全下）' };
+          }
+          return { action: ACTION.CALL, amount: toCall, reason: reason + '（加注被封锁，跟注）' };
+        }
+        if (stack > 0 && maxRaiseTo > currentBet) {
           return { action: ACTION.CALL, amount: toCall, reason: reason + '（无合法区间，降级跟注）' };
         }
         return { action: ACTION.CALL, amount: toCall, reason: reason + '（降级跟注）' };
@@ -662,11 +713,14 @@
 
     // ---- 翻牌前 ----
     if (board.length === 0) {
-      const threshold = 26 - tight * 10;
+      // 阈值 23（原 26）：原值下中位风格 VPIP 不足两成，全员 limp 观感「机器人」。
+      const threshold = 23 - tight * 10;
       const potOdds = toCall > 0 ? toCall / (pot + toCall) : 0;
       const bar = threshold * (1 - potOdds * 0.45);
 
-      if (holeStrength >= bar + 12) {
+      // 加注锋线 bar+7（原 +12）：原锋线高于 AA/KK 之外的一切起手分（QQ/AK 全 limp），
+      // 收窄至 +7 让中高对与 AK 进入价值加注区（2026-10-17 评审调参）。
+      if (holeStrength >= bar + 7) {
         return raiseDecision(
           Math.max(toCall + currentBet * 2, Math.round(pot * 0.75 + currentBet)),
           '强起手加注'
@@ -693,7 +747,9 @@
     // 种子可复现——同 seed 同动作序列 → 同决策，事件溯源回放时 AI 分叉路径可
     // 逐位还原）；未注入时退回 createRng()（随机种子），与旧实现兼容。
     const mcRng = ctx.rng || createRng();
-    const equity = quickEquity(hole, board, Math.max(1, numActive - 1), 420, mcRng).equity;
+    // AI 蒙特卡洛精度 800 iter（原 420，std≈±1.7%）：AI 表演延迟 620ms+ 远盖计算增量，
+    // 拉近与 advise（1800）的口径差，减少「教练建议跟、同胜率 AI 弃」的矛盾观感。
+    const equity = quickEquity(hole, board, Math.max(1, numActive - 1), 800, mcRng).equity;
     const potOdds = toCall > 0 ? toCall / (pot + toCall) : 0;
     const draw = detectDraws(hole, board);
 
@@ -943,7 +999,13 @@
       game.lastAggressor = null;
 
       if (canActCount <= 1) {
-        return skipToShowdown('仅一名可行动玩家，直接发完公共牌');
+        // 盲注双全下特例：仍有「有筹码且欠注」的非全下玩家时不得跳过——
+        // 他有权决定补齐跟注（2026-10-17 评审：原逻辑静默剥夺第三家跟注权）。
+        const owes = game.players.some(p =>
+          !p.folded && !p.sittingOut && !p.allIn && p.stack > 0 && p.bet < game.currentBet);
+        if (!owes) return skipToShowdown('仅一名可行动玩家，直接发完公共牌');
+        // owes 为真时掉落到下方行动位寻找，让欠注者把 call/fold 走完；
+        // 其行动后 advance 的同名检查会接管后续跳街。
       }
       // 翻牌前：从大盲左手第一位开始（若该位已全下/弃牌，顺移到下一个可行动的人）
       const bbIdx = order.indexOf(bbSeat);
@@ -1022,6 +1084,11 @@
           let target;
           if (action === ACTION.ALLIN) {
             target = p.bet + p.stack;
+            // 加注权被不足额全下封锁时，只允许「纯跟注全下」（总承诺额不超当前注）。
+            // 若全下额超过 currentBet 即为变相加注，按 TDA 规则已行动玩家只能跟注或弃牌。
+            if (!legal.canRaise && target > game.currentBet) {
+              return { ok: false, error: '加注权已被不足额全下封锁，只能跟注或跟注全下' };
+            }
           } else {
             if (!legal.canRaise) return { ok: false, error: '当前无权加注（可能被不足额全下封锁）' };
             if (amount > legal.maxRaiseTo) return { ok: false, error: `加注额超过可用筹码 ${legal.maxRaiseTo}` };
@@ -1039,7 +1106,8 @@
 
           // ⚠️ 关键：短全下时 currentBet 只能升高，不能被拉低
           game.currentBet = Math.max(game.currentBet, target);
-          game.lastAggressor = seat;
+          // lastAggressor 仅在真实超额（加注/足额全下）时赋值——全下形跟注（target≤prevBet）不算侵略者
+          if (target > prevBet) game.lastAggressor = seat;
 
           if (isFullRaise) {
             game.minRaise = target - prevBet;
@@ -1206,7 +1274,9 @@
         }
         const share = Math.floor(pot.amount / seatsToWin.length);
         let rem = pot.amount - share * seatsToWin.length;
-        seatsToWin.forEach(s => {
+        // 零头派发序与 showdown 同口径：按钮左一优先（TDA 奇数筹码规则）
+        const seatList = game.players.map(p => p.seat).sort((a, b) => a - b);
+        oddChipOrder(seatsToWin, game.dealerSeat, seatList).forEach(s => {
           let amt = share;
           if (rem > 0) { amt += 1; rem -= 1; }
           const p = game.seatOf(s);
@@ -1271,7 +1341,10 @@
 
         const share = Math.floor(pot.amount / ties.length);
         let rem = pot.amount - share * ties.length;
-        ties.forEach(s => {
+        // 零头按「按钮左一优先」序派发（TDA：奇数筹码给按钮左侧最近的在局玩家），
+        // 非按座位号大小——2026-10-17 评审纠正方向性错误。
+        const seatList = game.players.map(p => p.seat).sort((a, b) => a - b);
+        oddChipOrder(ties, game.dealerSeat, seatList).forEach(s => {
           let amt = share;
           if (rem > 0) { amt += 1; rem -= 1; }
           const p = game.seatOf(s);
@@ -1421,7 +1494,9 @@
           seat: p.seat, id: p.id, name: p.name, isHuman: p.isHuman,
           stack: p.stack, bet: p.bet, committed: p.committed,
           folded: p.folded, allIn: p.allIn, sittingOut: !!p.sittingOut,
-          hole: (p.isHuman || showAll) ? p.hole.map(cardToCode) : null,
+          // 弃牌者的底牌不下发（even showAll）：mucked 牌不向任何玩家披露（2026-10-17 评审）。
+          // 房主本地端不受影响（不经 snapshot）；镜像端弃牌者渲染牌背只需要 holeCount。
+          hole: (!p.folded && (p.isHuman || showAll)) ? p.hole.map(cardToCode) : null,
           holeCount: p.hole.length
         }))
       };

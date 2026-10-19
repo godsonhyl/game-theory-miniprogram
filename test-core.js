@@ -385,6 +385,46 @@ console.log('\n【7】压力测试：2000 手全自动对局');
     rng: P.createRng('blocked')
   });
   ok(d.action !== 'raise', 'canRaise=false 时 AI 不返回加注，实际 ' + d.action);
+  // 3b) 封锁态 AI 筹码高于跟注额时必须降级 CALL（原路径「转全下」会撞引擎新闸门）
+  eq(d.action, 'call', 'canRaise=false（stack>toCall）AI 降级跟注，实际 ' + d.action);
+  // 3c) 封锁态 AI 追不上跟注额时走「跟注全下」（target≤currentBet，引擎放行）
+  const dShort = P.aiDecide({
+    hole: [P.cardId(12, 0), P.cardId(12, 1)], board: [], pot: 300,
+    toCall: 100, stack: 60, currentBet: 200, numActive: 3,
+    style: { aggro: 1, tight: 0 },
+    minRaiseTo: 400, maxRaiseTo: 1000,
+    canRaise: false,
+    rng: P.createRng('blocked-short')
+  });
+  eq(dShort.action, 'allin', 'canRaise=false（stack<=toCall）AI 跟注全下，实际 ' + dShort.action);
+}
+// 3d) 引擎闸门：加注权被封锁者的超额全下被拒；跟注合法（2026-10-17 评审 A1）
+// 场景：翻后 SB(1) 下注 200，BB(2) 不足额全下到 330（<minRaise 400），BTN(0) 跟注；
+// 回到 SB(1)：canRaise=false 且 toCall=130 —— 超额全下（800>330）必须被拒。
+{
+  const gd = P.createGame({
+    players: [mkPlayer(0, 1000), mkPlayer(1, 1000), mkPlayer(2, 350)],
+    sb: 10, bb: 20, dealerSeat: 2, seed: 'gate-3d'
+  });
+  gd.startHand();
+  let g = 0;
+  while (gd.street === 'preflop' && g++ < 10) {
+    const s = gd.actionSeat; if (s === -1) break;
+    const l = gd.legalActions(s);
+    if (!l) break;
+    gd.act(s, l.canCheck ? 'check' : 'call');
+  }
+  eq(gd.street, 'flop', '事件流：翻牌圈到达');
+  gd.act(1, 'raise', 200);          // SB 下注 200
+  gd.act(2, 'allin');               // BB 不足额全下到 330
+  gd.act(0, 'call');                // BTN 跟注
+  eq(gd.actionSeat, 1, '行动权回到被封锁的下注者 SB');
+  const legalD = gd.legalActions(1);
+  ok(legalD && legalD.canRaise === false, 'SB 加注权已被不足额全下封锁');
+  const over = gd.act(1, 'allin');
+  ok(over.ok === false, '封锁者超额全下被引擎拒绝（A1 闸门）：' + (over.error || ''));
+  ok(gd.act(1, 'call').ok, '封锁者仍可跟注');
+  gd.players.forEach(p => { p.canRaise = true; });   // 不污染后续用例（canRaise 是引擎内部字段）
 }
 // 4) 零筹码玩家不参与发牌（评审 MEDIUM：0 筹码玩家曾照发牌摊牌白抢池）
 {
@@ -443,8 +483,9 @@ for (let round = 0; round < 2000; round++) {
       numActive: gg.activePlayers().length,
       positionFactor: n === 2 ? 0.5 : (pf <= 1 ? 0.9 : (pf <= 3 ? 0.4 : 0)),
       style: me.style,
-      // 把合法区间交给 AI，由其自行夹取
+      // 把合法区间交给 AI，由其自行夹取；canRaise 一并透传（封锁态 AI 须降级跟注）
       minRaiseTo: legal.minRaiseTo, maxRaiseTo: legal.maxRaiseTo,
+      canRaise: legal.canRaise,
       rng: P.createRng('ai' + round + step)
     });
     const res = gg.act(s, d2.action, d2.amount);
