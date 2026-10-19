@@ -1246,11 +1246,19 @@ Page({
    *   3. 同一手只能有一笔申请：确认后置「已申请」，重复点提示不累计；
    *      「已申请」态可取消（用户确认：误操作不该罚一手）。房主端摘除本地
    *      pendingRebuyMap[mySeat] 即可；好友端 pending 钱在房主机里，取消也走
-   *      rebuy 动作上行（add:0 = 撤销），房主端消化时与在途申请相消。
+   *      rebuy 动作上行（add:0 = 撤销），房主端摘除该座 pending。
    * 实例字段 _myRebuyPending = { hand, add }：我本手已申请的补筹（供防重 +
    * 「待补 +N」角标；镜像端下一帧快照回来前先本地顶着，防轮询窗口重复点）。
    * 历史死代码 _rebuyDismissedHand（只写不读）已整段删除；canRebuyNow 开头
-   * 原「remoteMode 未初始化」空 if 连注释带条件删除（onLoad 已初始化，无窗口）。 */
+   * 原「remoteMode 未初始化」空 if 连注释带条件删除（onLoad 已初始化，无窗口）。
+   *
+   * ⚠️ 上行时序（P3，评审 2026-10-19）：room-sync 的 action 是「每行一个槽」，
+   * 新动作整列覆盖旧的（pushAction 直接 upsert action 字段）。所以「申请→撤销」
+   * 快速连点时房主只会看到后一条（撤销时已无申请可撤，无害）；真正的风险是
+   * 跨手错位——好友在 H1 申请、房主 H2 前才消化，钱会记进 H2 的 pending。
+   * 旧注释写的「房主消化时与在途申请相消」不成立。现在上行 rebuy 动作带
+   * handNo，房主 applyFriendAction 只接受 handNo === 当前手（即申请针对
+   * 「下一手」的口径），过期申请直接丢弃。 */
   canRebuyNow() {
     if (this.mode !== 'friend') return false;
     const me = game && game.seatOf(this.mySeat);
@@ -1344,7 +1352,7 @@ Page({
     if (this.remoteMode) {
       // 缺 zone 提示不走常见 todo：好友端没有引擎权威，写本地会被下一帧快照卷回。
       // 上行给房主消化；失败提示用户（禁静默吞——SILENT_OK_COUNT 守卫）。
-      roomSync.pushAction(this.roomNo, { type: 'rebuy', seat: this.roomSeat, add: add })
+      roomSync.pushAction(this.roomNo, { type: 'rebuy', seat: this.roomSeat, add: add, handNo: this._myRebuyPending.hand })
         .catch(() => this.syncFailToast('补筹未同步成功，请重试'));
       wx.showToast({ title: '已申请补筹 +' + add, icon: 'none' });
       this.pushChat(this.mySeat, this.meLabel(false), '申请补筹 +' + add);
@@ -1368,7 +1376,8 @@ Page({
     if (!game || pend.hand !== game.handNo || !(pend.add > 0)) return;
     this._myRebuyPending = { hand: -1, add: 0 };
     if (this.remoteMode) {
-      roomSync.pushAction(this.roomNo, { type: 'rebuy', seat: this.roomSeat, add: 0 })
+      // handNo 一并上行：撤销针对的是「我申请时那一手」，房主端按它判过期（P3）
+      roomSync.pushAction(this.roomNo, { type: 'rebuy', seat: this.roomSeat, add: 0, handNo: pend.hand })
         .catch(() => this.syncFailToast('撤销未同步成功，请重试'));
       wx.showToast({ title: '已撤销补筹申请', icon: 'none' });
       this.render();
@@ -1743,6 +1752,11 @@ Page({
       const p = game.seatOf(seat);
       if (!p) return;
       if (!p.isHuman) return;                       // bot 拒收（房主端自动补）
+      // P3：跨手过期判定。room-sync 每行只有一个 action 槽，好友在 H1 申请、
+      // 房主 H2 前才轮询到时，不校验就会把「H1 的申请」记进 H2 的 pending。
+      // 带上 handNo 的按「申请针对当前这一手（= 下一手生效）」判；缺字段的是
+      // 旧版本客户端，保持兼容放行（与 P2 的整手倍纪律配合，风险面已被钳住）。
+      if (a.handNo !== undefined && Number(a.handNo) !== Number(game.handNo)) return;
       const raw = Math.round(Number(a.add) || 0);
       if (raw === 0) {
         // add:0 = 撤销本手已申请的补筹（规则 3：已申请态可取消）
@@ -1753,8 +1767,12 @@ Page({
       if (raw < 0) return;
       // add 由行主自报，规整 + 钳制：整手倍（规则 2，镜像端已规整、这里再兜一
       // 层防直写云端）、补后不超 REBUY_CAP。同一手一笔（规则 3）：后值覆盖，不累计。
-      const floorAdd = Math.floor(raw / DEFAULT_BUY_IN) * DEFAULT_BUY_IN;
-      let add = floorAdd >= DEFAULT_BUY_IN ? floorAdd : DEFAULT_BUY_IN;
+      // ⚠️ 不合规一律丢弃（P2，评审 2026-10-19）：旧实现 floor 后「不足一手按
+      // 一手」强抬到 1000，等于把好友的非法请求放大成一整手——与会话里其它
+      // handler「不合规就 return」的口径相反。整手倍纪律是硬约束：非整数倍
+      // （300/1500）直接拒收，不猜测玩家本意。
+      if (raw % DEFAULT_BUY_IN !== 0) return;
+      let add = raw;
       add = Math.min(add, Math.max(0, REBUY_CAP - p.stack));
       if (add <= 0) return;
       this.pendingRebuyMap[seat] = add;
@@ -3181,26 +3199,24 @@ Page({
     // B3：真人手动补筹消化——申请一律记在 pendingRebuyMap（规则 1：下一手
     // 生效），下一手发牌前统一切入。规则 2 时已把 add 规成整手倍，这里只补
     // 撤销后站起等边角：人已不在座（站起/超时自动站起）→ 补筹作废，钱不白给。
-    // 已生效的 _myRebuyPending 到这里清（下一手开局，角标自然消失）。
-    if (this.pendingRebuyMap && game) {
-      Object.keys(this.pendingRebuyMap).forEach(s => {
-        const p = game.seatOf(Number(s));
-        const add = Math.round(Number(this.pendingRebuyMap[s]) || 0);
-        if (p && add > 0 && !p.sittingOut && !this.standingMap[Number(s)]) {
-          const roomCap = p.isHuman ? REBUY_CAP : DEFAULT_BUY_IN;
-          const safe = Math.max(0, Math.min(add, roomCap - p.stack));
-          if (safe > 0) {
-            p.stack += safe;
-            if (this.startStacks[p.seat] !== undefined) this.startStacks[p.seat] += safe;
-            if (Number(s) === Number(this.mySeat) && this._myRebuyPending) {
-              this._myRebuyPending = { hand: -1, add: 0 };
-              this.setData({ myRebuyAdd: 0 });
-            }
-          }
-        }
-      });
-      this.pendingRebuyMap = {};
-    }
+    //
+    // ⚠️ 落账必须等 game.startHand() 成功之后（P1，评审 2026-10-19）：
+    // 旧实现先并入 stack、再调 startHand，开不起来（结算后有人站起/掉线、
+    // 好友端尚未把入座同步过来 → 人数不足）时直接 return false——钱已进
+    // stack、pendingRebuyMap 已清空、startStacks 已被抬高（结算盈亏失真），
+    // 而且下一手不会再重试。这里只「算」出待落账清单（plan），不写任何
+    // 状态；成功发牌后再统一落账并清 pending，失败则原样保留等下次重试。
+    const rebuyPlan = [];
+    const rebuyMapBefore = this.pendingRebuyMap || {};
+    Object.keys(rebuyMapBefore).forEach(s => {
+      const p = game.seatOf(Number(s));
+      const add = Math.round(Number(rebuyMapBefore[s]) || 0);
+      if (p && add > 0 && !p.sittingOut && !this.standingMap[Number(s)]) {
+        const roomCap = p.isHuman ? REBUY_CAP : DEFAULT_BUY_IN;
+        const safe = Math.max(0, Math.min(add, roomCap - p.stack));
+        if (safe > 0) rebuyPlan.push({ seat: p.seat, add: safe });
+      }
+    });
     game.players.forEach(p => { p.net = 0; });
 
     const prevDealer = game.dealerSeat;   // 供快照记录：恢复时从这里轮转到下一庄位
@@ -3210,6 +3226,26 @@ Page({
       if (this.mode === 'sng') this._sngCheckFinalize();
       wx.showToast({ title: r.error, icon: 'none' });
       return false;
+    }
+    // B3 补筹落账（P1）：startHand 已成功——此刻才把 rebuyPlan 并入 stack。
+    // 未进 plan 的座位（已站起/被撤销/无空间）随 pendingRebuyMap 一并清空：
+    // 「一律下一手生效」的下一次机会就是这个 startHand 边界，过期作废。
+    if (rebuyPlan.length || Object.keys(rebuyMapBefore).length) {
+      rebuyPlan.forEach(it => {
+        const p = game.seatOf(it.seat);
+        // 引擎 startHand 已扣过本手盲注 → 这里再按当前 stack 二次钳制补后上限
+        // （正常路径 rebuyPlan 已钳过，二次钳制只防 startHand 内部改 stack）
+        const roomCap = p && p.isHuman ? REBUY_CAP : DEFAULT_BUY_IN;
+        const safe = p ? Math.max(0, Math.min(it.add, roomCap - p.stack)) : 0;
+        if (safe <= 0) return;
+        p.stack += safe;
+        if (this.startStacks[p.seat] !== undefined) this.startStacks[p.seat] += safe;
+        if (it.seat === this.mySeat && this._myRebuyPending) {
+          this._myRebuyPending = { hand: -1, add: 0 };
+          this.setData({ myRebuyAdd: 0 });
+        }
+      });
+      this.pendingRebuyMap = {};
     }
     // 批⑤：SNG 淘汰检测——startHand 后引擎已把 stack<=0 玩家标 folded=true，
     // 但「本手不参与」≠「自动淘汰」——此处检测筹码归零者记名次推进赛制。

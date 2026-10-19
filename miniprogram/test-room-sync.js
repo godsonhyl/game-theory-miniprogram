@@ -1007,6 +1007,49 @@ eq(roomSync.readySeats([mkRow(1, 99999, { ready_hand: 4 })], 4, now), {}, '离�
     const l3 = roomSync.buildWaitLayout(conflict, null, 6, 2, now);
     ok(l3.filter(s => s.seat === 2)[0].isMe === true, '同座位冲突时优先认自己的行');
   }
+  /* ---------- 跨设备补筹（B3，P5 补齐）：好友 rebuy 动作 → 房主消化 ----------
+   * 规则 3 最脆的一环：好友端 pending 钱在房主机里，撤销必须走 rebuy 动作上行
+   * （add:0），旧版此链路零覆盖。本块复用已跑通的房主（host，房间 700001），
+   * 用一个真人座位（房主端在牌局里已有好友甲），直接验证 applyFriendAction
+   * 的 rebuy 分支语义：申请记账 / 撤销摘除 / P3 过期丢弃 / P2 非整倍丢弃 /
+   * 座位伪冒丢弃 / 规则 3 同手覆盖不累计。 */
+  {
+    const hostGame = host.requireGame();
+    const humanSeat = hostGame && hostGame.players.filter(p => p.isHuman && p.seat !== host.mySeat)[0];
+    ok(!!humanSeat, '补筹同步：房主引擎里有好友的真人座位（前置）');
+    if (humanSeat) {
+      const hs = humanSeat.seat;
+      const H = hostGame.handNo;
+      const act = a => host.applyFriendAction(Object.assign({ rowSeat: hs }, a));
+      delete host.pendingRebuyMap[hs];
+
+      act({ type: 'rebuy', seat: hs, add: 1000, handNo: H });
+      ok(host.pendingRebuyMap[hs] === 1000,
+        '补筹同步：好友申请 +1000 → 房主 pendingRebuyMap[' + hs + ']=1000，实际 ' + host.pendingRebuyMap[hs]);
+
+      act({ type: 'rebuy', seat: hs, add: 0, handNo: H });
+      ok(!host.pendingRebuyMap[hs],
+        '补筹同步：好友撤销（add:0）→ 房主摘除 pending（P5 主链路）');
+
+      act({ type: 'rebuy', seat: hs, add: 2000, handNo: H - 1 });
+      ok(!host.pendingRebuyMap[hs], '补筹同步：跨手过期申请（handNo 旧一拍）被丢弃（P3）');
+
+      act({ type: 'rebuy', seat: hs, add: 300, handNo: H });
+      ok(!host.pendingRebuyMap[hs], '补筹同步：非整手倍 add=300 被丢弃、不强抬成 1000（P2）');
+
+      act({ type: 'rebuy', seat: hs, add: 2000, handNo: H });
+      ok(host.pendingRebuyMap[hs] === 2000, '补筹同步：合规整手倍 +2000 照常记账');
+      act({ type: 'rebuy', seat: hs, add: 1000, handNo: H });
+      ok(host.pendingRebuyMap[hs] === 1000,
+        '补筹同步：同手再申请覆盖不累计（规则 3），实际 ' + host.pendingRebuyMap[hs]);
+
+      act({ type: 'rebuy', seat: host.mySeat, add: 1000, handNo: H });
+      ok(host.pendingRebuyMap[host.mySeat] === undefined && host.pendingRebuyMap[hs] === 1000,
+        '补筹同步：伪冒座位（payload seat≠行座位）整条丢弃，不波及自己');
+      delete host.pendingRebuyMap[hs];
+    }
+  }
+
 
   /* ---------- 输出 ---------- */
   console.log('\n' + '='.repeat(52));

@@ -187,37 +187,99 @@ ok(dataStore.pot === 30, '开局底池 30（盲注 10+20），实际 ' + dataSto
   ok(!pageCtx.pendingRebuyMap[pageCtx.mySeat], '撤销后 pendingRebuyMap 摘除');
   pageCtx.render();
   ok(dataStore.myRebuyAdd === 0, '撤销后角标清零（myRebuyAdd=0），实际 ' + dataStore.myRebuyAdd);
-  // 重新申请一笔，验证下一手 startHand 真正落账 + 在座判断消化
+  // 重新申请一笔，验证下一手 startHand 真正落账（不再手抄消化段——P4）。
   g0.seatOf(pageCtx.mySeat).stack = 2000;
   pageCtx.openRebuy();
   pageCtx.onRebuyInput({ detail: { value: '6000' } });
   pageCtx.confirmRebuy();
   const pendAdd = pageCtx.pendingRebuyMap[pageCtx.mySeat];
   ok(pendAdd === 3000, '输入 6000 规整为 3000（整手倍且不超 REBUY_CAP-2000），实际 ' + pendAdd);
-  // startHand 有大量前置状态（就绪名单/补 bot/加注档位记忆…），直接调可能被
-  // early-return 挡住（handNo 不变 = 未发出新手）。这里以调它为准但不强求
-  // handNo +1——落账路径的断言改盯 pendingRebuyMap 的消化守卫条件已由静态
-  // 断言覆盖；handNo +1 的链路有 startGame 既有断言兜着（防重复守卫不归 B3）。
-  pageCtx.startHand();
-  const g1 = pageCtx.requireGame();
-  ok(g1 && g1.handNo > 0, 'startHand 调用后引擎仍可读（不发新手也不影响已生效断言外的口径）');
-  // 手动走消化段（与 startHand 内同构）：短码 2000 + pending 3000 → 落账 5000
-  Object.keys(pageCtx.pendingRebuyMap).forEach(s => {
-    const p = g1.seatOf(Number(s));
-    const add = Math.round(Number(pageCtx.pendingRebuyMap[s]) || 0);
-    if (p && add > 0 && !p.sittingOut && !pageCtx.standingMap[Number(s)]) {
-      const roomCap = p.isHuman ? 5000 : 1000;
-      const safe = Math.max(0, Math.min(add, roomCap - p.stack));
-      if (safe > 0) { p.stack += safe; }
-    }
-  });
-  pageCtx.pendingRebuyMap = {};
-  ok(Math.abs(g1.seatOf(pageCtx.mySeat).stack - 5000) <= 20,
-    '消化段落账：2000 + pending 3000 ≈ 5000（差值 ≤ 一小盲，startHand 已扣本手盲注），实际 ' + g1.seatOf(pageCtx.mySeat).stack);
+  const handBefore = g0.handNo;
+  const stackBefore = g0.seatOf(pageCtx.mySeat).stack;
+  const okStart = pageCtx.startHand();
+  ok(okStart === true, 'startHand 成功发出下一手（P4：真实驱动，不再手抄消化段）');
+  ok(g0.handNo > handBefore, 'startHand 后 handNo 前进（' + handBefore + ' → ' + g0.handNo + '）');
   ok(Object.keys(pageCtx.pendingRebuyMap).length === 0, '消化后 pendingRebuyMap 清空（不跨手残留）');
-  pageCtx._myRebuyPending = { hand: -1, add: 0 };
+  // 落账口径：补后总额封顶 5000（本手盲注已扣，故落账前 stack = 5000 - 盲注）
+  const stacked = g0.seatOf(pageCtx.mySeat).stack;
+  ok(stacked >= 5000 - 40 && stacked <= 5000,
+    'startHand 真实落账：2000 + 补筹 3000 封顶 5000（扣盲注后 ' + stacked + '）');
+  ok(stacked > stackBefore, '落账后筹码确实增加（' + stackBefore + ' → ' + stacked + '）');
   pageCtx.render();
-  ok(dataStore.myRebuyAdd === 0, '生效后 _myRebuyPending 清零 → 角标归零（下一帧不再显示待补）');
+  ok(dataStore.myRebuyAdd === 0, '生效后 _myRebuyPending 清零 → 角标归零（下一手不再显示待补）');
+
+  /* ---- P1 回归：startHand 失败时补筹不得被吃掉（评审 2026-10-19） ---- */
+  // 旧实现先在 startHand 之前并入 stack 并清 pending；开牌失败（人数不足）
+  // 直接 return false——钱进了 stack、startStacks 被抬高（盈亏失真）、
+  // 下一手也不会再补。新口径：失败时 stack/pending/角标全部原样保留。
+  g0.seatOf(pageCtx.mySeat).stack = 300;
+  pageCtx.openRebuy();
+  pageCtx.onRebuyPick({ currentTarget: { dataset: { v: 1000 } } });
+  pageCtx.confirmRebuy();
+  const failPendBefore = JSON.stringify(pageCtx.pendingRebuyMap);
+  const failHand = pageCtx.requireGame().handNo;   // handNo 会被 startHand 失败/成功推进，先快照
+  const failStackBefore = pageCtx.requireGame().seatOf(pageCtx.mySeat).stack;
+  const failStartBefore = pageCtx.startStacks[pageCtx.mySeat];
+  // 全桌站起 → 引擎人数不足，startHand 必失败
+  const gf = pageCtx.requireGame();
+  const stoodBack = gf.players.filter(p => p.seat !== pageCtx.mySeat).map(p => p.seat);
+  stoodBack.forEach(s => { gf.seatOf(s).sittingOut = true; });
+  const failOk = pageCtx.startHand();
+  ok(failOk === false, 'P1：人数不足时 startHand 返回 false（前置场景成立）');
+  // 引擎在失败时会把 game.over 置 true（not enough players）——记录原值供恢复
+  const overBefore = pageCtx.requireGame().over;
+  ok(overBefore === true, 'P1：开牌失败时引擎置 over=true（记录原值，供后续恢复）');
+  ok(JSON.stringify(pageCtx.pendingRebuyMap) === failPendBefore,
+    'P1：startHand 失败 → pendingRebuyMap 原样保留（' + failPendBefore + '），实际 ' + JSON.stringify(pageCtx.pendingRebuyMap));
+  ok(gf.seatOf(pageCtx.mySeat).stack === failStackBefore,
+    'P1：startHand 失败 → stack 未被并入（' + failStackBefore + ' → ' + gf.seatOf(pageCtx.mySeat).stack + '）');
+  ok(pageCtx.startStacks[pageCtx.mySeat] === failStartBefore,
+    'P1：startHand 失败 → startStacks 未被抬高（结算盈亏口径不失真）');
+  ok(pageCtx._myRebuyPending.hand === failHand && pageCtx._myRebuyPending.add === 1000,
+    'P1：startHand 失败 → 「已申请」态保留，角标不消失');
+  // 恢复人数后再试：验证「申请没被吃掉」——引擎失败会把 over 置 true，这里
+  // 复位 over 模拟「下一手重新开局」；落账必须发生且只发生一次。
+  stoodBack.forEach(s => { gf.seatOf(s).sittingOut = false; });
+  gf.over = false;
+  const retryOk = pageCtx.startHand();
+  ok(retryOk === true, 'P1：人数恢复后重试 startHand 成功');
+  // 落账额 = min(1000, REBUY_CAP - stack)，落账发生在引擎扣盲注之后 → stack 必落在
+  // [1300 - bb - 1, 1300]（盲注按位置可能是 sb 或 bb，留 1 个筹码容差）
+  const afterRetry = gf.seatOf(pageCtx.mySeat).stack;
+  ok(afterRetry >= 1300 - gf.bb - 1 && afterRetry <= 1300,
+    'P1：重试成功后补筹恰好落账一次（300 + 1000 − 盲注），实际 ' + afterRetry);
+  ok(Object.keys(pageCtx.pendingRebuyMap).length === 0, 'P1：落账后 pendingRebuyMap 清空（不残留到再下一手）');
+  pageCtx.render();
+  ok(dataStore.myRebuyAdd === 0, 'P1：落账后角标归零');
+
+  /* ---- P2 回归：房主端对不合规上行 rebuy 一律丢弃，不得强抬成整手 ---- */
+  // 旧实现 floor 后「不足一手按一手」→ add:300 被放大成 1000。新口径直接拒收。
+  const gp = pageCtx.requireGame();
+  delete pageCtx.pendingRebuyMap[pageCtx.mySeat];
+  gp.seatOf(pageCtx.mySeat).stack = 900;
+  pageCtx.applyFriendAction({ type: 'rebuy', seat: pageCtx.mySeat, rowSeat: pageCtx.mySeat, add: 300 });
+  ok(!pageCtx.pendingRebuyMap[pageCtx.mySeat],
+    'P2：非整手倍 add=300 被丢弃（不再强抬成 +1000），实际 ' + JSON.stringify(pageCtx.pendingRebuyMap[pageCtx.mySeat]));
+  pageCtx.applyFriendAction({ type: 'rebuy', seat: pageCtx.mySeat, rowSeat: pageCtx.mySeat, add: 1500 });
+  ok(!pageCtx.pendingRebuyMap[pageCtx.mySeat], 'P2：非整手倍 add=1500 被丢弃');
+  pageCtx.applyFriendAction({ type: 'rebuy', seat: pageCtx.mySeat, rowSeat: pageCtx.mySeat, add: 2000 });
+  ok(pageCtx.pendingRebuyMap[pageCtx.mySeat] === 2000,
+    'P2：合规整手倍 add=2000 照常记账，实际 ' + pageCtx.pendingRebuyMap[pageCtx.mySeat]);
+  // P3：跨手过期申请丢弃（handNo 与当前手不符）
+  delete pageCtx.pendingRebuyMap[pageCtx.mySeat];
+  const gpHand = pageCtx.requireGame().handNo;
+  pageCtx.applyFriendAction({ type: 'rebuy', seat: pageCtx.mySeat, rowSeat: pageCtx.mySeat, add: 1000, handNo: gpHand - 1 });
+  ok(!pageCtx.pendingRebuyMap[pageCtx.mySeat], 'P3：handNo 过期的申请被丢弃（不记进当前手）');
+  pageCtx.applyFriendAction({ type: 'rebuy', seat: pageCtx.mySeat, rowSeat: pageCtx.mySeat, add: 1000, handNo: gpHand });
+  ok(pageCtx.pendingRebuyMap[pageCtx.mySeat] === 1000, 'P3：handNo 匹配当前手的申请照常记账');
+  pageCtx.applyFriendAction({ type: 'rebuy', seat: pageCtx.mySeat, rowSeat: pageCtx.mySeat, add: 0, handNo: gpHand });
+  ok(!pageCtx.pendingRebuyMap[pageCtx.mySeat], 'P3：撤销（add:0）摘除 pending');
+  // 清理：恢复本块改动（后续用例依赖「我在座、可开局」的干净状态）
+  pageCtx.pendingRebuyMap = {};
+  pageCtx._myRebuyPending = { hand: -1, add: 0 };
+  pageCtx.requireGame().seatOf(pageCtx.mySeat).stack = 1000;
+  pageCtx.pendingSit = false;
+  pageCtx.myStanding = false;
 }
 
 /* ---------- 空闲超时自动销毁（30 分钟无人加入）---------- */
@@ -3940,9 +4002,16 @@ while (guard++ < 400) {
       'table.js applyFriendAction 的 rebuy 分支只记 pending（规则 1，消化统一在 startHand）');
     ok(/for \(let add = DEFAULT_BUY_IN; add <= REBUY_CAP; add \+= DEFAULT_BUY_IN\)/.test(tableSrc),
       'table.js openRebuy 档位 = +1000/+2000/… 整手倍迭代（规则 2）');
-    ok(/const floorAdd = Math\.floor\(raw \/ DEFAULT_BUY_IN\) \* DEFAULT_BUY_IN;/.test(tableSrc) &&
+    ok(/if \(raw % DEFAULT_BUY_IN !== 0\) return;/.test(tableSrc) &&
       /add = Math\.min\(add, Math\.max\(0, REBUY_CAP - p\.stack\)\);/.test(tableSrc),
-      'table.js 房主端 rebuy 规整整手倍 + 钳到 REBUY_CAP - stack（直写云端也兜底）');
+      'table.js 房主端 rebuy 拒收非整手倍（P2：不合规丢弃，不再 floor 强抬）+ 钳到 REBUY_CAP - stack');
+    ok(/if \(a\.handNo !== undefined && Number\(a\.handNo\) !== Number\(game\.handNo\)\) return;/.test(tableSrc),
+      'table.js 房主端 rebuy 校验 handNo（P3：跨手过期申请丢弃，旧客户端缺字段兼容放行）');
+    ok(/const rebuyPlan = \[\];/.test(tableSrc) &&
+      /const r = game\.startHand\(\);[\s\S]{0,900}rebuyPlan\.forEach/.test(tableSrc),
+      'table.js 补筹落账推迟到 startHand 成功之后（P1：失败不吃掉申请）');
+    ok(!/if \(!r\.ok\) \{[\s\S]{0,600}startStacks\[p\.seat\] \+= safe/.test(tableSrc),
+      'table.js startHand 失败分支内不落账补筹（P1）');
     ok(/roundRebuyAdd\(v\)/.test(tableSrc) && /Math\.floor\(Number\(v\) \/ DEFAULT_BUY_IN\)/.test(tableSrc),
       'table.js roundRebuyAdd 向下取整手倍（不足一手按一手，规则 2 的 UI 侧）');
     ok(/this\.pendingRebuyMap\[this\.mySeat\] = add;/.test(tableSrc),
@@ -3951,8 +4020,8 @@ while (guard++ < 400) {
       /this\._myRebuyPending = \{ hand: game \? game\.handNo : -1, add: add \};/.test(tableSrc),
       'table.js _myRebuyPending 实例态（已申请标记：防重 + 角标 + 撤销判据）');
     ok(/revokeRebuy\(\)/.test(tableSrc) &&
-      /roomSeat, add: 0 \}\)[\s\S]{0,90}撤销未同步成功/.test(tableSrc),
-      'table.js 已申请态确认钮走 revokeRebuy，好友端撤销上行 add:0 且失败有提示');
+      /roomSeat, add: 0, handNo: pend\.hand \}\)[\s\S]{0,90}撤销未同步成功/.test(tableSrc),
+      'table.js 已申请态确认钮走 revokeRebuy，好友端撤销上行 add:0 + handNo，失败有提示');
     ok(/const raw = Math\.round\(Number\(a\.add\) \|\| 0\);\s*\n\s*if \(raw === 0\) \{/.test(tableSrc) &&
       /delete this\.pendingRebuyMap\[seat\];/.test(tableSrc),
       'table.js 房主端消化 rebuy 的 add:0 = 撤销（摘 pendingRebuyMap）');
