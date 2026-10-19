@@ -3968,9 +3968,13 @@ Page({
         const win = res.winners.indexOf(p.seat) !== -1;
         const gain = res.awards.filter(a => a.seat === p.seat).reduce((s, a) => s + a.amount, 0);
         const net = gain - p.committed;
+        // muck 礼仪（A4，2026-10-17）：弃牌者不亮牌——未摊牌且已弃牌时 holeTxt 置空，
+        // 手牌列与胶囊短文都落「弃牌」文案。快照侧已同步掩码（弃牌者 hole=null），
+        // 此处是 UI 侧兜底：房主本地 game.players 里弃牌者底牌仍在内存，若不遮，
+        // 结算弹窗会把 mucked 牌明文打出来，与引擎快照的掩码语义不一致。
         const holeTxt = rv
           ? rv.hole.map(code => this.codeToStr(code)).join(' ')
-          : p.hole.map(c => P.cardToStr(c)).join(' ');
+          : (p.folded ? '' : p.hole.map(c => P.cardToStr(c)).join(' '));
         // 摊牌结算弹窗里的「手牌牌面」：默认只亮真正摊牌（rv 存在）的座位，
         // 弃牌者的牌不公开（muck 不亮牌，扑克通行礼仪），此时 cards 为空数组、
         // 由 .sr-cards 的固定宽度占位保持各行「牌型 / 盈亏」两列仍对齐。
@@ -3994,7 +3998,8 @@ Page({
           seat: p.seat,
           name: p.name,
           icon: win ? '🏆 ' : '',
-          hand: rv ? holeTxt + ' → ' + rv.name : holeTxt,
+          // 手牌列：弃牌者 holeTxt 已置空 → 落「弃牌」占位（保持列不空、语义清晰）
+          hand: rv ? holeTxt + ' → ' + rv.name : (holeTxt || (p.folded ? '弃牌' : '未摊牌')),
           cards,                    // 结算弹窗的迷你手牌（默认：弃牌为空）
           bestIds,                  // 该玩家参与最佳成手的牌 id 集——G2 公共牌行按行高亮
           // 结算条胶囊用的短文本：摊牌显示牌型名；弃牌/未摊牌给状态文案

@@ -226,6 +226,71 @@ ok(endSnap.reveal && Object.keys(endSnap.reveal).length > 0,
 ok(endSnap.players.filter(p => !p.folded).every(p => Array.isArray(p.hole) && p.hole.length === 2),
   '快照：摊牌后未弃牌玩家底牌明文下发');
 
+// 关键回归（A4，2026-10-17）：快照 showAll 也不得下发弃牌者底牌（muck 礼仪）。
+// 构造一手：三人局一人中途弃牌 → 摊牌快照里弃牌者 hole 必须为 null。
+{
+  const gm = P.createGame({ players: [mkPlayer(0, 1000), mkPlayer(1, 1000), mkPlayer(2, 1000)], sb: 10, bb: 20, dealerSeat: 0, seed: 'muck' });
+  gm.startHand();
+  // btn=1，seat1 先行动：fold → 其余全 check 到摊牌
+  ok(gm.act(gm.actionSeat, 'fold').ok, '场景确认：座位1 弃牌');
+  let gmGuard = 0;
+  while (!gm.result && gmGuard++ < 60 && gm.actionSeat !== -1) {
+    const s = gm.actionSeat;
+    const lg = gm.legalActions(s);
+    if (!lg) break;
+    gm.act(s, lg.canCheck ? 'check' : 'call', 0);
+  }
+  const msnap = gm.snapshot();
+  const foldedP = msnap.players.find(p => p.folded);
+  ok(!!foldedP, '场景确认：快照中存在弃牌者');
+  ok(foldedP.hole === null, '快照：弃牌者底牌为 null（showAll 也不泄露）');
+  eq(foldedP.holeCount, 2, '弃牌者 holeCount 保留（镜像端渲染牌背）');
+}
+
+// 关键回归（A2，2026-10-17）：平分池奇数零头按「按钮左一优先」派发。
+// 3 人局 dealerSeat=0 → startHand 后按钮在座位 1。座位 0 与 2 平分时：
+// 「按钮左一」= 座位 2 → 零头应归座位 2 而非座位号更小的 0。
+// 奇数池构造：按钮(1) 翻前加注到 41（奇数）后两家跟注，翻后按钮弃牌留下死筹码，
+// 其余全 check 到底 → 三人各投 41，主池 123 为奇数，0/2 平分即 61/62 的零头场景。
+// （全 check 的偶数池拼不出零头——直接赌 seed 撞奇数注额基本不可能命中。）
+{
+  let found = null;
+  for (let t = 0; t < 2000 && !found; t++) {
+    const gg = P.createGame({ players: [mkPlayer(0, 1000), mkPlayer(1, 1000), mkPlayer(2, 1000)], sb: 10, bb: 20, dealerSeat: 0, seed: 'odd-' + t });
+    gg.startHand();
+    if (gg.dealerSeat !== 1) continue;
+    if (!gg.act(1, 'raise', 41).ok) continue;   // 按钮 odd 加注，主池由此变奇数
+    if (!gg.act(2, 'call', 0).ok) continue;
+    if (!gg.act(0, 'call', 0).ok) continue;
+    let gdGuard = 0, okRun = true;
+    while (!gg.result && gdGuard++ < 60 && gg.actionSeat !== -1) {
+      const s = gg.actionSeat;
+      if (s === 1) { // 按钮翻后弃牌：留下死筹码，其他人全 check 到底
+        if (!gg.act(s, 'fold').ok) { okRun = false; break; }
+        continue;
+      }
+      const lg = gg.legalActions(s);
+      if (!lg) { okRun = false; break; }
+      if (!gg.act(s, lg.canCheck ? 'check' : 'call', 0).ok) { okRun = false; break; }
+    }
+    if (okRun && gg.result && gg.result.type === 'showdown') {
+      const winners = gg.result.winners;
+      if (winners.length === 2 && winners.indexOf(0) !== -1 && winners.indexOf(2) !== -1) {
+        const mains = gg.result.awards.filter(a => a.isMain);
+        const potTotal = mains.reduce((s, a) => s + a.amount, 0);
+        if (mains.length === 2 && potTotal % 2 === 1) found = gg;
+      }
+    }
+  }
+  ok(!!found, '搜到三人平分奇数池场景（按钮 41 加注 + 2000 seed 内）');
+  if (found) {
+    const a0 = found.result.awards.find(a => a.seat === 0 && a.isMain);
+    const a2 = found.result.awards.find(a => a.seat === 2 && a.isMain);
+    ok(a2 && a0 && a2.amount === a0.amount + 1,
+      '奇数零头归按钮左一（座位2），实际 0:' + (a0 ? a0.amount : '?') + ' 2:' + (a2 ? a2.amount : '?'));
+  }
+}
+
 console.log('\n【5】蒙特卡洛胜率');
 const pct = (r) => (r.equity * 100).toFixed(1) + '%';
 
