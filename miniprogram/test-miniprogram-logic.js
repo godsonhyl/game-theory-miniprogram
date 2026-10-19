@@ -2893,11 +2893,12 @@ while (guard++ < 400) {
     const ry = Number((feltSrc.match(/ry = (?:big \? )?(\d+)/) || [0, 0])[1]);
     ok(cy > 0 && ry > 0, 'ringPositions 椭圆参数可解析 cy=' + cy + ' ry=' + ry);
     ok(cy - ry >= 10, '座位带最低点 ' + (cy - ry) + '% （≥10%，留出块延伸空间）');
-    // 2026-10-19 布局改造后，上界不再写裸数字：pie 式推导
-    //   锚点 y + 块高/2 ≤ 底池胶囊上沿 − RING_GAP_UH 空隙
-    // down 排布已删（纵向尺寸全为 uh 相对量，「窄视口触发」在数学上不存在）。
-    ok(/const pieMaxY = potTop - blockUh \/ 2 - RING_GAP_UH;/.test(feltSrc),
-      '对手座位锚点上界由「底池上沿 − 半块 − 空隙」推得（顶排块底不进底池区）');
+    // 环形式布局（2026-10-19 用户「布局难看，回退环形」）：
+    // 不再用「底池上沿 − 半块」把所有对手夹到顶部细带（那会让侧边座位也顶到 y≈17%），
+    // 改为「椭圆自然 y + 安全上界」+「中央走廊」2D 遮挡判据（只有 |x−50| 小的
+    // 中部座位才要求块底不越底池上沿；两侧座位在中央盘面 x 范围之外，不真遮挡）。
+    ok(/const RING_Y_MAX = \d+;/.test(feltSrc) && /const SEAT_CORRIDOR_HALF_W = \d+;/.test(feltSrc),
+      '对手锚点用 RING_Y_MAX 安全上界 + 中央走廊 SEAT_CORRIDOR_HALF_W（环形布局，两侧有座位）');
     ok(/\.pot-row \{[\s\S]{0,400}?z-index: 5/.test(wxssSrc),
       '.pot-row z-index 5 高于 .seat(3)：底池不被牌背盖住');
     ok(/\.board-row \{[\s\S]{0,200}?z-index: 5/.test(wxssSrc),
@@ -2917,9 +2918,11 @@ while (guard++ < 400) {
       const potY = Number((feltSrc.match(/const POT_ANCHOR = \{ x: 50, y: (\d+) \};/) || [0, 0])[1]);
       const pillH = Number((feltSrc.match(/const POT_PILL_H = ([\d.]+);/) || [0, 0])[1]);
       const blockUh = Number((feltSrc.match(/const SEAT_H_PX_UH = ([\d.]+);/) || [0, 0])[1]);
-      const gapUh = Number((feltSrc.match(/const RING_GAP_UH = ([\d.]+);/) || [0, 0])[1]);
-      ok(potY > 0 && pillH > 0 && blockUh > 0 && gapUh >= 0,
-        '几何常量可解析：底池 ' + potY + '% · 胶囊 ' + pillH + 'uh · 块高 ' + blockUh + 'uh · 空隙 ' + gapUh + 'uh');
+      const corridorW = Number((feltSrc.match(/const SEAT_CORRIDOR_HALF_W = (\d+);/) || [0, 0])[1]);
+      const yMax = Number((feltSrc.match(/const RING_Y_MAX = (\d+);/) || [0, 0])[1]);
+      ok(potY > 0 && pillH > 0 && blockUh > 0 && corridorW > 0 && yMax > 0,
+        '几何常量可解析：底池 ' + potY + '% · 胶囊 ' + pillH + 'uh · 块高 ' + blockUh +
+        'uh · 走廊半宽 ' + corridorW + '% · y 上界 ' + yMax + '%');
       ok(pillH >= 7.4, 'POT_PILL_H 按实测口径取值（≥7.4uh：行高 1.35 × 4.8字号 + padding + 边框，不再低估）');
       // 底池上沿（%）：底池胶囊顶边
       const potTop = potY - pillH / 2;
@@ -2935,28 +2938,43 @@ while (guard++ < 400) {
         new Function('module', 'exports',
           consts + '\nconst _ringCache = {};\n' + fnSrc + '\nmodule.exports = ringPositions;')(sandbox, sandbox.exports);
         const ring = sandbox.exports;
-        let worstSeat = '', worstGap = 99, overflow = '';
-        [375, 320, 280].forEach(vh => {
-          [2, 3, 4, 6, 9].forEach(n => {
-            const seats = [];
-            for (let i = 0; i < n; i++) seats.push(i);
-            const pos = ring(seats, 0);
-            const L = pos.__layout || {};
-            const blk = L.blockPct || blockUh;
-            for (let s = 1; s < n; s++) {          // s=0 是「我」，在底部，不参与顶部判定
-              const p = pos[s];
-              if (!p) continue;
-              // pie：锚点 = 块中心，下注浮在上方不占块底
-              const bot = p.y + blk / 2;
-              const top = p.y - blk / 2;
-              if (bot > potTop + 0.01) overflow += ' [' + vh + 'px/' + n + '人/座位' + s + ' 底' + bot.toFixed(1) + '>池' + potTop.toFixed(1) + ']';
-              if (potTop - bot < worstGap) { worstGap = potTop - bot; worstSeat = vh + 'px/' + n + '人/s' + s; }
-              if (top < 0) overflow += ' [' + vh + 'px/' + n + '人/座位' + s + ' 顶' + top.toFixed(1) + '<0]';
+        let overflow = '';
+        [2, 3, 4, 6, 9].forEach(n => {
+          const seats = [];
+          for (let i = 0; i < n; i++) seats.push(i);
+          const pos = ring(seats, 0);
+          const L = pos.__layout || {};
+          const blk = L.blockPct || blockUh;
+          for (let s = 1; s < n; s++) {          // s=0 是「我」，在底部，不参与判定
+            const p = pos[s];
+            if (!p) continue;
+            // 2D 判据：只有 x 落在中央走廊的座位才可能与底池/公共牌重叠；
+            // 两侧座位（|x−50| ≥ 走廊半宽）在中央盘面 x 范围之外，垂直重叠无妨。
+            const bot = p.y + blk / 2;
+            const top = p.y - blk / 2;
+            const inCorridor = Math.abs(p.x - 50) < corridorW;
+            if (inCorridor && bot > potTop + 0.01) {
+              overflow += ' [' + n + '人/座位' + s + ' x' + p.x + ' 底' + bot.toFixed(1) + '>池' + potTop.toFixed(1) + ']';
             }
-          });
+            if (top < 0) overflow += ' [' + n + '人/座位' + s + ' 顶' + top.toFixed(1) + '<0]';
+          }
         });
-        ok(overflow === '', '顶排座位块（30 种人数×视口组合）均未侵入底池带、也未顶出牌桌' + (overflow ? '：' + overflow : ''));
-        ok(worstGap >= gapUh - 0.05, '最紧的一组距底池仍留 ' + worstGap.toFixed(1) + '% ≥ RING_GAP_UH ' + gapUh + '（' + worstSeat + '）');
+        ok(overflow === '', '中部座位块（各人数）均未侵入底池带、所有座位未顶出牌桌' + (overflow ? '：' + overflow : ''));
+        // 环形回归（用户「布局难看」的根因）：5 人以上左右两侧必须有座位。
+        // 旧的「夹到 ceilTop≈17.4」会让 maxY 恒 ≤17.4；恢复椭圆自然 y 后应 ≥21。
+        [5, 6, 7, 8, 9].forEach(n => {
+          const seats = [];
+          for (let i = 0; i < n; i++) seats.push(i);
+          const pos = ring(seats, 0);
+          let maxY = 0, sideSeats = 0;
+          for (let s = 1; s < n; s++) {
+            if (!pos[s]) continue;
+            maxY = Math.max(maxY, pos[s].y);
+            if (pos[s].x <= 25 || pos[s].x >= 75) sideSeats++;
+          }
+          ok(maxY >= 21, n + ' 人桌对手环最大 y=' + maxY.toFixed(1) + '% ≥ 21%（两侧有座位，未被夹到顶部细带）');
+          ok(sideSeats >= 2, n + ' 人桌左右两侧各有座位（x≤25 或 x≥75 的座位数=' + sideSeats + ' ≥ 2）');
+        });
       }
       /* ---- 底池 vs 公共牌 vs 顶排：三处纵向不遮挡（2026-10-19 评审补边池）----
        * 原断言只算「底池胶囊高」= potY ± pillH/2，**默认边池数为 0**，于是

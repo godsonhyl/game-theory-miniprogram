@@ -109,7 +109,7 @@
 /* ---------- 牌桌（上半区：对手） ---------- */
 .felt {
   flex: 1; min-height: 0; position: relative; width: 100%;
-  margin-top: calc(0.6 * var(--uh));
+  margin-top: calc(0.4 * var(--uh));
   box-sizing: border-box;   /* 边框计入尺寸，不再额外撑出 1.6uh */
   background:
     radial-gradient(ellipse at 50% 40%, rgba(255,255,255,.05) 0%, transparent 55%),
@@ -599,7 +599,7 @@
 }
 /* ---------- 我的区域（下半区） ---------- */
 .myzone {
-  flex-shrink: 0; margin-top: calc(0.8 * var(--uh));
+  flex-shrink: 0; margin-top: calc(0.6 * var(--uh));
   display: flex; flex-direction: column;
 }
 .mybar {
@@ -745,11 +745,12 @@
 .ms-vpip { font-size: calc(2.1 * var(--uh)); color: var(--mut); opacity: .85; margin-top: calc(0.3 * var(--uh)); }
 
 /* 行动条：三个大按钮 + 拉大间距（微扑克：防误触）。
- * 高度收紧：11.5uh 足够指尖点击，同时保证在 19.5:9 扁屏上也不把底部顶出视口。 */
-.actbar { display: flex; margin-top: calc(0.8 * var(--uh)); }
+ * 高度再收紧到 10.8uh（2026-10-19「压缩自己的空间」）：仍远高于 44px 触控下限，
+ * 把省下的 ~1uh 让给牌桌区，环形座位更舒展。 */
+.actbar { display: flex; margin-top: calc(0.6 * var(--uh)); }
 .ab {
   flex: 1; margin-right: calc(3.4 * var(--uw));
-  line-height: calc(11.5 * var(--uh)); font-size: calc(4.4 * var(--uh)); font-weight: 700; color: #fff;
+  line-height: calc(10.8 * var(--uh)); font-size: calc(4.4 * var(--uh)); font-weight: 700; color: #fff;
   border: none; padding: 0; border-radius: calc(2.6 * var(--uh));
 }
 .ab::after { border: none; }

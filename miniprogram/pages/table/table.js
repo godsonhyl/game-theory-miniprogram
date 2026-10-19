@@ -33,23 +33,22 @@ const TICK_MAX = 20;
 const SYNC_FAIL_TOAST_MS = 10000;
 
 /**
- * 统一座位环坐标（WPK 式）：
- *   - 「我」锚定在椭圆底部中央（y 最大），底部区域完全留给我的手牌 + 操作条；
- *   - 其余对手全部铺在「上方半圆」（左 200° → 顶 270° → 右 340°），
- *     绝不下探到下半区，避免与 myzone / 行动按钮堆叠。
+ * 统一座位环坐标（WPK 式环形）：
+ *   - 「我」锚定在椭圆底部中央（y 最大），底部留给我的手牌 + 操作条；
+ *   - 其余对手沿「上方半圆」铺开（左 200° → 顶 270° → 右 340°），
+ *     保留椭圆**自然 y**：左右两侧座位落在 y≈27~33%，形成真正的环形，
+ *     而不是全被夹到顶部一条细带（2026-10-19 用户「布局难看」的根因）。
  * 按相对座位号（顺时针从我左侧起）排序，牌桌左右邻接关系符合直觉。
  * 等待室与游戏中共用同一套坐标 → 点「开始游戏」瞬间所有座位位置完全连续、无跳变。
  *
- * 座位排布只有「pie 环」一版（2026-10-19 二次收口）：
- *   - 座位块以锚点为中心、四外延伸，「本轮下注胶囊」浮到锚点上方（.seat-bet
- *     absolute + bottom:100%），不占块底高度。
- *   - 锚点天花板块由「底池胶囊上沿 − 半块 − 固定空隙」推出（pieMaxY），
- *     保证顶排块底永不落入底池带（见 SEAT_H_PX_UH 常量块的实测推导）。
- *   - 曾试过「down 排布」（窄视口兜底：锚点=块顶、块只向下伸），评审后删除：
- *     所有纵向尺寸都以 uh（视口百分比）表达，块高/池位的**比值**不随视口变化，
- *     「窄视口触发」在数学上不存在；且在假想的触发域（块高 > 底池上沿）内
- *     down 也必然侵入底池带——任何排布都塞不下，正确答案是重新设计布局，
- *     到时候 guardSeatCardNoOverlap 的行为级几何断言会第一时间报红。
+ * 座位排布（2026-10-19 环形恢复 + 2D 遮挡判据）：
+ *   - 座位块以锚点为中心、四外延伸；对手下注胶囊浮在**块底内侧**（.seat-bet.bet-in），
+ *     我的浮在块上方（.bet-me）——既不被桌沿裁掉，也不侵入底池带。
+ *   - 遮挡不再用「统一 y 天花板」（那会把侧边座位也顶到顶排），改为 **2D 判据**：
+ *     只有 x 落在中央走廊（|x−50| < SEAT_CORRIDOR_HALF_W）的座位才要求
+ *     块底 ≤ 底池上沿；两侧座位在底池/公共牌的 x 范围之外，垂直重叠无妨。
+ *     guardSeatCardNoOverlap 用真实几何逐座位复算（含「两侧必须有座位」回归）。
+ *   - down 排布已删除（纵向尺寸全为 uh 相对量，比值不随视口变化）。
  */
 function ringPositions(seatSet, mySeat) {
   const arr = seatSet.slice().sort((a, b) => a - b);
@@ -60,24 +59,17 @@ function ringPositions(seatSet, mySeat) {
   const total = arr.length;
   if (total === 0) return {};
   const idxMe = Math.max(0, arr.indexOf(mySeat));
-  // 椭圆参数收紧：cy/ry 决定对手座位带的最低点。
-  // 大桌（7 座及以上）把椭圆撑宽压扁：座位越多弧上越挤，不加宽的话
-  // 8~9 人桌两侧座位会叠在一起（配合 .seat.tight 缩小座位块）。
+  // 椭圆参数：cy/ry 决定对手座位带的纵向范围。大桌（7 座及以上）把椭圆撑宽
+  // 压扁：座位越多弧上越挤，不加宽的话 8~9 人桌两侧座位会叠在一起（配合
+  // .seat.tight 缩小座位块）。
   const big = total >= 7;
   const cx = 50, cy = 42, rx = big ? 46 : 43, ry = big ? 25 : 27;
-  // 纵向天花板（pie 式推导）：块以锚点为中心、四外延伸各半块，顶排要满足
-  //   锚点 y + 块高/2 ≤ 底池胶囊顶边 − 固定空隙
-  // 空隙 RING_GAP_UH 防「块底贴着底池边框描边」。⇥块高常量与实测口径见
-  // SEAT_H_PX_UH 常量块——两处数值漂移会被行为级几何断言（guard 函数）截住。
   const blockUh = big ? SEAT_H_PX_UH_TIGHT : SEAT_H_PX_UH;
   const potTop = POT_ANCHOR.y - POT_PILL_H / 2;
-  const pieMaxY = potTop - blockUh / 2 - RING_GAP_UH;
-  const ceilTop = Math.max(RING_TOP_MIN, Math.min(RING_TOP_MAX, pieMaxY));
-  // __layout：块高预算与天花板实测值，供测试把 ringPositions 抠出独立求值时读
-  // （guardSeatCardNoOverlap 用它逐座位复算块顶/块底，断言不侵入底池带）。
+  // __layout：块高/底池上沿实测值，供几何守卫在沙箱里逐座位复算（不依赖页面实例）。
   const layout = {
     blockPct: Math.round(blockUh * 10) / 10,
-    ceilTop: Math.round(ceilTop * 10) / 10
+    potTop: Math.round(potTop * 10) / 10
   };
   const pos = {};
   if (total === 1) {
@@ -93,15 +85,16 @@ function ringPositions(seatSet, mySeat) {
   for (let k = 1; k < total; k++) opp.push(arr[(idxMe + k) % total]);
   const O = opp.length;
   opp.forEach((s, k) => {
-    const t = (k + 1) / (O + 1);            // 第 1 个 ≈ 左上，最后 1 个 ≈ 右上
-    const ang = 200 + t * 140;              // 200°(左上) → 270°(顶) → 340°(右上)
+    const t = (k + 1) / (O + 1);            // 第 1 个 ≈ 左侧，最后 1 个 ≈ 右侧
+    const ang = 200 + t * 140;              // 200°(左下/左) → 270°(顶) → 340°(右下/右)
     const rad = ang * Math.PI / 180;
     let x = cx + rx * Math.cos(rad);
     let y = cy + ry * Math.sin(rad);        // 上方半圆：sin<0 → y<cy
     x = Math.max(10, Math.min(90, +x.toFixed(1)));
-    // 上界 ceilTop：pie 式（锚点=块中心），顶排块下半截仍在上带内、
-    // 不骑到底池/公共牌上。
-    y = Math.max(RING_TOP_MIN, Math.min(ceilTop, +y.toFixed(1)));
+    // 环形：保留椭圆自然 y（左右两侧座位 y≈27~33%），只做安全上下界。
+    // 中部座位（|x−50| < SEAT_CORRIDOR_HALF_W）由几何守卫要求块底 ≤ 底池上沿；
+    // 两侧座位在中央盘面的 x 范围之外，垂直方向重叠也不会真的遮住底池/公共牌。
+    y = Math.max(RING_TOP_MIN, Math.min(RING_Y_MAX, +y.toFixed(1)));
     pos[s] = { x, y };
   });
   pos.__layout = layout;
@@ -186,11 +179,16 @@ const SEAT_H_PX_UH = 26.4;        // 座位主体块高（uh 单位 = 牌桌百�
 const SEAT_H_PX_UH_TIGHT = 22.4;  // 7 座以上紧凑模式
 /** 顶排锚点 y 下限：座位号/庄家徽章.overlay 向上溢出 ≈ 2.2uh，留 3.4uh 才不出桌沿。 */
 const RING_TOP_MIN = 3.4;
-/** 锚点 y 上限的保险丝天花板：正常由 pieMaxY 推出（约 17.8），
- *  此常量只防「底池再下移时锚点跟着无限下沉压到公共牌」。 */
-const RING_TOP_MAX = 31;
-/** 顶排块底与底池胶囊顶边之间的固定空隙。 */
-const RING_GAP_UH = 0.6;
+/** 环形布局：对手锚点 y 的安全上界。椭圆自然值侧边约 27~33%，此上界只防
+ *  「未来把 ry 调大后座位沉到我的座位/底部按钮上」。
+ *  ⚠️ 不再用「底池上沿 − 半块」当统一天花板：那会把左右两侧的座位也拽到顶排，
+ *  整个环压成顶部一条细带（真机「布局难看」）。遮挡改由 2D 判据保证——
+ *  只有 x 落在中央走廊（|x−50| < SEAT_CORRIDOR_HALF_W）的座位才要求块底
+ *  不越过底池上沿；两侧座位在底池/公共牌的 x 范围之外，天然不重叠。 */
+const RING_Y_MAX = 50;
+/** 中央走廊半宽（width%）：公共牌 5 张约 34% 宽（半 17）+ 描边余量 = 18。
+ *  座位块中心与 50 的横向距离小于它，才可能压到中央盘面。 */
+const SEAT_CORRIDOR_HALF_W = 18;
 /** 底池胶囊高度（uh）：实测口径见上方注释（行高 1.35 + padding + 边框）。 */
 const POT_PILL_H = 7.6;
 /** 行动气泡从座位块底向下的总落深（uh）= bottom 偏移 1 + 自身高约 4.1。
