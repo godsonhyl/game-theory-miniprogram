@@ -1509,7 +1509,19 @@ while (guard++ < 400) {
     ok(pageCtx.inBackground === false, 'onShow 清后台标记');
     ok(pageCtx.engineWatch !== null, 'onShow 恢复引擎看门狗');
     ok(pageCtx.sfxPump !== null, 'onShow 恢复音效泵');
+    /* ---- 2026-10-19 分享返回卡死修复：结构守卫 ---- */
+    ok(/this\.resumeEngine\(\);/.test(tableSrc),
+      'onLeaveBackground 调用 resumeEngine（回前台重新武装当前行动者）');
+    ok(/resumeEngine\(\) \{[\s\S]{0,2500}?if \(!aiTimer\) this\.scheduleAI\(\);/.test(tableSrc),
+      'resumeEngine 对 AI/机器人座位补调度（!aiTimer → scheduleAI）');
+    ok(/onFirstTouch\(\) \{[\s\S]{0,800}?if \(this\.inBackground\) this\.onLeaveBackground\(\);/.test(tableSrc),
+      'onFirstTouch 兜底恢复（部分机型分享返回不回调 onShow）');
+    ok(/onSyncLost\(\) \{[\s\S]{0,600}?if \(this\.inBackground\) return;/.test(tableSrc),
+      'onSyncLost 忽略切后台期间的在途轮询失败（不永久降级本地）');
+    ok(/if \(this\._syncWasLive && !this\.syncLive && this\.roomNo && this\.mode === 'friend'\)/.test(tableSrc),
+      '回前台按切后台前的同步态复活轮询（_syncWasLive，防分享返回后永久断同步）');
   }
+
 
   /* ---------- 同步上行吞错提示（评审 MEDIUM 回归）---------- */
   {
@@ -4940,6 +4952,43 @@ while (guard++ < 400) {
     path.join(__dirname, 'pages', 'table', 'table.js'), 'utf8').replace(/\r/g, '');
   ok(/if \(this\.mode !== 'friend' && !source\.some\(s => s\.isMe\)\)/.test(tableSrcSng),
       'startGame 锁死「本人未落座则自动入座」（SNG 本人必在局内，防「准备就绪」按钮失效回归）');
+
+  /* ---------- 行为：resumeEngine 按当前行动者三路重新武装 ----------
+   * 放在全量断言之后（它会 startGame 换掉当前 game），不影响前面任何用例。 */
+  {
+    pageCtx.onLoad({ room: '300088', own: '1' });
+    pageCtx.addBot(); pageCtx.addBot();
+    pageCtx.startGame();
+    await new Promise(r => setTimeout(r, 60));
+    const gm2 = pageCtx.requireGame();
+    ok(!!gm2, '前置：拿到 game 以验证 resumeEngine');
+    if (gm2) {
+      // (a) 轮到我 → 重启倒计时
+      gm2.actionSeat = pageCtx.mySeat;
+      const origST = pageCtx.startTimer;
+      let started = 0;
+      pageCtx.startTimer = () => { started++; };
+      pageCtx.resumeEngine();
+      pageCtx.startTimer = origST;
+      ok(started === 1, '回前台：轮到我 → 重启倒计时（startTimer 被调用）');
+      // (c) 轮到真人好友 → 超时起点重置
+      const other2 = gm2.players.filter(p => p.seat !== pageCtx.mySeat)[0];
+      if (other2) {
+        gm2.actionSeat = other2.seat;
+        const origSyncLive = pageCtx.syncLive;
+        const origBots = pageCtx.botSeats;
+        pageCtx.syncLive = true;
+        pageCtx.botSeats = {};
+        pageCtx.friendActSince = 1;
+        const beforeTs = Date.now();
+        pageCtx.resumeEngine();
+        ok(pageCtx.friendActSince >= beforeTs,
+          '回前台：轮到真人好友 → 超时起点重置（不把后台时间算作好友拖延）');
+        pageCtx.syncLive = origSyncLive;
+        pageCtx.botSeats = origBots;
+      }
+    }
+  }
 
   /* ---------- 输出 ---------- */
   console.log('\n' + '='.repeat(52));

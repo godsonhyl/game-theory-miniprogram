@@ -796,6 +796,9 @@ Page({
   onEnterBackground() {
     if (!this.inBackground) {
       this.inBackground = true;
+      // 记录切后台前的同步态：在途轮询可能因后台断网失败 → onSyncLost 把
+      // syncLive 置 false，回前台若只看 syncLive 就再也不重启轮询（卡死真凶）。
+      this._syncWasLive = !!this.syncLive;
       this.saveSnapshot();   // 后台被系统直接回收时（不走 onUnload）也能续局
     }
     this.stopPolling();
@@ -816,6 +819,14 @@ Page({
   onLeaveBackground() {
     if (!this.inBackground) return;
     this.inBackground = false;
+    // 切后台期间在途轮询失败会把 syncLive 置 false（见 onSyncLost）；若切后台前
+    // 同步本来是活的，这里先复活一次（真连不上时随后的 pollOnce 会再次降级）。
+    if (this._syncWasLive && !this.syncLive && this.roomNo && this.mode === 'friend') {
+      this.syncLive = true;
+      this.setData({ syncLive: true });
+      this.startHeartbeat();
+    }
+    this._syncWasLive = false;
     // 回前台：先补一轮轮询再看缺什么（好友端后台期间可能错过房主广播）
     if (this.syncLive && this.roomNo && !this.pollTimer) this.startPolling();
     // 看门狗在 initGame 启动、onEnterBackground 停掉；此处不区分模式——
@@ -831,6 +842,8 @@ Page({
     if (this.blindIntervalMin && game && !game.result) this.startBlindTimer();
     // 回到页面的下一拍补一次全量刷新（好友端可能错过后台期间的房主广播）
     if (this.syncLive && this.roomNo) this.pollOnce();
+    // 重新武装当前行动者：我的倒计时 / 好友超时起点 / AI 调度（onEnterBackground 已停掉）
+    this.resumeEngine();
     this.render();
   },
 
@@ -841,6 +854,10 @@ Page({
    */
   onFirstTouch() {
     try { sfx.unlock(); } catch (e) { /* 音效不可用也不能影响牌局 */ }
+    // 兜底：部分机型从分享面板返回不回调 onShow，切后台标记会一直挂着 →
+    // 用户回来后第一次触摸补一次恢复（onLeaveBackground 幂等：未切后台立即返回），
+    // 避免「分享返回牌局卡死」。
+    if (this.inBackground) this.onLeaveBackground();
   },
 
   /**
@@ -1121,6 +1138,10 @@ Page({
   /** 同步丢失（云端报错）：停掉轮询，退回本地模式 */
   onSyncLost() {
     if (!this.syncLive) return;
+    // 切后台期间在途轮询被系统打断属预期，不算同步丢失：回前台 onLeaveBackground
+    // 会重启轮询（并按 _syncWasLive 复活）。否则分享返回会被误判断网、永久降级
+    // 本地模式 → 好友房牌局卡死。
+    if (this.inBackground) return;
     this.syncLive = false;
     this.stopSync();
     this.setData({ syncLive: false });
@@ -1956,6 +1977,41 @@ Page({
     if (this.isFriendSeat(seat)) return;          // 真人好友由 watchFriendAction 兜底
     if (this.isStanding(seat)) return;            // 站起者由 advance 的自动弃牌处理
     if (!aiTimer) this.scheduleAI();
+  },
+
+  /**
+   * 回前台主动重新武装「当前行动者」（2026-10-19 分享返回卡死修复）。
+   *
+   * 背景：onEnterBackground 会清掉 aiTimer（AI 调度）与 timer（我的倒计时），
+   * 而 onLeaveBackground 只恢复轮询/看门狗/音效/涨盲/时钟——**没重新武装当前
+   * 行动者**。分享（切后台）回来后：轮到我 → 倒计时冻结、30s 自动弃牌不触发；
+   * 轮到真人好友 → friendActSince 仍停在切后台前，首轮轮询可能被后台时间误判
+   * 超时；轮到 AI → 只能等看门狗 1.5s 补调度。部分机型分享面板关闭不回调
+   * onShow，连看门狗都起不来 → 整手卡死。
+   *
+   * 与 advance() 的三路分支同口径，幂等：我的座位 → 重启倒计时；真人好友 →
+   * 重置超时起点；AI/机器人 → 重新调度。由 onLeaveBackground 与 onFirstTouch
+   * （漏掉 onShow 的机型兜底）调用。
+   */
+  resumeEngine() {
+    if (!game || game.result || this.data.readyPhase) return;
+    if (this.data.timeUp || this.data.summary) return;
+    const seat = game.actionSeat;
+    if (seat < 0) return;
+    if (seat === this.mySeat) {
+      // 我的行动：重置倒计时（onEnterBackground 清掉了 timer）。
+      // startTimer 自带 clearInterval，可安全重复调用；只在回前台时走一次。
+      this.startTimer();
+      return;
+    }
+    if (this.isStanding(seat)) return;   // 站起者由 advance 的自动弃牌处理
+    if (this.isFriendSeat(seat)) {
+      // 房主端等真人好友：回前台重新计 30s，不把后台时间算作好友拖延
+      // （否则一回来就立刻替好友弃牌——尤其是房主自己分享离开的那段时间）。
+      this.friendActSince = Date.now();
+      return;
+    }
+    if (!aiTimer) this.scheduleAI();     // AI/机器人：补调度
   },
 
   /**
