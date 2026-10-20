@@ -1389,6 +1389,13 @@ Page({
    *  本手已申请过 → 弹「取消申请」态（规则 3：不重复累计，给反悔出口）。 */
   openRebuy() {
     if (!this.canRebuyNow()) return;
+    // 就绪阶段打开补筹窗 → 先撤销「已就绪」：否则其他人（含 bot）先齐、下一手在
+    // 我确认补筹之前就发出去，`game.handNo` 已 +1 → 补筹被记到再下一手才生效
+    // （真机 2026-10-20「下下局才生效」）。确认后再点「准备就绪」即可，补筹随
+    // 下一手开局到账。
+    if (this.data.readyPhase && this.readyMap && this.readyMap[this.mySeat]) {
+      this.markReady(this.mySeat, false);
+    }
     const me = game.seatOf(this.mySeat);
     const pend = this._myRebuyPending || {};
     const pendingMine = game && pend.hand === game.handNo && pend.add > 0;
@@ -2426,7 +2433,20 @@ Page({
       return true;
     }
     this.startClock(snap.remainSec);   // 倒计时接着上次剩余时间继续
-    wx.showToast({ title: '已回到房间 · 第 ' + snap.handNo + ' 手', icon: 'none' });
+    // ⚠️ 中断的那一手无法精确续上（快照不含逐街状态，重发必然换牌）。直接开
+    // 下一手：handNo 变化会让好友端【重载快照、重新取得行动权】；否则重发同一
+    // handNo（actionSeat/currentBet 也相同），好友端指纹不变会跳过重载，仍以为
+    // 「我已经行动过」→ 房主死等好友行动（真机 2026-10-20「退出重进不能继续」）。
+    // 语义也自洽：那一手已作废，从下一手接着打。
+    try {
+      this.startHand();
+    } catch (e) {
+      console.error('[table] 续局开下一手失败', JSON.stringify({
+        stage: 'restore-next-hand', room: this.roomNo, message: e && e.message
+      }));
+    }
+    this.forcePublish();   // 立即广播新手牌（穿透节流），好友端马上重载
+    wx.showToast({ title: '已回到房间 · 从第 ' + ((snap.handNo || 1) + 1) + ' 手继续', icon: 'none' });
     return true;
   },
 
@@ -2521,7 +2541,10 @@ Page({
     empty.isBot = true;
     // 好友房沿用「好友N」（等真人来了换号的占位叫法）；AI 桌用预设对手名
     empty.name = this.botLabel(botNo - 1);
-    empty.stack = Number(empty.stack) || DEFAULT_BUY_IN;
+    // ⚠️ SNG 淘汰赛全员同起点（buyInOf → 2000）：空位初始 stack=0，若这里
+    // 回落 DEFAULT_BUY_IN(1000) 就会出现「我 2000、电脑 1000」的不公平开局
+    // （与 sitSeat/fillBots/fillBotsTo 的 buyInOf 口径对齐）。
+    empty.stack = buyInOf(this.mode, Number(empty.stack));
     const occupiedCount = seats.filter(s => s.occupied).length;
     this.setData({
       waitSeats: seats,
@@ -2720,7 +2743,8 @@ Page({
           empty.isMe = true;
           empty.isOwner = this.isOwner;
           empty.name = this.meLabel(this.isOwner);
-          empty.stack = this.buyInStack[empty.seat] || DEFAULT_BUY_IN;
+          // 与 SNG 统一起点对齐（buyInOf：sng→2000，其余→选定的买入额）
+          empty.stack = buyInOf(this.mode, this.buyInStack[empty.seat]);
           if (this.isOwner) { this.mySeat = empty.seat; this.roomSeat = empty.seat; }
         }
       }
@@ -5704,6 +5728,9 @@ Page({
   },
 
   finishReadyPhase() {
+    // 补筹窗还开着 → 暂缓发牌：保证「补完再点准备」时补筹落在下一手（而不是
+    // 被抢先发牌拖到再下一手）。
+    if (this.data.rebuyShow) return;
     // AI 对战（单机）：下一手必须由真人明确点「准备就绪」才发——绝不自动开局。
     // 即使其余电脑玩家都已就绪，只要真人没点，就停在就绪阶段等真人入局。
     // 用户 2026-10-16 反馈：未点准备就绪却自动下一局，这里兜底拦截。
@@ -5793,6 +5820,8 @@ Page({
   /** 我点「准备就绪」（未坐下时先提示坐下） */
   onReadyTap() {
     if (!this.data.readyPhase) return;
+    // 补筹窗开着时不允许就绪：否则下一手可能在确认前发出，补筹被记到再下一手
+    if (this.data.rebuyShow) return;
     // 幂等：按钮已 disabled，但主操作键/镜像端也可能触发这里，重复计票会白耗一轮
     if (this.data.myReady) return;
     if (this.data.soundOn) sfx.play('click');

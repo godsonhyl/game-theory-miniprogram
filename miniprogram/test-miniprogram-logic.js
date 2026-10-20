@@ -348,8 +348,12 @@ ok(dataStore.phase === 'playing', '选择「继续」后回到牌桌');
 ok(dataStore.seats.length === 6, '续局保留房间座位数（6 个位都在环上），实际 ' + dataStore.seats.length);
 ok(dataStore.seats.filter(s => !s.empty).length === 2,
   '续局 2 个在座者仍在环上，实际 ' + dataStore.seats.filter(s => !s.empty).length);
-ok(dataStore.handNo === handBefore, '续局从第 ' + handBefore + ' 手继续，实际 ' + dataStore.handNo);
-ok(toasts.indexOf('已回到房间 · 第 ' + handBefore + ' 手') >= 0, '续局提示文案正确: ' + toasts.slice(-1)[0]);
+// 2026-10-20：中断的那一手作废，续局从【下一手】继续（handNo 变化才能让好友端
+// 重载快照并重新取得行动权；重发同一 handNo 会因指纹不变而死等）。
+ok(dataStore.handNo === handBefore + 1,
+  '续局从下一手继续：第 ' + handBefore + ' 手退出 → 第 ' + dataStore.handNo + ' 手');
+ok(toasts.indexOf('已回到房间 · 从第 ' + (handBefore + 1) + ' 手继续') >= 0,
+  '续局提示文案正确: ' + toasts.slice(-1)[0]);
 
 // 选择「重开」→ 清掉快照进等待室（故意退出想重开不被自动拉回）
 global.__modalMode = 'cancel';
@@ -3613,7 +3617,9 @@ while (guard++ < 400) {
   }
 
   function guardResetRaiseState(tableSrc2) {
-    const shIdx = tableSrc2.indexOf('startHand()');
+    // 锚定方法定义（`startHand() {`），而不是任意调用点——restoreRoom 里也有
+    // this.startHand()，用裸 'startHand()' 会把起点错误地定在调用处。
+    const shIdx = tableSrc2.indexOf('startHand() {');
     ok(shIdx >= 0 && tableSrc2.indexOf('this.resetRaiseState()', shIdx) >= 0 &&
       tableSrc2.indexOf('this.resetRaiseState()', shIdx) < tableSrc2.indexOf('this.render()', shIdx),
       'startHand 里在 render() 之前调用了 resetRaiseState()（顺序锁死，否则时序兜底失效）');
@@ -4194,6 +4200,12 @@ while (guard++ < 400) {
     ok(/blindIntervalMin:\s*this\.blindIntervalMin/.test(tableSrc),
       'table.js saveSnapshot 含 blindIntervalMin（续局恢复涨盲定时器）');
 
+    // ---- 续局：中断那一手作废、开下一手（handNo 变化让好友端重载并重新行动） ----
+    ok(/restoreRoom\(\)[\s\S]{0,2600}?try \{\s*this\.startHand\(\);[\s\S]{0,200}?this\.forcePublish\(\);/.test(tableSrc),
+      'table.js restoreRoom 续局后 startHand 开下一手 + forcePublish（防好友端指纹不变死等）');
+    ok(/restoreRoom\(\)[\s\S]{0,2600}?restore-next-hand/.test(tableSrc),
+      'table.js restoreRoom 对「开下一手失败」记日志（不静默吞）');
+
     // ---- index.js 建房选项约束 ----
     ok(/BLIND_PRESETS/.test(idxSrc), 'index.js 定义 BLIND_PRESETS（涨盲间隔预设）');
     ok(/onPickBlind/.test(idxSrc), 'index.js 定义 onPickBlind（选涨盲间隔）');
@@ -4239,6 +4251,14 @@ while (guard++ < 400) {
 
     // ---- 补筹守卫（SNG 不补筹，筹码归零即淘汰） ----
     ok(/this\.mode\s*!==\s*['"]sng['"]/.test(tableSrc), 'table.js 补筹逻辑有 mode!==sng 守卫');
+
+    // ---- 就绪阶段补筹：不许下一手在确认前抢先发出（否则拖到再下一手） ----
+    ok(/openRebuy\(\)\s*\{[\s\S]{0,900}?this\.markReady\(this\.mySeat, false\);/.test(tableSrc),
+      'openRebuy 打开补筹窗时撤销「已就绪」（下一手不在确认前发出）');
+    ok(/onReadyTap\(\)\s*\{[\s\S]{0,300}?if \(this\.data\.rebuyShow\) return;/.test(tableSrc),
+      'onReadyTap 在补筹窗开着时拦截就绪');
+    ok(/finishReadyPhase\(\)\s*\{[\s\S]{0,300}?if \(this\.data\.rebuyShow\) return;/.test(tableSrc),
+      'finishReadyPhase 在补筹窗开着时暂缓发牌');
 
     // ---- 赛制状态机 ----
     ok(/sngPlacement/.test(tableSrc), 'table.js 定义 sngPlacement（seat→名次）');
@@ -4316,6 +4336,12 @@ while (guard++ < 400) {
     ok(/buyInOf\(this\.mode/.test(tableSrc), 'table.js confirmBuyIn 走 buyInOf 统一取值口');
     ok(/this\.mode === 'sng' \? SNG_START_STACK : DEFAULT_BUY_IN/.test(tableSrc),
       'table.js bot 等码 SNG 2000 / 其余 DEFAULT_BUY_IN（fillBots 系）');
+    // 手动「添加电脑玩家」也必须走 buyInOf：空位初始 stack=0，直接回落
+    // DEFAULT_BUY_IN 会开出「我 2000、电脑 1000」（2026-10-20 真机反馈）。
+    ok(/empty\.stack = buyInOf\(this\.mode, Number\(empty\.stack\)\);/.test(tableSrc),
+      'table.js addBot 用 buyInOf（SNG 手动加电脑玩家也 2000，不再回落 1000）');
+    ok(/empty\.stack = buyInOf\(this\.mode, this\.buyInStack\[empty\.seat\]\);/.test(tableSrc),
+      'table.js startGame 自动补位也用 buyInOf（SNG 本人未落座时同样 2000）');
     ok(/淘汰赛进行中，不可中途加入/.test(tableSrc),
       'table.js chooseSeat 拦 SNG 中途加入（phase=playing 时 toast）');
 
@@ -4987,6 +5013,108 @@ while (guard++ < 400) {
         pageCtx.syncLive = origSyncLive;
         pageCtx.botSeats = origBots;
       }
+    }
+  }
+
+  /* ---------- 行为：SNG 统一起始筹码（手动加电脑玩家也必须 2000） ----------
+   * 放在全量断言之后（会 onLoad 换模式 + startGame），不影响前面用例。 */
+  {
+    pageCtx.onLoad({ mode: 'sng' });
+    // SNG 本人落座（chooseSeat 的 SNG 分支 → sitSeat 2000）
+    pageCtx.chooseSeat({ currentTarget: { dataset: { seat: 0 } } });
+    const meSeat = (pageCtx.data.waitSeats || []).filter(s => s.isMe)[0];
+    ok(!!meSeat && Number(meSeat.stack) === 2000,
+      'SNG 本人落座 2000（实际 ' + (meSeat && meSeat.stack) + '）');
+    // 手动「添加电脑玩家」——这条路径此前回落 DEFAULT_BUY_IN=1000
+    pageCtx.addBot();
+    pageCtx.addBot();
+    // 注：sitSeat 会先 fillBots 自动补 1 个，再手动加 2 个 → 至少 2 个 bot
+    const bots = (pageCtx.data.waitSeats || []).filter(s => s.isBot);
+    ok(bots.length >= 2 && bots.every(b => Number(b.stack) === 2000),
+      'SNG 手动添加电脑玩家也是 2000（实际 ' + JSON.stringify(bots.map(b => b.stack)) + '，此前是 1000）');
+    // 开局后：起始筹码 = 当前筹码 + 已投入（盲注），必须全员 2000
+    pageCtx.startGame();
+    await new Promise(r => setTimeout(r, 60));
+    const gmSng = pageCtx.requireGame();
+    if (gmSng) {
+      const starts = gmSng.players.map(p => p.stack + (p.committed || 0));
+      ok(starts.length >= 3 && starts.every(x => x === 2000),
+        'SNG 开局后全员起始筹码一致 = 2000（当前+盲注，实际 ' + JSON.stringify(starts) + '）');
+    } else {
+      ok(false, 'SNG 开局未产生 game，无法验证筹码');
+    }
+  }
+
+  /* ---------- 行为：退出重进续局 → 从下一手继续（handNo+1），好友端据此重载 ----------
+   * 放在全量断言之后（会 onLoad 换模式 + 建快照），不影响前面用例。 */
+  {
+    const origBootstrap = pageCtx.bootstrapSync;
+    pageCtx.bootstrapSync = function () { return Promise.resolve(); };   // 断网，避免轮询干扰
+    pageCtx.onLoad({ room: '299999', own: '1' });
+    pageCtx.bootstrapSync = origBootstrap;
+    pageCtx.syncLive = false;
+    pageCtx.mySeat = 1;
+    pageCtx.roomSeat = 1;
+    const snapMod = require('./utils/room-snapshot');
+    snapMod.save('299999', {
+      handNo: 5, dealerSeat: 1, remainSec: 600,
+      sb: 10, bb: 20, blindIntervalMin: 0,
+      startStacks: { 1: 1000, 2: 1000 },
+      seats: [
+        { seat: 1, name: '我', stack: 1000, isMe: true },
+        { seat: 2, name: '好友A', stack: 1000, isMe: false }
+      ]
+    });
+    const okRestore = pageCtx.restoreRoom();
+    ok(okRestore === true, '续局 restoreRoom 成功');
+    const gRestore = pageCtx.requireGame();
+    ok(gRestore && gRestore.handNo === 6,
+      '续局从下一手继续：handNo 5 → 6（实际 ' + (gRestore && gRestore.handNo) + '）' +
+      '—— handNo 变化才让好友端重载快照并重新取得行动权');
+    snapMod.clear('299999');
+  }
+
+  /* ---------- 行为：就绪阶段补筹 → 下一手立即到账（不拖到再下一手） ---------- */
+  {
+    const origBootstrap2 = pageCtx.bootstrapSync;
+    pageCtx.bootstrapSync = function () { return Promise.resolve(); };
+    pageCtx.onLoad({ room: '299998', own: '1' });
+    pageCtx.bootstrapSync = origBootstrap2;
+    pageCtx.syncLive = false;
+    pageCtx.addBot();   // 好友房默认只 preset 房主 1 人，补 1 个 bot 才能开局
+    await pageCtx.startGame();
+    await new Promise(r => setTimeout(r, 60));
+    const g2 = pageCtx.requireGame();
+    ok(!!g2 && !!g2.seatOf(pageCtx.mySeat), '前置：好友房牌局已开局');
+    if (g2) {
+      // 模拟「一局结束后、下一局开始前」的就绪阶段（且我已点过准备）
+      g2.result = null;
+      pageCtx.setData({ readyPhase: true, myReady: true, rebuyShow: false });
+      pageCtx.readyMap = {}; pageCtx.readyMap[pageCtx.mySeat] = true;
+      const origCan = pageCtx.canRebuyNow;
+      pageCtx.canRebuyNow = () => true;
+      pageCtx.openRebuy();
+      ok(pageCtx.data.rebuyShow === true, '就绪阶段能打开补筹窗');
+      ok(pageCtx.readyMap[pageCtx.mySeat] === false,
+        '打开补筹窗即撤销「已就绪」（防止下一手在确认前抢先发出）');
+      // 补筹窗开着时点「准备就绪」不生效
+      pageCtx.setData({ myReady: false });
+      pageCtx.onReadyTap();
+      ok(pageCtx.data.myReady === false, '补筹窗开着时就绪被拦截（onReadyTap 提前返回）');
+      // 确认补筹 → pending 记在当前手，下一手 startHand 消化
+      const h = g2.handNo;
+      pageCtx.confirmRebuy();
+      ok(pageCtx.pendingRebuyMap[pageCtx.mySeat] === 1000, '确认补筹写入 pendingRebuyMap +1000');
+      ok(pageCtx._myRebuyPending.hand === h, '补筹记在当前手（下一手 startHand 消化）');
+      // 下一手发牌 → 补筹立即到账（用 startStacks 基准验证，避开盲注干扰）
+      const base = pageCtx.startStacks[pageCtx.mySeat];
+      pageCtx.startHand();
+      ok(g2.handNo === h + 1, '下一手已发出（handNo ' + h + ' → ' + g2.handNo + '）');
+      ok(pageCtx.startStacks[pageCtx.mySeat] === base + 1000,
+        '补筹在紧接着的下一手到账：带入基准 +1000（实际 +' +
+        (pageCtx.startStacks[pageCtx.mySeat] - base) + '）');
+      ok(!pageCtx.pendingRebuyMap[pageCtx.mySeat], 'pending 已清空（不拖到再下一手）');
+      pageCtx.canRebuyNow = origCan;
     }
   }
 
