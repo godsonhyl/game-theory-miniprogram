@@ -1,9 +1,9 @@
 /**
  * 云端迁移落地检查（服务端权威化的护栏）
  *
- * 背景：commit ce1516a 把 auth.js 的 4 个写入口改成调用云端 rpc，但**数据库
- * 迁移没有同步执行** —— 客户端调用时 rpc 根本不存在。而 auth.js 对 rpc 失败
- * 是 `throw` 无降级，导致建房扣卡 / 每日领卡两个核心流程直接失败。
+ * 背景：commit ce1516a 起把 auth.js 的写入口陆续改成调用云端 rpc（现为 9 个），
+ * 但**数据库迁移没有同步执行**过一次 —— 客户端调用时 rpc 根本不存在。
+ * 而 auth.js 对 rpc 失败是 `throw` 无降级，导致建房扣卡 / 每日领卡等核心流程直接失败。
  *
  * ⚠️ npm test 查不出这类问题：测试 mock 掉了 cloud 层，rpc 不存在照样全绿。
  * 本脚本因此做两件事：
@@ -37,7 +37,12 @@ const ok = (cond, label) => { if (cond) passes++; else failures.push(label); };
 const authPath = path.join(ROOT, 'miniprogram/utils/auth.js');
 const authSrc = fs.readFileSync(authPath, 'utf8');
 const called = [];
-const rpcRe = /database\.rpc\(\s*'([^']+)'/g;
+// 提取正则曾经的盲区（2026-10-19 修复）：auth.js 里 rpc 调用有两种形态——
+// 同表达式 `cloud.database.rpc('...')`（4 处，001 迁移那批）与链式换行
+// `.rpc('...')`（5 处，002 迁移那批：close_room/list_my_rooms/save_hand_replay/
+// list_room_replays/purge_room）。旧正则只认 `database\.rpc\(`，链式形态全部漏提，
+// 护栏对这 5 个改名失联不放哨。放宽为 `\.rpc\(` 两种都收。
+const rpcRe = /\.rpc\(\s*'([^']+)'/g;
 let m;
 while ((m = rpcRe.exec(authSrc))) called.push(m[1]);
 
