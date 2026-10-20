@@ -107,6 +107,17 @@ ok(/entries\.reduce\(\(s, e\) => s \+ e\.data\.length, 0\)/.test(packSrc),
   if (fs.existsSync(mpRoot)) walk(mpRoot);
   ok(bytes < 2 * 1024 * 1024,
     'miniprogram/ 源码体积 ' + (bytes / 1048576).toFixed(2) + ' MB < 2MB（微信主包上限）');
+  /* ---- vendor SDK 单文件守卫（2026-10-20：发布失败 80051 的真凶）----
+   * 发布器 babel 到 iOS10 会把文件放大约 1.37×（compact:false 且保留注释）；
+   * 微信单文件上限 512KB。SDK 原始 507KB → babel 530KB → 80051「发布失败」。
+   * 现在 vendor 已去注释（约 280KB → babel 385KB）。阈值 360KB：
+   * 360×1.37≈493KB < 512KB，留余量。超了跑 `node scripts/minify-vendor.js`。 */
+  const vendor = path.join(__dirname, '..', 'miniprogram', 'utils', 'vendor', 'workbuddy-cloud-sdk.js');
+  if (fs.existsSync(vendor)) {
+    const vs = fs.statSync(vendor).size;
+    ok(vs < 360 * 1024,
+      'vendor SDK ' + (vs / 1024).toFixed(1) + 'KB < 360KB（babel 后 <512KB 单文件上限，否则 80051）');
+  }
 }
 
 console.log('\n' + '='.repeat(52));
