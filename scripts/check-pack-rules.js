@@ -83,6 +83,32 @@ ok(/0xEF && .*0xBB && .*0xBF/.test(packSrc),
 ok(/entries\.reduce\(\(s, e\) => s \+ e\.data\.length, 0\)/.test(packSrc),
   'pack.js 体积按规范化后的实际入包字节统计（与 limit 判定的原始 size 口径不同）');
 
+/**
+ * ---- 发布体积守卫（2026-10-20：微信上传 errcode 80051 = 源码包超限）----
+ * WorkBuddy 的「发布」按 miniprogram/ 目录整包上传，**不套用** pack.js 的排除
+ * 清单。历史上 miniprogram/node_modules（86MB 构建残留）把上传包撑到 88MB，
+ * 微信直接 80051（source size exceed limit），前端只显示「发布失败」。
+ * 这里钉死两条：① 发布目录里不许出现 node_modules；② 源码总字节 < 2MB。
+ */
+{
+  const mpRoot = path.join(__dirname, '..', 'miniprogram');
+  ok(!fs.existsSync(path.join(mpRoot, 'node_modules')),
+    'miniprogram/ 下无 node_modules（整包上传会算进去 → 80051 发布失败）');
+  let bytes = 0;
+  const walk = dir => {
+    fs.readdirSync(dir).forEach(name => {
+      if (name === 'node_modules') return;
+      const p = path.join(dir, name);
+      const st = fs.statSync(p);
+      if (st.isDirectory()) walk(p);
+      else bytes += st.size;
+    });
+  };
+  if (fs.existsSync(mpRoot)) walk(mpRoot);
+  ok(bytes < 2 * 1024 * 1024,
+    'miniprogram/ 源码体积 ' + (bytes / 1048576).toFixed(2) + ' MB < 2MB（微信主包上限）');
+}
+
 console.log('\n' + '='.repeat(52));
 console.log('打包排除清单校验（单一来源：scripts/pack-rules.js）');
 if (failures.length === 0) {
