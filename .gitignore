@@ -30,3 +30,6 @@ project.private.config.json
 
 # 云平台下发的应用隐私清单（内部交接文件，随应用 ID 变化，不进版本库）
 miniprogram/.wbapp_*.privacy.json
+
+# Claude Code 持久化定时任务（本机会话私有，不进版本库）
+.claude/scheduled_tasks.json

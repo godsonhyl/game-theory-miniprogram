@@ -3157,6 +3157,23 @@ Page({
     if (this._shareHighlightTitle) {
       const title = this._shareHighlightTitle;
       this._shareHighlightTitle = null;   // 一次性：分享后清掉，下次回到默认
+      /* 高光分享直达复盘（2026-10-20 修复「点分享链接看不到那局战况」）。
+       * 旧 path 固定 /pages/index/index，点开只有 title 没有内容——接收者
+       * 只能进首页干瞪眼。病根：分享卡的数据（replayStore/highlightStore）
+       * 只存在分享者本机 storage，接收者机器上根本没有那局数据，任何
+       * 「带 date 跳 replay 页」的方案都会落到「复盘记录不存在」。
+       *
+       * 正确路径是复用已上云的数据：
+       *   · 好友房：poker_hand_replays 每局都落库（表内 replay?room= 房间复盘
+       *     模式）——但 rpc 按房主 owner_id 校验，仅房主本人可见，好友点开
+       *     rows 为空显示「暂无复盘」。诚实做法：带 room 让接收者先进房间
+       *     与分享者同桌打牌（分享的本来意图），「那局战况」由分享卡 title +
+       *     截图承担（零 canvas 约束下的既定方案，见 onShareCardShow 头注释）。
+       *   · AI 局：数据纯本机，没有任何可直达的云端载体，退回首页默认 path。
+       *     强行跳本机 replay 页对接收者只有一句「复盘记录不存在」。 */
+      if (this.mode === 'friend' && this.roomNo) {
+        return { title: title, path: '/pages/index/index?room=' + this.roomNo };
+      }
       return { title: title, path: '/pages/index/index' };
     }
     if (this.mode === 'friend') {
