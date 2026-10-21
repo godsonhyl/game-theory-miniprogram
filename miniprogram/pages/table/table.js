@@ -85,16 +85,32 @@ function ringPositions(seatSet, mySeat) {
   const opp = [];
   for (let k = 1; k < total; k++) opp.push(arr[(idxMe + k) % total]);
   const O = opp.length;
-  opp.forEach((s, k) => {
-    const t = (k + 1) / (O + 1);            // 第 1 个 ≈ 左侧，最后 1 个 ≈ 右侧
-    const ang = 200 + t * 140;              // 200°(左下/左) → 270°(顶) → 340°(右下/右)
+  // 6 人以上（6~9 个座位）统一优化：把最左/最右两个对手移到【左右两侧中部】
+  // （左右对称），其余留在顶部弧上——2026-10-21 用户反馈「6 个对手全挤在顶部
+  // 弧上，太拥挤；6 人以上都得优化」。
+  // 侧位 x≈10~12 / 88~90，落在中央走廊（|x−50| < 18）之外，不遮挡底池/公共牌；
+  // y=50 在底池带下方、我的座位块（y≈68.8~95.2）上方，且与顶部弧最低块
+  // （y≈25、块底≈36）留有余量，不会相碰。
+  // ⚠️ total = 房间座位数（含空位，render 传的是 allSeats），不是在座人数：
+  // 8 位房 7 人局也要算成 8，否则侧位不生效（截图那桌正是 8 位）。
+  const useSides = total >= 6;
+  let topOpp = opp;
+  if (useSides) {
+    const sideX = big ? 10 : 12;
+    pos[opp[0]] = { x: sideX, y: 50 };              // 左中
+    pos[opp[O - 1]] = { x: 100 - sideX, y: 50 };    // 右中（左右对称）
+    topOpp = opp.slice(1, O - 1);
+  }
+  const M = topOpp.length;
+  topOpp.forEach((s, j) => {
+    const t = (j + 1) / (M + 1);            // 顶部弧上均匀铺开
+    const ang = 200 + t * 140;              // 200°(左上) → 270°(顶) → 340°(右上)
     const rad = ang * Math.PI / 180;
     let x = cx + rx * Math.cos(rad);
     let y = cy + ry * Math.sin(rad);        // 上方半圆：sin<0 → y<cy
     x = Math.max(10, Math.min(90, +x.toFixed(1)));
-    // 环形：保留椭圆自然 y（左右两侧座位 y≈27~33%），只做安全上下界。
-    // 中部座位（|x−50| < SEAT_CORRIDOR_HALF_W）由几何守卫要求块底 ≤ 底池上沿；
-    // 两侧座位在中央盘面的 x 范围之外，垂直方向重叠也不会真的遮住底池/公共牌。
+    // 环形：保留椭圆自然 y，只做安全上下界。中部座位（|x−50| < 走廊半宽）由
+    // 几何守卫要求块底 ≤ 底池上沿；顶部两端座位在中央盘面 x 范围之外。
     y = Math.max(RING_TOP_MIN, Math.min(RING_Y_MAX, +y.toFixed(1)));
     pos[s] = { x, y };
   });
@@ -4406,7 +4422,13 @@ Page({
   /** 座位坐标 → felt 内百分比（筹码飞行起/终点）。带缓存，同帧同 seat 复用。
    *  落点常量 POT_ANCHOR 见文件头（C5：与 .pot-row top 同源）。 */
   _fxPos(seat) {
-    const allSeats = game.players.map(p => p.seat);
+    // ⚠️ 必须与 render 用同一套座位集（房间全部座位，含空位）：
+    // 只传 game.players 会让 ringPositions 按「在座人数」算角度，与渲染
+    // 按「房间座位数」算出的坐标不一致 → 筹码飞行起点偏移（2026-10-21 修）。
+    const allSeats = [];
+    for (let si = 0; si < this.maxSeats; si++) allSeats.push(si);
+    game.players.forEach(p => { if (allSeats.indexOf(p.seat) < 0) allSeats.push(p.seat); });
+    allSeats.sort((a, b) => a - b);
     const pos = ringPositions(allSeats, this.mySeat);
     const pp = pos[seat] || { x: 50, y: 40 };
     return pp;

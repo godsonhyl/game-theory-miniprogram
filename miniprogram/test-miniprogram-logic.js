@@ -2969,6 +2969,22 @@ while (guard++ < 400) {
           ok(maxY >= 21, n + ' 人桌对手环最大 y=' + maxY.toFixed(1) + '% ≥ 21%（两侧有座位，未被夹到顶部细带）');
           ok(sideSeats >= 2, n + ' 人桌左右两侧各有座位（x≤25 或 x≥75 的座位数=' + sideSeats + ' ≥ 2）');
         });
+        // 2026-10-21 用户：6 人以上（6~9 个座位）都把最左/最右两个移到左右两侧
+        // 中部（红框位置），左右对称，缓解顶部拥挤。钉死「恰好 2 个侧位 + x 之和≈100」。
+        [6, 7, 8, 9].forEach(n => {
+          const seats = [];
+          for (let i = 0; i < n; i++) seats.push(i);
+          const pos = ring(seats, 0);
+          const side = [];
+          for (let s = 1; s < n; s++) if (pos[s] && pos[s].y >= 40) side.push(pos[s]);
+          ok(side.length === 2,
+            n + ' 人桌有 2 个对手在左右两侧中部（y≥40，实际 ' + side.length + '）');
+          if (side.length === 2) {
+            const xs = side.map(p => p.x).sort((a, b) => a - b);
+            ok(Math.abs(xs[0] + xs[1] - 100) <= 0.5,
+              n + ' 人桌左右侧位对称（x=' + xs[0] + '/' + xs[1] + '，和≈100）');
+          }
+        });
       }
       /* ---- 底池 vs 公共牌 vs 顶排：三处纵向不遮挡（2026-10-19 评审补边池）----
        * 原断言只算「底池胶囊高」= potY ± pillH/2，**默认边池数为 0**，于是
