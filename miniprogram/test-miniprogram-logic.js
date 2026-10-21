@@ -2985,6 +2985,26 @@ while (guard++ < 400) {
               n + ' 人桌左右侧位对称（x=' + xs[0] + '/' + xs[1] + '，和≈100）');
           }
         });
+        // 9 位桌（2026-10-21 用户「再加一个到红框，左右对称」）：每侧 2 个，
+        // 左右镜像，且左侧中部红框位置 (x≈24, y≈50) 必须有座位。
+        {
+          const seats9 = [];
+          for (let i = 0; i < 9; i++) seats9.push(i);
+          const pos9 = ring(seats9, 0);
+          const left = [], right = [];
+          for (let s = 1; s < 9; s++) {
+            if (!pos9[s]) continue;
+            (pos9[s].x < 50 ? left : right).push(pos9[s]);
+          }
+          ok(left.length === 4 && right.length === 4,
+            '9 位桌左右各 4 个座位（实际 ' + left.length + '/' + right.length + '）');
+          const lx = left.map(p => p.x).sort((a, b) => a - b);
+          const rx = right.map(p => p.x).sort((a, b) => a - b);
+          ok(lx.length === 4 && lx.every((x, i) => Math.abs(x + rx[3 - i] - 100) <= 0.5),
+            '9 位桌左右镜像对称（左 ' + lx.join('/') + '，右 ' + rx.join('/') + '）');
+          ok(left.some(p => Math.abs(p.x - 24) <= 1 && Math.abs(p.y - 50) <= 1),
+            '9 位桌左侧中部红框位置 (x≈24, y≈50) 有座位');
+        }
       }
       /* ---- 底池 vs 公共牌 vs 顶排：三处纵向不遮挡（2026-10-19 评审补边池）----
        * 原断言只算「底池胶囊高」= potY ± pillH/2，**默认边池数为 0**，于是

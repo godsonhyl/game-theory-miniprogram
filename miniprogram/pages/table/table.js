@@ -85,35 +85,47 @@ function ringPositions(seatSet, mySeat) {
   const opp = [];
   for (let k = 1; k < total; k++) opp.push(arr[(idxMe + k) % total]);
   const O = opp.length;
-  // 6 人以上（6~9 个座位）统一优化：把最左/最右两个对手移到【左右两侧中部】
-  // （左右对称），其余留在顶部弧上——2026-10-21 用户反馈「6 个对手全挤在顶部
-  // 弧上，太拥挤；6 人以上都得优化」。
-  // 侧位 x≈10~12 / 88~90，落在中央走廊（|x−50| < 18）之外，不遮挡底池/公共牌；
-  // y=50 在底池带下方、我的座位块（y≈68.8~95.2）上方，且与顶部弧最低块
-  // （y≈25、块底≈36）留有余量，不会相碰。
-  // ⚠️ total = 房间座位数（含空位，render 传的是 allSeats），不是在座人数：
-  // 8 位房 7 人局也要算成 8，否则侧位不生效（截图那桌正是 8 位）。
-  const useSides = total >= 6;
-  let topOpp = opp;
-  if (useSides) {
-    const sideX = big ? 10 : 12;
-    pos[opp[0]] = { x: sideX, y: 50 };              // 左中
-    pos[opp[O - 1]] = { x: 100 - sideX, y: 50 };    // 右中（左右对称）
-    topOpp = opp.slice(1, O - 1);
-  }
-  const M = topOpp.length;
-  topOpp.forEach((s, j) => {
-    const t = (j + 1) / (M + 1);            // 顶部弧上均匀铺开
-    const ang = 200 + t * 140;              // 200°(左上) → 270°(顶) → 340°(右上)
+  // 顶部弧：200°(左上) → 270°(顶) → 340°(右上)。环形保留椭圆自然 y，只做安全上下界。
+  const placeOnArc = (s, j, M) => {
+    const t = (j + 1) / (M + 1);
+    const ang = 200 + t * 140;
     const rad = ang * Math.PI / 180;
     let x = cx + rx * Math.cos(rad);
-    let y = cy + ry * Math.sin(rad);        // 上方半圆：sin<0 → y<cy
+    let y = cy + ry * Math.sin(rad);
     x = Math.max(10, Math.min(90, +x.toFixed(1)));
-    // 环形：保留椭圆自然 y，只做安全上下界。中部座位（|x−50| < 走廊半宽）由
-    // 几何守卫要求块底 ≤ 底池上沿；顶部两端座位在中央盘面 x 范围之外。
     y = Math.max(RING_TOP_MIN, Math.min(RING_Y_MAX, +y.toFixed(1)));
     pos[s] = { x, y };
-  });
+  };
+
+  // 6 人以上（6~9 个座位）优化座位分布（2026-10-21 用户：6 个对手全挤在顶部
+  // 弧上太拥挤；「6 人以上都得优化」；9 位桌「再加一个到红框，左右对称」）。
+  // ⚠️ total = 房间座位数（含空位，render 传的是 allSeats），不是在座人数：
+  // 8 位房 7 人局也要按 8 算，否则侧位不生效。
+  if (total >= 9) {
+    // 9 位桌：每侧 2 个（外侧 + 内侧红框位置），顶部 4 个；左右镜像。
+    // 顺序按顺时针：左下 → 左中 → 左上 → 顶 → 右上 → 右中 → 右下。
+    // 侧位都在中央走廊（|x−50| < 18）之外，不遮底池/公共牌；内侧 y=50 与顶部
+    // 块底（≈27）、我的座位块（y≈68.8 起）均不重叠。
+    const NINE = [
+      { x: 24, y: 50 }, { x: 10, y: 38 },
+      { x: 30, y: 16 }, { x: 43, y: 14 }, { x: 57, y: 14 }, { x: 70, y: 16 },
+      { x: 90, y: 38 }, { x: 76, y: 50 }
+    ];
+    opp.forEach((s, k) => {
+      if (NINE[k]) pos[s] = NINE[k];
+      else placeOnArc(s, k, O);   // 兜底：理论 maxSeats≤9，防未来放宽
+    });
+  } else if (total >= 6) {
+    // 6~8 位：左右各 1 个侧位（x=10~12 / 88~90, y=50），其余顶部弧均匀。
+    const sideX = big ? 10 : 12;
+    pos[opp[0]] = { x: sideX, y: 50 };
+    pos[opp[O - 1]] = { x: 100 - sideX, y: 50 };
+    const top = opp.slice(1, O - 1);
+    top.forEach((s, j) => placeOnArc(s, j, top.length));
+  } else {
+    // 5 位及以下：全部在顶部弧。
+    opp.forEach((s, k) => placeOnArc(s, k, O));
+  }
   pos.__layout = layout;
   _ringCache[cacheKey] = pos;
   return pos;
