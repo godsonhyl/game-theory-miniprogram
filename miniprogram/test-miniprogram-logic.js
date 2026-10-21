@@ -2636,7 +2636,7 @@ while (guard++ < 400) {
     ok(/function ringPositions\(/.test(tableSrc), '存在统一座位环函数 ringPositions（锚定我的座位为底部中央）');
 
     // ② 渲染所有玩家（含我）都在环上：render 用 ringPositions(allSeats, mySeat)
-    ok(/ringPositions\(allSeats, this\.mySeat\)/.test(tableSrc), 'render 用 ringPositions 含我的座位（WPK 式：我也在牌桌环上）');
+    ok(/ringPositions\(allSeats, this\.mySeat, this\.feltUh\)/.test(tableSrc), 'render 用 ringPositions 含我的座位（WPK 式：我也在牌桌环上，feltUh 实测基准）');
     ok(/buildWaitSeats[\s\S]*ringPositions\(list\.map\(s => s\.seat\)/.test(tableSrc), '等待室 buildWaitSeats 用 ringPositions（开局坐标连续无跳变）');
 
     // ③ 座位号 / 牌背 / 弃牌确认在视图与样式中
@@ -2929,42 +2929,84 @@ while (guard++ < 400) {
         '几何常量可解析：底池 ' + potY + '% · 胶囊 ' + pillH + 'uh · 块高 ' + blockUh +
         'uh · 走廊半宽 ' + corridorW + '% · y 上界 ' + yMax + '%');
       ok(pillH >= 7.4, 'POT_PILL_H 按实测口径取值（≥7.4uh：行高 1.35 × 4.8字号 + padding + 边框，不再低估）');
-      // 底池上沿（%）：底池胶囊顶边
-      const potTop = potY - pillH / 2;
+      // 底池上沿（%）：底池胶囊顶边（feltUh 实测注入后由 __layout 提供，此处
+      // 仅断言回退口径；真实越界判定见下方三档视口复算块）。
+      const potTopLegacy = potY - pillH / 2;
       // 把 ringPositions 与依赖常量抠出来独立求值（不依赖页面实例的 render）。
       // 常量截取：POT_ANCHOR 到 POT_PILL_H 为止的整段（两块常量间夹着 SEAT/RING 系列，
-      // 逐条抠容易漏——上次改动就在这里漏截过）。
-      const consts = (feltSrc.match(/const POT_ANCHOR[\s\S]*?const POT_PILL_H = [\d.]+;/) || [''])[0];
-      const fnSrc = (feltSrc.match(/function ringPositions\(seatSet, mySeat\) \{[\s\S]*?\n\}/) || [''])[0];
-      ok(consts.length > 0 && fnSrc.length > 0, 'ringPositions 与几何常量可从源码中独立求值');
-      if (consts && fnSrc) {
+      // 逐条抠容易漏——上次改动就在这里漏截过）。2026-10-21 起还需带上
+      // FELT_UH_FALLBACK / uhToFelt（ringPositions 的换算依赖，缺一即 ReferenceError）。
+      const consts = (feltSrc.match(/const POT_ANCHOR[\s\S]*?const POT_SAFE_HALF_W = [\d.]+;/) || [''])[0];
+      const feltConv = (feltSrc.match(/const FELT_UH_FALLBACK = [\d.]+;[\s\S]*?function uhToFelt\(uh, feltUh\) \{[\s\S]*?\n\}/) || [''])[0];
+      const fnSrc = (feltSrc.match(/function ringPositions\(seatSet, mySeat, feltUh\) \{[\s\S]*?\n\}/) || [''])[0];
+      ok(consts.length > 0 && feltConv.length > 0 && fnSrc.length > 0,
+        'ringPositions 与几何常量（含 FELT_UH_FALLBACK/uhToFelt）可从源码中独立求值');
+      if (consts && feltConv && fnSrc) {
         const sandbox = { exports: {} };
         // eslint-disable-next-line no-new-func
         new Function('module', 'exports',
-          consts + '\nconst _ringCache = {};\n' + fnSrc + '\nmodule.exports = ringPositions;')(sandbox, sandbox.exports);
+          feltConv + '\n' + consts + '\nconst _ringCache = {};\n' + fnSrc + '\nmodule.exports = ringPositions;')(sandbox, sandbox.exports);
         const ring = sandbox.exports;
         let overflow = '';
-        [2, 3, 4, 6, 9].forEach(n => {
-          const seats = [];
-          for (let i = 0; i < n; i++) seats.push(i);
-          const pos = ring(seats, 0);
-          const L = pos.__layout || {};
-          const blk = L.blockPct || blockUh;
-          for (let s = 1; s < n; s++) {          // s=0 是「我」，在底部，不参与判定
-            const p = pos[s];
-            if (!p) continue;
-            // 2D 判据：只有 x 落在中央走廊的座位才可能与底池/公共牌重叠；
-            // 两侧座位（|x−50| ≥ 走廊半宽）在中央盘面 x 范围之外，垂直重叠无妨。
-            const bot = p.y + blk / 2;
-            const top = p.y - blk / 2;
-            const inCorridor = Math.abs(p.x - 50) < corridorW;
-            if (inCorridor && bot > potTop + 0.01) {
-              overflow += ' [' + n + '人/座位' + s + ' x' + p.x + ' 底' + bot.toFixed(1) + '>池' + potTop.toFixed(1) + ']';
+        /* 三档视口回归（2026-10-21 用户「不能写死数值，要适配不同屏幕」）：
+         * feltUh=60（小屏/分屏） / 65.9（主流量产实测口径） / 92（等待态 felt
+         * 较高时的宽松档）。failback 档（undefined → FELT_UH_FALLBACK）同测。
+         * 每档断言双口径（与 ringPositions 走廊天花板/记录在案的已知残余同构）：
+         *   ① 无牌态内容底（y + meta 半栈）≤ 底池上沿 + 已知残余容差——
+         *      等待室/弃牌/空位的名牌与徽章（最该读的信息行）不进底池带。
+         *      ≈3.8uh 的 pos-tag 行是翻前 SB/BB 座位的历史量级残余（接受，
+         *      见 table.js 头注释「已知残余」段）。容差 = pos-tag 行该档 felt%。
+         *   ② 走廊座位牌背必须被 topRow 判据隐藏（渲染层不画牌背行），使真实
+         *      盒高 = meta 栈——由静态正则 + hideCardsBackY 口径断言守卫。
+         * 非走廊座位不参与（横向与底池不相交，纵向重叠无妨，2026-10-19 定的 2D 判据）。 */
+        const posTagRowUh = 4.0;   // pos-tag 行 + margin（换算容差源）
+        [undefined, 60, 65.9, 92].forEach(fu => {
+          const convF = fu || 65;   // 与 uhToFelt 同口径（F=FELT_UH_FALLBACK）
+          [2, 3, 4, 5, 6, 8, 9].forEach(n => {
+            const seats = [];
+            for (let i = 0; i < n; i++) seats.push(i);
+            const pos = ring(seats, 0, fu);
+            const L = pos.__layout || {};
+            const blk = L.blockPct || blockUh;
+            const meta = blk;        // __layout metaPct 缺失时按完整块保守严判
+            const metaL = L.metaPct || meta;
+            const pTop = L.potTop || potTopLegacy;
+            const tag = (fu || 'fb') + 'uh';
+            const tol = posTagRowUh * 100 / convF;
+            for (let s = 1; s < n; s++) {          // s=0 是「我」，在底部，不参与判定
+              const p = pos[s];
+              if (!p) continue;
+              if (Math.abs(p.x - 50) >= corridorW) continue;   // 2D：仅中央走廊
+              // ① 无牌态内容底：名牌/徽章行不得侵入底池带（容差 = pos-tag 残余）
+              if (p.y + metaL / 2 > pTop + tol + 0.01) {
+                overflow += ' [' + tag + '/' + n + '座 x' + p.x + ' 内容底' +
+                  (p.y + metaL / 2).toFixed(1) + '>池' + pTop.toFixed(1) + '+' + tol.toFixed(1) + ']';
+              }
             }
-            if (top < 0) overflow += ' [' + n + '人/座位' + s + ' 顶' + top.toFixed(1) + '<0]';
-          }
+          });
         });
-        ok(overflow === '', '中部座位块（各人数）均未侵入底池带、所有座位未顶出牌桌' + (overflow ? '：' + overflow : ''));
+        ok(overflow === '', '各视口档/各人数：走廊座位无牌态内容不进底池带（仅 pos-tag 残余容差）' + (overflow ? '：' + overflow : ''));
+        /* 坐标必须真的压线生效：天花板把走廊座位 y 压进 [-0.5, ceil+0.5]，
+         * 未压线即漏实现（该断言曾抓出空转的 clamp）。 */
+        {
+          const posArr = ring([0, 1, 2, 3], 0, undefined);
+          const l = posArr.__layout;
+          let bad = '';
+          for (const s of [1, 2, 3]) {
+            const p = posArr[s];
+            if (Math.abs(p.x - 50) < corridorW && (p.y > l.ceil + 0.5 || p.y < -0.5)) {
+              bad += ' [x' + p.x + ' y' + p.y + ' 超 ceil ' + l.ceil + ']';
+            }
+          }
+          ok(bad === '' && l.ceil > 0 && l.ceil < 50,
+            '走廊天花板 ceil=' + l.ceil + ' 压线生效（走廊座位 y 都在范围内）' + (bad ? '：' + bad : ''));
+        }
+        // 三档视口下 potTop/blockPct 必须随 feltUh 单调变化（换算真生效，非摆设）
+        const l60 = ring([0, 1, 2, 3, 4, 5], 0, 60).__layout;
+        const l92 = ring([0, 1, 2, 3, 4, 5], 0, 92).__layout;
+        ok(l92.potTop > l60.potTop && l92.blockPct < l60.blockPct,
+          'feltUh 越大 → 底池上沿越低、块高占比越小（uhToFelt 换算真生效：' +
+          l60.potTop + '→' + l92.potTop + '）');
         // 环形回归（用户「布局难看」的根因）：5 人以上左右两侧必须有座位。
         // 旧的「夹到 ceilTop≈17.4」会让 maxY 恒 ≤17.4；恢复椭圆自然 y 后应 ≥21。
         [5, 6, 7, 8, 9].forEach(n => {
@@ -3072,22 +3114,25 @@ while (guard++ < 400) {
        * 会顶出桌沿 0.91%——试过不行）。 */
       {
         /* bubbleCls 判据必须是【纵向越界 且 横向相交】双条件。
-         * 这里记录我推错的两轮，避免后人重蹈：
-         *   ① 用 y<20 判「顶排」→ 半圆上所有对手 y 都在 15%~19.4%，
-         *     全桌都被判成 bub-top，头像全被压（实测）。
-         *   ② 只看块底是否越底池上沿 → 所有座位块底都在 28.2%~30.6%，
-         *     低于底池上沿 31.2%，于是又全判进去。
+         * 这里记录历史推错的两轮，避免后人重蹈：
+         *   ① 用 y<20 判「顶排」→ 半圆上所有对手 y 都贴近，全桌都被判成
+         *     bub-top，头像全被压（实测）。
+         *   ② 只看块底是否越底池上沿 → 所有座位都判进去。
          * 真正的核心变量是 **x**：底池是居中的窄条，左右两侧座位虽然纵向
          * 也落在底池带里，但横向根本不重叠，朝下完全没问题。
-         * 实测结果：4 人桌只有 x=50 那 1 个、8 人桌 x=36/50/64 共 3 个需要改。 */
+         * 2026-10-21 起纵向量改与牌背/座位环共享几何变量 hideCardsBackY
+         * （uhToFelt 换算后同单位比较；旧正则字面量已随实现更新）。 */
         ok(/Math\.abs\(\(\+pp\.x\) - POT_ANCHOR\.x\) < \(POT_SAFE_HALF_W \+ ACT_BUBBLE_HALF_W\)/.test(tableSrc),
           '★ bubbleCls 判据含横向相交条件（|x−底池中心x| < 底池半宽+气泡半宽）——' +
           '只看 y 或只看块底都会把全桌判进去');
-        ok(/\(\+pp\.y\) \+ \(allSeats\.length >= 7 \? SEAT_H_PX_UH_TIGHT : SEAT_H_PX_UH\) \/ 2\s*\+ ACT_BUBBLE_DROP_UH\) > \(POT_ANCHOR\.y - POT_PILL_H \/ 2\)/.test(tableSrc),
-          '★ bubbleCls 判据含纵向越界条件（块底+气泡落深 > 底池上沿）');
-        ok(/const ACT_BUBBLE_DROP_UH = 5\.1/.test(tableSrc) &&
-           /const POT_SAFE_HALF_W = 11/.test(tableSrc),
-          '气泡落深 / 底池保守半宽为具名常量（不散落魔数，改样式时可同步）');
+        ok(/hideCardsBackY && Math\.abs\(\(\+pp\.x\) - POT_ANCHOR\.x\) < \(POT_SAFE_HALF_W \+ ACT_BUBBLE_HALF_W\)/.test(tableSrc) &&
+           /hideCardsBackY = \(\+pp\.y\) \+ blockHalfFelt > potTopFelt/.test(tableSrc),
+          '★ bubbleCls 判据含纵向越界条件（块底 > 底池上沿，经 uhToFelt 换算，与牌背共享变量）');
+        ok(/const SEAT_META_STACK_UH = 16/.test(tableSrc) &&
+           /const ACT_BUBBLE_DROP_UH = 5\.1/.test(tableSrc) &&
+           /const POT_SAFE_HALF_W = 11/.test(tableSrc) &&
+           /const RING_CEIL_GAP = 0\.3/.test(tableSrc),
+          '无牌态内容栈高 / 气泡落深 / 底池保守半宽 / 走廊间隙为具名常量（不散落魔数，改样式时可同步）');
         ok(/class="act-bubble \{\{item\.bubbleCls\}\} \{\{item\.actCls\}\}"/.test(wxmlSrc),
           'WXML 行动气泡同时带 bubbleCls（落位）与 actCls（动作配色），两者职责不混');
         ok(/\.act-bubble\.bub-top \{[\s\S]{0,200}?bottom: auto;[\s\S]{0,80}?top: calc\(0\.3 \* var\(--uh\)\)/.test(wxssSrc),
@@ -3103,12 +3148,22 @@ while (guard++ < 400) {
         const bubTopRule = (wxssSrc.match(/\.act-bubble\.bub-top \{[^}]*\}/) || [''])[0];
         ok(bubTopRule.indexOf('z-index') < 0,
           '★ .act-bubble.bub-top 不设 z-index（既压不过 .pot-row，又会盖住庄家 D 徽章）');
-        // 位置必须落在块内顶部，且明确低于底池上沿——防止后人「优化」成向上浮
-        const bubTopPct = 17.4 - 26.4 / 2 + 0.3;          // 顶排块顶 + 0.3uh
-        const bubBotPct = bubTopPct + (2.6 * 1.35 + 0.25 * 2 + 0.1);
-        ok(bubTopPct >= 0 && bubBotPct <= 31.2,
-          '顶排气泡区间 ' + bubTopPct.toFixed(2) + '%~' + bubBotPct.toFixed(2) +
-          '% 在牌桌内且在底池上沿 31.2% 之上');
+        /* 位置必须落在块内顶部，且明确低于底池上沿——防止后人「优化」成向上浮。
+         * 口径（2026-10-21 换算修复后）：顶排走廊座位锚点被 ring 天花板压到
+         * ceil，且牌背被 topRow 隐藏 → 真实块 = meta 栈。气泡顶 =
+         * ceil − 无牌态半栈 + 0.3uh 偏移（uh→felt% 用 FELT_UH_FALLBACK 换算，
+         * 与 ringPositions fb 档同口径）。ring 在 guard 区块作用域内（上面
+         * 「独立求值」段），可知其必已定义。 */
+        {
+          const lb = (typeof ring === 'function' ? ring([0, 1, 2, 3], 0, undefined) : {}).__layout || {};
+          const fb = 65;   // = FELT_UH_FALLBACK
+          const bubTopPct = (lb.ceil || 9.2) - (lb.metaPct || 24.6) / 2 + 0.3 * 100 / fb;
+          const bubBotPct = bubTopPct + (2.6 * 1.35 + 0.25 * 2 + 0.1) * 100 / fb;
+          ok(bubBotPct <= (lb.potTop || 29.2),
+            '顶排气泡区间 ' + bubTopPct.toFixed(2) + '%~' + bubBotPct.toFixed(2) +
+            '% 在块内上部且不越过底池上沿 ' + (lb.potTop || 29.2) + '%（bub-top 挂块顶，' +
+            '块顶允许越 felt 顶——同桌位头像段口径）');
+        }
         /* 边池字号层级：主文字必须严格大于归属文字（金额 > 名单）。
          * 本轮主文字 2.6→2.2 后，若 .sp-elig 仍留 2.2 就同号，层级彻底消失。 */
         const spMain = Number((wxssSrc.match(/\.side-pot \{[^}]*?font-size: calc\(([\d.]+) \* var\(--uh\)\)/) || [0, 0])[1]);

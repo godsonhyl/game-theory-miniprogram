@@ -51,11 +51,38 @@ const SYNC_FAIL_TOAST_MS = 10000;
  *     guardSeatCardNoOverlap 用真实几何逐座位复算（含「两侧必须有座位」回归）。
  *   - down 排布已删除（纵向尺寸全为 uh 相对量，比值不随视口变化）。
  */
-function ringPositions(seatSet, mySeat) {
+/**
+ * ⚠️ uh 与 felt% 是两套单位（2026-10-21 用户核实根因）：
+ *   - 纵向 CSS 尺寸全部是 uh（--uh = 实测视口高 1%），如胶囊高 7.6uh、座位块高 26.4uh；
+ *   - 而定位坐标（.pot-row top:35%、座位 x/y）是 felt%——相对 .felt 高（flex:1
+ *     弹性容器，playing 态实测仅 ≈65.9uh，非 100uh）。
+ *   felt 只有 100uh 的约 2/3 高，1felt% ≈ 1.52uh。历史上代码把两套单位直接相减
+ *   （potTop = 35 − 7.6/2 = 31.2），底池上沿被高估约 2 个 felt 点位，顶排块底
+ *   实际越界约 6%——“顶排被底池挡住、怎么修都差一点”的根因。
+ *
+ * 修正口径：feltUh 由页面「运行时实测」注入（measureFelt()，SelectorQuery 量
+ * .felt 真实像素高 ÷ uhPx），不写死任何机型数值——不同手机、resultbar 出现压矮、
+ * 字体回流行高抖动全被实测吃掉。ringPositions 把它作为参数收下（第三参），
+ * 所有 uh→felt% 判定经 uhToFelt() 换算。测量失败回退 FELT_UH_FALLBACK 保守值。
+ */
+/** felt 高度回退值（uh）。仅测量不可用时兜底，取 playing 态保守估计：
+ *  100 − 页面固定开销（padding 1.6 + topbar 5.6 + felt margin 0.4）−
+ *  myzone 常驻（mybar 14.5 + actbar 10.8 + margins 2.6）≈ 65.9。宁可偏小
+ *  （换算放大、天花板收紧方向），不得偏大（重现遮挡）。 */
+const FELT_UH_FALLBACK = 65;
+/** uh → felt% 换算（四舍五入到 0.1 felt% 防长尾）。feltUh 缺省时按 100uh
+ *  退化（与旧口径一致），保证任何调用路径拿到的都是有限值。 */
+function uhToFelt(uh, feltUh) {
+  const f = feltUh > 0 ? feltUh : 100;
+  return Math.round(uh * 100 / f * 10) / 10;
+}
+function ringPositions(seatSet, mySeat, feltUh) {
+  const F = feltUh > 0 ? feltUh : FELT_UH_FALLBACK;
   const arr = seatSet.slice().sort((a, b) => a - b);
-  // 模块级缓存：座位坐标是纯函数（seatSet + mySeat 唯一决定），座位组合有限
-  // （≤9 座位），命中即返回同一对象，省去每帧重算三角函数。键含排序后座位与 mySeat。
-  const cacheKey = arr.join(',') + ':' + mySeat;
+  // 模块级缓存：座位坐标是纯函数（seatSet + mySeat + feltUh 唯一决定），座位组合
+  // 有限（≤9 座位），命中即返回同一对象，省去每帧重算三角函数。键含 feltUh——
+  // 转屏/机型不同的实测值不同，缓存必须按基准分道。
+  const cacheKey = arr.join(',') + ':' + mySeat + ':' + F;
   if (_ringCache[cacheKey]) return _ringCache[cacheKey];
   const total = arr.length;
   if (total === 0) return {};
@@ -65,12 +92,34 @@ function ringPositions(seatSet, mySeat) {
   // .seat.tight 缩小座位块）。
   const big = total >= 7;
   const cx = 50, cy = 42, rx = big ? 46 : 43, ry = big ? 25 : 27;
-  const blockUh = big ? SEAT_H_PX_UH_TIGHT : SEAT_H_PX_UH;
-  const potTop = POT_ANCHOR.y - POT_PILL_H / 2;
-  // __layout：块高/底池上沿实测值，供几何守卫在沙箱里逐座位复算（不依赖页面实例）。
+  // 座位块高 / 底池上沿：uh → felt% 换算后才与 x/y 同单位（两套单位直减是旧病根）。
+  const blockPct = uhToFelt(big ? SEAT_H_PX_UH_TIGHT : SEAT_H_PX_UH, F);
+  // 无牌态内容栈高（头像+名牌+徽章，不含牌背行）:走廊座位必然隐藏牌背
+  // （见 render 的 topRow 判据），.seat 盒按实际子元素渲染、锚点按实际盒高
+  // 居中——走廊座位的真实盒只有 meta 栈那么高，天花板必须按它算。
+  const metaPct = uhToFelt(big ? SEAT_META_STACK_TIGHT_UH : SEAT_META_STACK_UH, F);
+  const potTop = POT_ANCHOR.y - uhToFelt(POT_PILL_H, F) / 2;
+  /* 走廊内容天花板（felt%）：y 的上界按口径分两档（2026-10-21 双口径修复）——
+   *   - 走廊座位（|x−50| < SEAT_CORRIDOR_HALF_W）与底池横向相叠，其内容栈
+   *     块底不得侵入底池上沿：天花板 = potTop − meta 半栈 − RING_CEIL_GAP。
+   *     用 meta 而非完整块（26.4uh）：按完整块算 F=65 时天花板 ≈8.6，块顶被压到
+   *     ≈−11.7 felt%——头像整段被 .table-page overflow:hidden 裁掉（真机即
+   *     「顶排头像消失」）。走廊座位牌背本就被 topRow 判据隐藏，块里没有牌背
+   *     段，按 meta 栈算天花板 ≈16.6，头像段完整落在 felt 顶内。
+   *   - 侧位不压（x 在走廊之外，与底池横向不相交），沿用 RING_Y_MAX。
+   * 顶排头像上沿仍可能越过 felt 顶部 10% 以内：felt border-radius 50%/42%
+   * 的外圆角区域本来就无内容可裁，且仍在页面 pad 内，无碍。
+   * 已知残余（接受）：SB/BB 座位在翻前会多出 pos-tag 行（+3.8uh），其徽章行
+   * 可能探入底池带 ≈2 felt%——仅翻前、仅 2 个座位、不覆盖筹码数字，且为
+   * 2026-10-19 前旧布局就有的历史量级，不动主布局去消它。 */
+  const ceilFelt = potTop - metaPct / 2 - RING_CEIL_GAP;
+  const corridorYmin = Math.max(RING_TOP_MIN, ceilFelt);
   const layout = {
-    blockPct: Math.round(blockUh * 10) / 10,
-    potTop: Math.round(potTop * 10) / 10
+    feltUh: F,
+    blockPct: blockPct,
+    metaPct: metaPct,
+    potTop: Math.round(potTop * 10) / 10,
+    ceil: Math.round(corridorYmin * 10) / 10
   };
   const pos = {};
   if (total === 1) {
@@ -85,7 +134,10 @@ function ringPositions(seatSet, mySeat) {
   const opp = [];
   for (let k = 1; k < total; k++) opp.push(arr[(idxMe + k) % total]);
   const O = opp.length;
-  // 顶部弧：200°(左上) → 270°(顶) → 340°(右上)。环形保留椭圆自然 y，只做安全上下界。
+  /* 顶部弧：200°(左上) → 270°(顶) → 340°(右上)。走廊座位（|x−50| < 走廊半宽）
+   * 的 y 压到「内容天花板」之下——块内名牌/徽章行（最该读的信息）贴住底池
+   * 上沿但不侵入；头像段可越 felt 顶（椭圆外角无内容可裁，见上方注释）。
+   * 侧位不压线（椭圆自然 y + RING_Y_MAX 上界），两侧与底池横向不相交。 */
   const placeOnArc = (s, j, M) => {
     const t = (j + 1) / (M + 1);
     const ang = 200 + t * 140;
@@ -93,11 +145,14 @@ function ringPositions(seatSet, mySeat) {
     let x = cx + rx * Math.cos(rad);
     let y = cy + ry * Math.sin(rad);
     x = Math.max(10, Math.min(90, +x.toFixed(1)));
+    if (Math.abs(x - 50) < SEAT_CORRIDOR_HALF_W) {
+      y = Math.min(y, corridorYmin);
+    }
     y = Math.max(RING_TOP_MIN, Math.min(RING_Y_MAX, +y.toFixed(1)));
     pos[s] = { x, y };
   };
 
-  // 6 人以上（6~9 个座位）优化座位分布（2026-10-21 用户：6 个对手全挤在顶部
+  // 5 人以上（5~9 个座位）优化座位分布（2026-10-21 用户：6 个对手全挤在顶部
   // 弧上太拥挤；「6 人以上都得优化」；9 位桌「再加一个到红框，左右对称」）。
   // ⚠️ total = 房间座位数（含空位，render 传的是 allSeats），不是在座人数：
   // 8 位房 7 人局也要按 8 算，否则侧位不生效。
@@ -115,15 +170,31 @@ function ringPositions(seatSet, mySeat) {
       if (NINE[k]) pos[s] = NINE[k];
       else placeOnArc(s, k, O);   // 兜底：理论 maxSeats≤9，防未来放宽
     });
-  } else if (total >= 6) {
-    // 6~8 位：左右各 1 个侧位（x=10~12 / 88~90, y=50），其余顶部弧均匀。
+  } else if (total >= 8) {
+    // 8 位桌与 9 位桌对齐（2026-10-21 评审：8 位是唯一顶排密度超标桌型——
+    // 顶排 5 座块宽 69.5% 挤在 67% 跨度里，密度超 100%；其余桌型均 ≤92%）。
+    // 每侧 2 个侧位（外侧 + y=50 内侧）+ 顶部 4 个；模板与 NINE 同构，
+    // 顶排密度回落到 4 座水平。
+    const EIGHT = [
+      { x: 12, y: 50 },
+      { x: 30, y: 16 }, { x: 43, y: 14 }, { x: 57, y: 14 }, { x: 70, y: 16 },
+      { x: 88, y: 50 }
+    ];
+    opp.forEach((s, k) => {
+      if (EIGHT[k]) pos[s] = EIGHT[k];
+      else placeOnArc(s, k, O);   // 兜底
+    });
+  } else if (total >= 5) {
+    // 5~8 位：左右各 1 个侧位（x=10~12 / 88~90, y=50），其余顶部弧均匀。
+    // 5 座房也开侧位（2026-10-21 用户）：4 个对手全挤顶部弧时中心距仅 18.4%，
+    // 两侧 x=3~17 / 83~97 的大块区域完全空着；开侧位后顶部 3 个、中心距 24.7%。
     const sideX = big ? 10 : 12;
     pos[opp[0]] = { x: sideX, y: 50 };
     pos[opp[O - 1]] = { x: 100 - sideX, y: 50 };
     const top = opp.slice(1, O - 1);
     top.forEach((s, j) => placeOnArc(s, j, top.length));
   } else {
-    // 5 位及以下：全部在顶部弧。
+    // 4 位及以下：对手 ≤3 个，全部在顶部弧（侧位无收益——弧上密度已足够松）。
     opp.forEach((s, k) => placeOnArc(s, k, O));
   }
   pos.__layout = layout;
@@ -225,6 +296,22 @@ const POT_PILL_H = 7.6;
  *  气泡高 = 字号 2.6 × 行高 1.35 + padding 0.25×2 + 边框 ≈ 4.1；取 5.1 合计。
  *  ⚠️ 改 .act-bubble 的字号/padding 时必须同步这个常量。 */
 const ACT_BUBBLE_DROP_UH = 5.1;
+/* 等待/弃牌态的座位内容栈高（uh）＝ 头像 8.6 + 名牌 3.6（margin .6 + 名字行 ≈3）
+ *  + 徽章行 3.8（margin .3 + 行高 3.2 + 边框）≈ 16.0（2026-10-21 实测）。
+ *  它与 SEAT_H_PX_UH（26.4）服务于两个不同的判定口径：
+ *   - SEAT_H_PX_UH 是「牌背可见」态块高——牌背行（.seat-cards 是文档流子元素，
+ *     0.4 margin + 9.8 高 ≈ 10.3uh）已含在 26.4 里、就在块底。⚠️ 曾误在块底
+ *     之外再 +10.3 当「牌背落深」——双计，把 topRow 判据撑高了一档。
+ *   - 本常量是「无牌态」（等待室全员 / 游戏中弃牌·空位）的真实块高——等待模式
+ *     与游戏模式共用坐标，几何判定必须按各态实际块高分口径（见 ringPositions
+ *     走廊天花板与 guardSeatCardNoOverlap 双口径断言）。
+ *  ⚠️ 改头像/名牌/徽章样式时必须同步（与 SEAT_H_PX_UH 同一纪律）。 */
+const SEAT_META_STACK_UH = 16.0;
+/** 紧凑模式（7 座以上）内容栈高：头像 7.2 + 名牌 3.7 + 徽章行 3.5 ≈ 14.5。 */
+const SEAT_META_STACK_TIGHT_UH = 14.5;
+/** 走廊座位内容天花板与底池上沿的最小间隙（felt%）。内容栈块底贴住底池时仍留
+ *  此余量，防真机字体行高抖动把徽章行推进底池胶囊。 */
+const RING_CEIL_GAP = 0.3;
 /** 底池胶囊的保守半宽（uw，占屏宽百分数）。金额位数越多越宽：
  *  「底池 30」约 ±7uw，「底池 125000」约 ±10uw。取 11 覆盖到七位数，
  *  宁可多判几个座位走 bub-top，也不要漏判导致气泡被底池吃掉。 */
@@ -899,6 +986,7 @@ Page({
   /** 视口尺寸变化（转屏 / 分窗）时重算布局变量 */
   onResize(res) {
     this.updateViewport(res);
+    this.measureFelt();
   },
 
   /**
@@ -923,6 +1011,50 @@ Page({
     this.setData({
       rootStyle: '--uh:' + uh.toFixed(3) + 'px;--uw:' + uw.toFixed(3) + 'px;'
     });
+    this.measureFelt();
+  },
+
+  /**
+   * 实测 .felt 高度（uh 口径）→ this.feltUh（2026-10-21 单位混算根因修复）。
+   *
+   * 为什么必须实测而不是写死数值：uh 与 felt% 是两套单位，felt 是 flex:1 弹性
+   * 容器——高度随【页面固定开销 + myzone/resultbar 有无 + 字体回流行高抖动】
+   * 变化，不同手机不同。任何静态常数都会在部分机型上高估 felt 高、低估底池
+   * 上沿，重现顶排被底池遮挡。SelectorQuery 量出的真实像素高 ÷ 本帧 uhPx
+   * 才是唯一可信基准。
+   *
+   * 时序（「同一局内坐标不跳变」约束）：
+   *   - onLoad 首帧渲染后 + onResize 各测一次；测量落定前 ringPositions 用
+   *     FELT_UH_FALLBACK 保守值（换算放大、天花板收紧方向，宁可上排略挤不遮挡）。
+   *   - 测量成功后 feltUh 固化到下一次 resize，**不在 resultbar/readyPhase 出现
+   *     压矮 felt 时重算**——座位 % 坐标本来就随 felt 高度伸缩，若在局间重算，
+   *     座位会在「结算条出现/消失」瞬间跳变（2026-10-19 定下的开局无跳变约束）。
+   * 几何天花板只在「底池可见的动作态」下才有意义，所以基准取动作态实测值，
+   * 局间压矮阶段继续沿用（天花板偏保守半档，方向安全）。
+   */
+  measureFelt() {
+    if (!wx.createSelectorQuery) return;   // 测试环境无 SelectorQuery → 回退保守值
+    try {
+      wx.createSelectorQuery()
+        .select('.felt').boundingClientRect()
+        .exec(rects => {
+          const r = Array.isArray(rects) && rects[0];
+          if (!r || !r.height || r.height <= 0) return;
+          // uhPx：与 updateViewport 同口径（横屏 = 视口高/100）
+          let uhPx = 0;
+          try {
+            const i = wx.getWindowInfo ? wx.getWindowInfo() : {};
+            const w = i.windowWidth || 0, h = i.windowHeight || 0;
+            if (w && h) uhPx = Math.min(w, h) / 100;
+          } catch (e) { uhPx = 0; }
+          if (!uhPx) return;
+          const feltUh = r.height / uhPx;
+          // 防御性夹取：明显异常的测量值（分屏过渡态、页面隐藏态 <30uh、
+          // 大于全屏高的鬼值）丢弃，宁可保守回退。
+          if (feltUh < 30 || feltUh > 100) return;
+          this.feltUh = Math.round(feltUh * 10) / 10;
+        });
+    } catch (e) { /* 测量失败：保持回退值，不阻断渲染 */ }
   },
 
   /**
@@ -943,7 +1075,7 @@ Page({
     // 锚定座位：我若已入座则以我的座位为底部中央，否则用房主位（稳定布局）
     const anchor = this.roomSeat >= 0 ? this.roomSeat
       : (this.isOwner ? this.data.ownerSeat : 0);
-    const pos = ringPositions(list.map(s => s.seat), anchor);
+    const pos = ringPositions(list.map(s => s.seat), anchor, this.feltUh);
     return list.map(s => {
       const p = pos[s.seat] || { x: 50, y: 20 };
       const empty = !s.occupied;
@@ -3903,7 +4035,7 @@ Page({
       // 也要进环——宁可多画一个位，不能让某个玩家在牌桌上凭空消失。
       game.players.forEach(p => { if (allSeats.indexOf(p.seat) < 0) allSeats.push(p.seat); });
       allSeats.sort((a, b) => a - b);
-      const pos = ringPositions(allSeats, this.mySeat);
+      const pos = ringPositions(allSeats, this.mySeat, this.feltUh);
       const seats = allSeats.map(si => {
         const p = game.seatOf(si);
         if (!p) {
@@ -3933,9 +4065,19 @@ Page({
         const rEntry = readyLs.filter(x => Number(x.seat) === Number(p.seat))[0];
         const readyFlag = rEntry ? !!rEntry.ready : null;
         // 对手手中暗牌：未摊牌、未弃牌、有底牌 → 显示两张小牌背（WPK 式：一眼看出谁还在手）。
-        // ⚠️ 顶排（y<25）不显示牌背：牌背挂在块底（块底≈25 + 牌背 10.3 ≈ 35）会落进
-        // 底池带（31.2~38.8），7 人以上顶排正对底池；弃牌/在手状态靠亮度与徽章已能区分。
-        const topRow = (+pp.y) < 25;
+        // ⚠️ 走廊座位不显示牌背：牌背行就在块底（SEAT_H_PX_UH 已含 0.4 margin +
+        // 9.8 牌高，见常量注释），走廊块底与底池上沿同高，牌背必落进底池带；
+        // 弃牌/在手状态靠亮度与徽章已能区分。
+        // 判据与 bubbleCls 同构（双条件）：纵向（块底以「完整块」口径超底池上沿）
+        // 且横向落在中央走廊（|x−50| < 走廊半宽）才藏。f626191 的旧判据
+        // y<25 单条件实测「漏藏 0 处、误藏 4 处」（6 位桌 x=25/75、
+        // 8 位桌 x=16.5/83.5 的侧位也有 y<25 的弧线段）——y 维度根本没有
+        // 区分度，核心变量是 x（2026-10-21 评审）。
+        const feltUh = this.feltUh || FELT_UH_FALLBACK;
+        const blockHalfFelt = uhToFelt((allSeats.length >= 7 ? SEAT_H_PX_UH_TIGHT : SEAT_H_PX_UH), feltUh) / 2;
+        const potTopFelt = POT_ANCHOR.y - uhToFelt(POT_PILL_H, feltUh) / 2;
+        const hideCardsBackY = (+pp.y) + blockHalfFelt > potTopFelt;
+        const topRow = hideCardsBackY && Math.abs((+pp.x) - POT_ANCHOR.x) < SEAT_CORRIDOR_HALF_W;
         const cardsBack = !topRow && !readyPhase && !isMe && !p.folded && !showdown && p.hole.length === 2;
         // 摊牌亮牌：摊牌座位要整块浮到最上层——否则相邻座位的名牌/筹码堆
         // 会压在刚亮出的两张牌上，等于「亮了还是看不清」。
@@ -3988,28 +4130,24 @@ Page({
           // （底部中央）浮在块「上方」朝桌心。顶排若也向上浮会顶出牌桌上沿被裁掉
           // ——真机「部分玩家下注筹码看不到」正是这个（下注数字上半截被切）。
           betCls: 'seat-bet ' + (isMe ? 'bet-me' : 'bet-in'),
-          /* 行动气泡落位（2026-10-19 评审修复：上排气泡被底池盖住）。
+          /* 行动气泡落位（2026-10-19 评审修复；2026-10-21 改用双条件复用几何变量）。
            *
-           * ⚠️ 判据的核心变量是【x】，不是 y —— 这一点我推错了两轮，记下来：
+           * ⚠️ 判据的核心变量是【x】，不是 y —— 这一点历史上推错了两轮，记下来：
            *   底池是**居中的窄条**（胶囊宽度随金额 14~20uw，横向约占 40%~60%），
-           *   而座位铺在整条半圆上。左右两侧座位（4 人桌 x=25/75）的气泡虽然
-           *   纵向也落在底池带 31.2%~38.8% 里，但**横向根本不重叠**，朝下完全
-           *   没问题，改了只会白白压住它们的头像。
-           *   只有 x 接近 50% 的座位（正顶那个列）才会被底池盖住：
-           *     4/6 人桌 → x=50 的中列 1 个；8 人桌 → x=36/50/64 共 3 个。
-           *   而 y 也太容易误伤：半圆上所有对手 y 都在 15%~19.4%，用 y<20
-           *   会把所有座位都判进来（实测过，全桌都变成 bub-top，头像全被压）。
+           *   而座位铺在整条半圆上。左右两侧座位的气泡虽然纵向也落在底池带里，
+           *   但**横向根本不重叠**，朝下完全没问题，改了只会白白压住头像。
+           *   而 y 单独做判据会误伤：半圆上所有对手 y 都贴近，用 y 阈值会把
+           *   全桌都判进去（实测过，头像全被压）。
            *
-           *   故条件 = 纵向可能进底池带（块底+气泡落深 > 底池上沿）
+           *   故条件 = 纵向可能进底池带（hideCardsBackY，与牌背共享的几何量：
+           *             块底 > 底池上沿，uhToFelt 换算后同单位）
            *             且 横向与底池带相交（|x-50| < 底池半宽 + 气泡半宽）。
            *   底池半径取保守值 POT_SAFE_HALF_W（覆盖最宽金额），气泡半宽按
            *   最长文案「加注 12500」估 ACT_BUBBLE_HALF_W。
            *   代价是这些座位的气泡会盖住头像上半圈的首字母——头像只是身份
            *   标识，气泡文字才是行动信息；庄家/倒计时徽章在头像外侧不受影响。 */
           bubbleCls: (isMe ? 'bub-me'
-            : ((((+pp.y) + (allSeats.length >= 7 ? SEAT_H_PX_UH_TIGHT : SEAT_H_PX_UH) / 2
-                  + ACT_BUBBLE_DROP_UH) > (POT_ANCHOR.y - POT_PILL_H / 2)
-                && Math.abs((+pp.x) - POT_ANCHOR.x) < (POT_SAFE_HALF_W + ACT_BUBBLE_HALF_W))
+            : (hideCardsBackY && Math.abs((+pp.x) - POT_ANCHOR.x) < (POT_SAFE_HALF_W + ACT_BUBBLE_HALF_W)
               ? 'bub-top' : 'bub-in')),
           allIn: readyPhase ? false : p.allIn,
           folded: isFolded,
@@ -4447,7 +4585,7 @@ Page({
     for (let si = 0; si < this.maxSeats; si++) allSeats.push(si);
     game.players.forEach(p => { if (allSeats.indexOf(p.seat) < 0) allSeats.push(p.seat); });
     allSeats.sort((a, b) => a - b);
-    const pos = ringPositions(allSeats, this.mySeat);
+    const pos = ringPositions(allSeats, this.mySeat, this.feltUh);
     const pp = pos[seat] || { x: 50, y: 40 };
     return pp;
   },
