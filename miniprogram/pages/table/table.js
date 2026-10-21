@@ -3931,8 +3931,11 @@ Page({
         // 就绪徽章数据：true=已准备 / false=准备中 / null=不显示（非就绪阶段或不在就绪名单）
         const rEntry = readyLs.filter(x => Number(x.seat) === Number(p.seat))[0];
         const readyFlag = rEntry ? !!rEntry.ready : null;
-        // 对手手中暗牌：未摊牌、未弃牌、有底牌 → 显示两张小牌背（WPK 式：一眼看出谁还在手）
-        const cardsBack = !readyPhase && !isMe && !p.folded && !showdown && p.hole.length === 2;
+        // 对手手中暗牌：未摊牌、未弃牌、有底牌 → 显示两张小牌背（WPK 式：一眼看出谁还在手）。
+        // ⚠️ 顶排（y<25）不显示牌背：牌背挂在块底（块底≈25 + 牌背 10.3 ≈ 35）会落进
+        // 底池带（31.2~38.8），7 人以上顶排正对底池；弃牌/在手状态靠亮度与徽章已能区分。
+        const topRow = (+pp.y) < 25;
+        const cardsBack = !topRow && !readyPhase && !isMe && !p.folded && !showdown && p.hole.length === 2;
         // 摊牌亮牌：摊牌座位要整块浮到最上层——否则相邻座位的名牌/筹码堆
         // 会压在刚亮出的两张牌上，等于「亮了还是看不清」。
         const showCards = !readyPhase && !isMe && showdown && !p.folded && p.hole.length === 2;
@@ -4025,9 +4028,11 @@ Page({
           // 同 isBot 不进指纹（isBot/p.style 在牌桌生命周期内不变，座位对象整体
           // 换出才是换人格触发重算；引擎 aiDecide 本身不改 style，故静态）。
           // 真人（isMe/好友）不显示——风格建在别人画像上是 muck 礼仪之外的越权。
-          styleTag: (!!this.botSeats[p.seat] && p.style)
+          // 7 人以上（tight 桌）不挂「松凶/紧凶」风格徽章：每座都挂会让桌面非常杂乱
+          // （2026-10-21 用户反馈「紧凑杂乱」）。6 人及以下保留。
+          styleTag: (allSeats.length >= 7) ? '' : ((!!this.botSeats[p.seat] && p.style)
             ? botProfiles.styleTagOf(p.style)
-            : '',
+            : ''),
           ready: readyPhase ? readyFlag : null,
           // 对手底牌：平时不展示（德扑常识），仅摊牌时亮出；我在底部 myzone 单独展示
           cardsBack,

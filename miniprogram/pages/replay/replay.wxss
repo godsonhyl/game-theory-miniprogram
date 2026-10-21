@@ -135,10 +135,12 @@
   width: 96rpx; height: 136rpx; border-radius: 14rpx; background: #f7f7f4;
   display: flex; flex-direction: column; align-items: center; justify-content: center;
   box-shadow: 0 8rpx 18rpx rgba(0,0,0,.35);
+  /* 默认黑色：♠/♣ 都必须显式给深色，否则继承页面浅色文字 → 白卡上"看不见"
+     （2026-10-21 用户反馈「复盘有些牌显示为白板」：正是漏了 .c 梅花规则）。 */
+  color: #151515;
 }
 .bc.r, .bc.h { color: #d12b2b; }
 .bc.d { color: #2b6ed1; }
-.bc.s { color: #151515; }
 .bc.empty {
   background: transparent; border: 2rpx dashed #3e5a53; color: #3e5a53;
   box-shadow: none; font-size: 40rpx;
@@ -217,10 +219,10 @@
   width: 64rpx; height: 92rpx; border-radius: 10rpx; background: #f7f7f4;
   display: flex; flex-direction: column; align-items: center; justify-content: center;
   box-shadow: 0 4rpx 10rpx rgba(0,0,0,.3);
+  color: #151515;   /* 同上：♠/♣ 底牌必须有显式深色，否则白板 */
 }
 .hc.r, .hc.h { color: #d12b2b; }
 .hc.d { color: #2b6ed1; }
-.hc.s { color: #151515; }
 .hc-r { font-size: 30rpx; font-weight: 800; line-height: 1; }
 .hc-s { font-size: 22rpx; line-height: 1.3; }
 .sd-no-hole { font-size: 24rpx; color: #567069; }

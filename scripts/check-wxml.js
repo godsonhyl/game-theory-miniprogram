@@ -223,6 +223,10 @@ function checkText(text, tagStack, rel, src, offset) {
     const css = fs.readFileSync(cssPath, 'utf8');
     ok(!/var\(\s*--u[hw]\s*\)/.test(css),
       'replay.wxss 不使用 --uh/--uw（该页未设置这两个变量，用了会让尺寸全部失效）');
+    // 白板守卫：.bc/.hc 必须显式给基础深色。只写 .r/.h/.d 时，梅花 .c 会继承
+    // 页面浅色文字 → 白卡上看不见（2026-10-21 用户反馈「有些牌显示为白板」）。
+    ok(/\.bc\s*\{[\s\S]{0,400}?color:\s*#/.test(css) && /\.hc\s*\{[\s\S]{0,400}?color:\s*#/.test(css),
+      'replay.wxss 的 .bc/.hc 有显式基础深色（否则梅花牌白板）');
   }
   const rpWxml = path.join(ROOT, 'pages/replay/replay.wxml');
   if (fs.existsSync(rpWxml)) {
