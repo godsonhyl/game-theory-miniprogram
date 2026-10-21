@@ -3085,6 +3085,35 @@ while (guard++ < 400) {
             ok(Math.abs(top8[0] + top8[2] - 100) <= 0.5 && Math.abs(top8[1] - 50) <= 1,
               '8 位桌顶 3 座左右对称且居中（x=' + top8.join('/') + '）');
           }
+          // 任意两座的「宽内容」不得交叠（2026-10-21 第二轮 review：内侧位曾放
+          // x=10，与外侧 x=12 仅差 2%——纵向怎么拉都不够（meta 栈高 22 felt%），
+          // 只有横向错开 > 名牌宽才能分开；「项数/镜像/顶 3」守卫全部漏过，
+          // 两两间距是唯一能拦住这类回归的判据）。口径：纵向取 meta 栈高
+          // （layout.metaPct，宽内容 名牌+头像 只存在于块顶 meta 段；块底牌背行
+          // 很窄且 dy∈[meta,块高] 时交叠带是牌背角对头像角、两者半宽和 < 中心距，
+          // 无真实内容碰撞——9 位桌 (24,50)~(30,16) dy=34 即此情形），横向取
+          // 名牌宽 62rpx ≈ 8.3 felt%（真机实测 69.8px）。9 位桌同查。
+          const metaPctFb = 14.5 * 100 / 65;      // uhToFelt(SEAT_META_STACK_TIGHT_UH, FELT_UH_FALLBACK)
+          [8, 9].forEach(n => {
+            const seats = [];
+            for (let i = 0; i < n; i++) seats.push(i);
+            const posN = ring(seats, 0);
+            const pts = [];
+            for (let s of seats) if (s !== 0 && posN[s]) pts.push({ x: posN[s].x, y: posN[s].y });
+            let badPairs = '';
+            for (let i = 0; i < pts.length; i++) {
+              for (let j = i + 1; j < pts.length; j++) {
+                const dx = Math.abs(pts[i].x - pts[j].x);
+                const dy = Math.abs(pts[i].y - pts[j].y);
+                if (dx < 8.3 && dy < metaPctFb) {
+                  badPairs += ' (' + pts[i].x + ',' + pts[i].y + ')~(' + pts[j].x + ',' + pts[j].y + ')';
+                }
+              }
+            }
+            ok(badPairs === '',
+              n + ' 位桌任意两座宽内容不交叠（宽 8.3%/高 ' + metaPctFb.toFixed(1) +
+              '%，碰撞对' + (badPairs || '无') + '）');
+          });
         }
       }
       /* ---- 底池 vs 公共牌 vs 顶排：三处纵向不遮挡（2026-10-19 评审补边池）----
