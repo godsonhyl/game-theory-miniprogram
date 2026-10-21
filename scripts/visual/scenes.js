@@ -51,6 +51,47 @@ function startAiTable(viewport, opts) {
 }
 
 /**
+ * 打到一手结束，停在结算单弹出态。
+ *
+ * 为什么需要这个场景：结算单 `.sr-board` 是「河牌被裁」事故的发生地——
+ * 2c38b85 把宽度从 46uh 改到 50uh 仍不够，又放宽到 54uh / 卡片 5.2uh。
+ * 也就是说这个 bug 修了两轮，只靠断言（`overflow:hidden` + 宽度数值）没能
+ * 一次做对。结算态是「牌局进行中」场景完全看不到的画面，必须单独覆盖。
+ */
+function startSettlement(viewport, opts) {
+  const o = Object.assign({ seats: 9, level: 'advanced' }, opts || {});
+  const clock = installFakeTimers();
+  clock.setDate();
+  let rt;
+  try {
+    rt = createRuntime(viewport);
+    rt.pageCtx.onLoad({
+      mode: 'ai', quick: '1',
+      max: String(o.seats),
+      bots: String(Math.max(1, o.seats - 1)),
+      level: o.level
+    });
+    clock.advance(1500);
+    // 推进到结算单弹出：轮到我时自动跟注/过牌，否则只推时钟让 bot 行动
+    for (let k = 0; k < 400; k++) {
+      const d = rt.dataStore;
+      if (d.resultModal) break;
+      if (d.phase !== 'playing') break;
+      if (d.isMyTurn) {
+        try { rt.pageCtx.onCheckOrCall(); } catch (e) { /* 无合法动作时跳过 */ }
+      }
+      clock.advance(1200);
+    }
+    if (!rt.dataStore.resultModal) throw new Error('未能推进到结算态');
+    if (!rt.dataStore.rootStyle) rt.pageCtx.updateViewport();
+    return { rt, clock };
+  } catch (e) {
+    clock.restore();
+    throw e;
+  }
+}
+
+/**
  * 场景表。build 返回 { rt, clock }；框架负责取数后调 rt.stopTimers() 与 clock.restore()。
  */
 const SCENES = [
@@ -83,7 +124,12 @@ const SCENES = [
     name: 'ai-9p',
     desc: '9 人桌（最挤桌型）',
     build: (vp) => startAiTable(vp, { seats: 9, level: 'expert' })
+  },
+  {
+    name: 'result-9p',
+    desc: '9 人桌结算单（.sr-board 河牌被裁事故现场）',
+    build: (vp) => startSettlement(vp, { seats: 9 })
   }
 ];
 
-module.exports = { SCENES, startAiTable };
+module.exports = { SCENES, startAiTable, startSettlement };
