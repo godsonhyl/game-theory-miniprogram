@@ -1156,7 +1156,11 @@
    区分每张牌是哪一街发出来的——新手常把 5 张搅成一锅。 */
 /* 公共牌条固定宽（不 flex:1）：无论这行有没有公共牌，底牌/牌型/盈亏三列
    的起始位置都钉在同一条竖线上，纵向扫一眼就能对上每个人的牌。 */
-.sr-board { flex: none; width: calc(46 * var(--uh)); display: flex; align-items: center;
+/* ⚠️ 宽度必须容下「翻3 + 转1 + 河1」共 5 张 + 3 个街标签（约 49uh）。
+ * 原 46uh + overflow:hidden 会把最右的河牌直接裁掉——只有打到河牌的局才出现，
+ * 表现为「结算单有时候看不到河牌」（2026-10-21 用户反馈）。加宽到 50uh，
+ * 公共牌卡略缩到 5.6uh（与底牌 6uh 区分，同时留 1~2uh 余量）。 */
+.sr-board { flex: none; width: calc(50 * var(--uh)); display: flex; align-items: center;
   justify-content: flex-start; gap: calc(1.2 * var(--uw));
   margin: 0 calc(1.2 * var(--uw)); min-width: 0; overflow: hidden; }
 .sr-bucket { display: flex; align-items: center; gap: calc(0.5 * var(--uw)); flex: none; }
@@ -1168,7 +1172,13 @@
   padding: calc(0.3 * var(--uh)) calc(0.4 * var(--uw));
   background: rgba(255,255,255,.05); border-radius: calc(0.4 * var(--uh));
 }
-.sr-board .hc.bc { background: linear-gradient(160deg, #f5f0e2, #dcd4be); }
+.sr-board .hc.bc {
+  background: linear-gradient(160deg, #f5f0e2, #dcd4be);
+  /* 5 张公共牌要塞进 50uh：比底牌(6uh)略小，确保河牌不被 overflow 裁掉 */
+  width: calc(5.6 * var(--uh)); height: calc(7.8 * var(--uh));
+}
+.sr-board .hc.bc .hc-r { font-size: calc(2.6 * var(--uh)); }
+.sr-board .hc.bc .hc-s { font-size: calc(2.2 * var(--uh)); }
 /* .hc.degraded（盖牌弱化）已随「看全桌牌」上帝视角入口（2026-10-17）撤销退役 */
 .hc.s-diamond, .hc.s-heart { color: #d0342c; }
 /* 四色牌模式（根节点 .four-color）：♠黑 / ♣绿 / ♦蓝 / ♥红 */

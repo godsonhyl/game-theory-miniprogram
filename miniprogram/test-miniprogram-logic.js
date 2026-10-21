@@ -951,6 +951,17 @@ while (guard++ < 400) {
     path.join(__dirname, 'pages', 'table', 'table.wxss'), 'utf8');
   guardResultbarLayout(wxmlSrc, wxssSrc);
 
+  /* ---------- ⑧b 结算单公共牌条：5 张（含河牌）必须装得下 ----------
+   * 2026-10-21 用户「结算单有时候看不到河牌」：.sr-board 原定宽 46uh +
+   * overflow:hidden，5 张牌 + 3 个街标签约需 49uh → 最右的河牌被裁掉
+   * （只有打到河牌的局才出现，所以是「有时候」）。 */
+  {
+    const bw = Number((wxssSrc.match(/\.sr-board \{[^}]*?width: calc\(([\d.]+) \* var\(--uh\)\)/) || [])[1]) || 0;
+    ok(bw >= 50, '结算单公共牌条宽度 ≥50uh（原 46uh 会裁掉河牌，实际 ' + bw + '）');
+    const cw = Number((wxssSrc.match(/\.sr-board \.hc\.bc \{[\s\S]{0,240}?width: calc\(([\d.]+) \* var\(--uh\)\)/) || [])[1]) || 0;
+    ok(cw > 0 && cw <= 5.6, '结算单公共牌卡宽 ≤5.6uh（5 张 + 3 标签装进 50uh，实际 ' + cw + '）');
+  }
+
   /* ---------- ⑨ 运行时环境守卫：禁止裸 process 引用 ---------- */
   guardNoBareProcess();
 
