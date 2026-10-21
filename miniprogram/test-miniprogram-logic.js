@@ -957,9 +957,9 @@ while (guard++ < 400) {
    * （只有打到河牌的局才出现，所以是「有时候」）。 */
   {
     const bw = Number((wxssSrc.match(/\.sr-board \{[^}]*?width: calc\(([\d.]+) \* var\(--uh\)\)/) || [])[1]) || 0;
-    ok(bw >= 50, '结算单公共牌条宽度 ≥50uh（原 46uh 会裁掉河牌，实际 ' + bw + '）');
+    ok(bw >= 54, '结算单公共牌条宽度 ≥54uh（46/50uh 实测都会裁掉河牌，实际 ' + bw + '）');
     const cw = Number((wxssSrc.match(/\.sr-board \.hc\.bc \{[\s\S]{0,240}?width: calc\(([\d.]+) \* var\(--uh\)\)/) || [])[1]) || 0;
-    ok(cw > 0 && cw <= 5.6, '结算单公共牌卡宽 ≤5.6uh（5 张 + 3 标签装进 50uh，实际 ' + cw + '）');
+    ok(cw > 0 && cw <= 5.2, '结算单公共牌卡宽 ≤5.2uh（5 张 + 3 标签装进 54uh，实际 ' + cw + '）');
   }
 
   /* ---------- ⑨ 运行时环境守卫：禁止裸 process 引用 ---------- */
@@ -4415,6 +4415,12 @@ while (guard++ < 400) {
 
     // ---- 补筹守卫（SNG 不补筹，筹码归零即淘汰） ----
     ok(/this\.mode\s*!==\s*['"]sng['"]/.test(tableSrc), 'table.js 补筹逻辑有 mode!==sng 守卫');
+
+    // 2026-10-21 用户：SNG 对局左上角显示的是「AI 对战」——标题必须按 sng 区分。
+    ok(/pageTitle: this\.mode === 'friend' \? '好友房'[\s\S]{0,160}?this\.mode === 'sng' \? 'SNG 淘汰赛'/.test(tableSrc),
+      'table.js pageTitle 对 sng 显示「SNG 淘汰赛」（不再一律 AI 对战）');
+    ok(/_shareTitle\(\)[\s\S]{0,120}?'博弈论 · SNG 淘汰赛'/.test(tableSrc),
+      'table.js 分享标题对 sng 显示「博弈论 · SNG 淘汰赛」');
 
     // ---- 就绪阶段补筹：不许下一手在确认前抢先发出（否则拖到再下一手） ----
     ok(/openRebuy\(\)\s*\{[\s\S]{0,900}?this\.markReady\(this\.mySeat, false\);/.test(tableSrc),

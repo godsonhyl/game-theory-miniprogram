@@ -1160,22 +1160,23 @@
  * 原 46uh + overflow:hidden 会把最右的河牌直接裁掉——只有打到河牌的局才出现，
  * 表现为「结算单有时候看不到河牌」（2026-10-21 用户反馈）。加宽到 50uh，
  * 公共牌卡略缩到 5.6uh（与底牌 6uh 区分，同时留 1~2uh 余量）。 */
-.sr-board { flex: none; width: calc(50 * var(--uh)); display: flex; align-items: center;
-  justify-content: flex-start; gap: calc(1.2 * var(--uw));
+.sr-board { flex: none; width: calc(54 * var(--uh)); display: flex; align-items: center;
+  justify-content: flex-start; gap: calc(1.0 * var(--uw));
   margin: 0 calc(1.2 * var(--uw)); min-width: 0; overflow: hidden; }
-.sr-bucket { display: flex; align-items: center; gap: calc(0.5 * var(--uw)); flex: none; }
+.sr-bucket { display: flex; align-items: center; gap: calc(0.4 * var(--uw)); flex: none; }
 /* 街标签精简为单字（翻/转/河）——双字标签把公共牌条撑得太宽，弹窗内放不下 */
 .sr-bl {
-  font-size: calc(2.0 * var(--uh)); color: var(--mut); opacity: .85;
+  font-size: calc(1.9 * var(--uh)); color: var(--mut); opacity: .85;
   letter-spacing: 0; flex: none;
   /* 与 hc 居中对齐——hc 高度 ~5uh，sr-bl 单行 ~2uh，自然垂直居中 */
-  padding: calc(0.3 * var(--uh)) calc(0.4 * var(--uw));
+  padding: calc(0.3 * var(--uh)) calc(0.3 * var(--uw));
   background: rgba(255,255,255,.05); border-radius: calc(0.4 * var(--uh));
 }
 .sr-board .hc.bc {
   background: linear-gradient(160deg, #f5f0e2, #dcd4be);
-  /* 5 张公共牌要塞进 50uh：比底牌(6uh)略小，确保河牌不被 overflow 裁掉 */
-  width: calc(5.6 * var(--uh)); height: calc(7.8 * var(--uh));
+  /* 5 张公共牌要塞进 54uh：比底牌(6uh)略小，确保河牌不被 overflow 裁掉。
+   * 50uh 实测仍差 1~2uh（真机字体行高偏大），故再加宽并缩到 5.2uh。 */
+  width: calc(5.2 * var(--uh)); height: calc(7.4 * var(--uh));
 }
 .sr-board .hc.bc .hc-r { font-size: calc(2.6 * var(--uh)); }
 .sr-board .hc.bc .hc-s { font-size: calc(2.2 * var(--uh)); }
