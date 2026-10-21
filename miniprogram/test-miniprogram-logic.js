@@ -968,6 +968,12 @@ while (guard++ < 400) {
   /* ---------- ⑩ 结算展示阶段：摊牌后停留 ~5s 展示每人盈亏，再进就绪 ---------- */
   const tableSrc = require('fs').readFileSync(
     path.join(__dirname, 'pages', 'table', 'table.js'), 'utf8');
+  /* 几何模块源码（2026-10-21 起几何抽到 utils/table-geometry.js）。
+   * 断言分两层：几何实现看 geometrySrc，页面是否真的在用它看 tableSrc——
+   * 只看一处会漏掉「模块写对了但页面没接上」这类回归。 */
+  const geometrySrc = require('fs').readFileSync(
+    path.join(__dirname, 'utils', 'table-geometry.js'), 'utf8');
+  const GEOMETRY = require('./utils/table-geometry.js');
   guardResultShowPhase(tableSrc, wxmlSrc, wxssSrc);
 
   /* ---------- ⑩+ 单手结算弹窗：亮牌展示后独立弹窗显示每人净盈亏 ---------- */
@@ -980,7 +986,7 @@ while (guard++ < 400) {
 
   /* ---------- ⑫ WPK 式布局回归：统一座位环 + 座位号 + 牌背 + 弃牌二次确认 ---------- */
   // 复用上方已读取的 tableSrc / wxmlSrc / wxssSrc
-  guardWpkLayoutRegression(tableSrc, wxmlSrc, wxssSrc);
+  guardWpkLayoutRegression(tableSrc, wxmlSrc, wxssSrc, geometrySrc);
 
   // ⑤ 行为验证：首次点弃牌只是进入确认态，不真正弃牌
   pageCtx.data.isMyTurn = true;
@@ -1488,7 +1494,7 @@ while (guard++ < 400) {
 
   /* ---------- 回归：座位手牌不得遮挡底池/公共牌 ---------- */
   {
-    guardSeatCardNoOverlap(tableSrc, wxmlSrc, wxssSrc);
+    guardSeatCardNoOverlap(tableSrc, wxmlSrc, wxssSrc, geometrySrc);
   }
 
   /* ---------- 回归：房主身份回收 + 唯一座位（不能出现两个自己） ---------- */
@@ -1701,7 +1707,7 @@ while (guard++ < 400) {
 
   /* ---------- 页面层性能缓存：ringPositions + cardData ---------- */
   {
-    guardPerfCache(tableSrc);
+    guardPerfCache(tableSrc, geometrySrc);
     // 行为：同卡两次返回不同引用（浅克隆）但字段一致，markBest 可安全改 hi
     const c1 = pageCtx.cardData(0, 0);
     const c2 = pageCtx.cardData(0, 0);
@@ -2629,11 +2635,16 @@ while (guard++ < 400) {
       '中央底池与下注筹码堆采用筹码图标（WPK 风格）');
   }
 
-  function guardWpkLayoutRegression(tableSrc, wxmlSrc, wxssSrc) {
+  function guardWpkLayoutRegression(tableSrc, wxmlSrc, wxssSrc, geometrySrc) {
     // ① 已移除旧的双坐标系（oppPos / genRing），统一为 ringPositions
     ok(!/function oppPos\(/.test(tableSrc), '已移除旧对手布局函数 oppPos（统一座位环）');
     ok(!/function genRing\(/.test(tableSrc), '已移除旧的等待室布局函数 genRing');
-    ok(/function ringPositions\(/.test(tableSrc), '存在统一座位环函数 ringPositions（锚定我的座位为底部中央）');
+    // 几何已抽到 utils/table-geometry.js 纯函数模块（2026-10-21），页面侧只需
+    // 解构引用——两者都要断言：模块里有实现、页面里真在用它。
+    ok(/function ringPositions\(/.test(geometrySrc),
+      '存在统一座位环函数 ringPositions（锚定我的座位为底部中央，位于 table-geometry）');
+    ok(/ringPositions,/.test(tableSrc) && /require\(['"]\.\.\/\.\.\/utils\/table-geometry['"]\)/.test(tableSrc),
+      'table.js 从 utils/table-geometry 引用 ringPositions（几何单一来源）');
 
     // ② 渲染所有玩家（含我）都在环上：render 用 ringPositions(allSeats, mySeat)
     ok(/ringPositions\(allSeats, this\.mySeat, this\.feltUh\)/.test(tableSrc), 'render 用 ringPositions 含我的座位（WPK 式：我也在牌桌环上，feltUh 实测基准）');
@@ -2891,8 +2902,44 @@ while (guard++ < 400) {
       '就绪后按钮文案变「已准备」且不再显示倒计时秒数');
   }
 
-  function guardSeatCardNoOverlap(tableSrc, wxmlSrc, wxssSrc) {
-    const feltSrc = tableSrc;
+  function guardSeatCardNoOverlap(tableSrc, wxmlSrc, wxssSrc, geometrySrc) {
+    /* 几何实现已在 2026-10-21 抽到 utils/table-geometry.js 纯函数模块，这里直接
+     * require 真模块，不再用正则从源码字符串抠 ringPositions + 常量再 new Function
+     * 求值。旧做法有三个坑：① 常量截取靠正则锚点，增删注释/调整声明顺序就会漏截；
+     * ② 漏截报的是 ReferenceError，容易被误读成「几何实现错了」；③ 抠出来的是
+     * 源码副本，模块本身有没有被页面接上根本没测到。改成 require 后这些断言变成
+     * 真正的单元测试，模块导出面变化会立刻显形（见下方「导出完整性」断言）。
+     * 仍然保留少量源码级断言（WXSS 样式、页面调用点），它们测的是另一层。 */
+    const G = GEOMETRY;
+    const feltSrc = geometrySrc;
+    /* 导出完整性：table.js 顶部按名解构，这里逐项核对「页面用到的每个几何符号
+     * 模块都导出了」。少一个就是 undefined，页面不会报错而是算出 NaN 坐标——
+     * 座位飞到屏幕外，且很难从表象反推原因。这条断言把该风险挡在提交前。 */
+    {
+      const need = ['uhToFelt', 'ringPositions', 'FELT_UH_FALLBACK', 'POT_ANCHOR',
+        'SEAT_H_PX_UH', 'SEAT_H_PX_UH_TIGHT', 'RING_TOP_MIN', 'RING_Y_MAX',
+        'SEAT_CORRIDOR_HALF_W', 'POT_PILL_H', 'ACT_BUBBLE_DROP_UH',
+        'SEAT_META_STACK_UH', 'SEAT_META_STACK_TIGHT_UH', 'RING_CEIL_GAP',
+        'POT_SAFE_HALF_W', 'ACT_BUBBLE_HALF_W'];
+      const missing = need.filter(k => G[k] === undefined);
+      ok(missing.length === 0,
+        'table-geometry 导出页面解构所需的全部 ' + need.length + ' 个符号' +
+        (missing.length ? '：缺 ' + missing.join(',') : ''));
+      // 解构清单与模块导出必须一一对上：页面上多解构一个不存在的名字不会报错，
+      // 只会在用到时算出 undefined——这条把它变成提交前的红灯。
+      // ⚠️ 正则必须限制在「到 table-geometry 的 require 为止」：用宽松的
+      // [\s\S]*? 会跨过下一个 require 把别的模块的解构名也吞进来（踩过）。
+      const destruct = (tableSrc.match(
+        /const \{((?:(?!\})[\s\S])*?)\} = require\(['"]\.\.\/\.\.\/utils\/table-geometry['"]\)/
+      ) || [])[1] || '';
+      const names = destruct.split(',').map(s => s.trim()).filter(Boolean);
+      const notExported = names.filter(n => G[n] === undefined);
+      ok(names.length > 0 && notExported.length === 0,
+        'table.js 从 table-geometry 解构的 ' + names.length + ' 个符号模块均有导出' +
+        (notExported.length ? '：多解构 ' + notExported.join(',') : ''));
+    }
+    // 椭圆参数：从模块源码读（它们不是导出常量，属于 ringPositions 内部实现），
+    // 读不到会得 0，由下面的 ok 兜住。
     const cy = Number((feltSrc.match(/cy = (\d+)/) || [0, 0])[1]);
     // ry 支持两种写法：定值（ry = 27）与按人数自适应的三元（ry = big ? 25 : 27）
     const ry = Number((feltSrc.match(/ry = (?:big \? )?(\d+)/) || [0, 0])[1]);
@@ -2902,7 +2949,7 @@ while (guard++ < 400) {
     // 不再用「底池上沿 − 半块」把所有对手夹到顶部细带（那会让侧边座位也顶到 y≈17%），
     // 改为「椭圆自然 y + 安全上界」+「中央走廊」2D 遮挡判据（只有 |x−50| 小的
     // 中部座位才要求块底不越底池上沿；两侧座位在中央盘面 x 范围之外，不真遮挡）。
-    ok(/const RING_Y_MAX = \d+;/.test(feltSrc) && /const SEAT_CORRIDOR_HALF_W = \d+;/.test(feltSrc),
+    ok(G.RING_Y_MAX > 0 && G.SEAT_CORRIDOR_HALF_W > 0,
       '对手锚点用 RING_Y_MAX 安全上界 + 中央走廊 SEAT_CORRIDOR_HALF_W（环形布局，两侧有座位）');
     ok(/\.pot-row \{[\s\S]{0,400}?z-index: 5/.test(wxssSrc),
       '.pot-row z-index 5 高于 .seat(3)：底池不被牌背盖住');
@@ -2920,11 +2967,11 @@ while (guard++ < 400) {
      * POT_PILL_H 实测口径 7.6（行高 1.35 × 4.8 + padding 1.0 + 边框），旧估 6.8
      * 会让顶排压住底池约 1px——评审抓出后收窄。 */
     {
-      const potY = Number((feltSrc.match(/const POT_ANCHOR = \{ x: 50, y: (\d+) \};/) || [0, 0])[1]);
-      const pillH = Number((feltSrc.match(/const POT_PILL_H = ([\d.]+);/) || [0, 0])[1]);
-      const blockUh = Number((feltSrc.match(/const SEAT_H_PX_UH = ([\d.]+);/) || [0, 0])[1]);
-      const corridorW = Number((feltSrc.match(/const SEAT_CORRIDOR_HALF_W = (\d+);/) || [0, 0])[1]);
-      const yMax = Number((feltSrc.match(/const RING_Y_MAX = (\d+);/) || [0, 0])[1]);
+      const potY = G.POT_ANCHOR.y;
+      const pillH = G.POT_PILL_H;
+      const blockUh = G.SEAT_H_PX_UH;
+      const corridorW = G.SEAT_CORRIDOR_HALF_W;
+      const yMax = G.RING_Y_MAX;
       ok(potY > 0 && pillH > 0 && blockUh > 0 && corridorW > 0 && yMax > 0,
         '几何常量可解析：底池 ' + potY + '% · 胶囊 ' + pillH + 'uh · 块高 ' + blockUh +
         'uh · 走廊半宽 ' + corridorW + '% · y 上界 ' + yMax + '%');
@@ -2932,21 +2979,12 @@ while (guard++ < 400) {
       // 底池上沿（%）：底池胶囊顶边（feltUh 实测注入后由 __layout 提供，此处
       // 仅断言回退口径；真实越界判定见下方三档视口复算块）。
       const potTopLegacy = potY - pillH / 2;
-      // 把 ringPositions 与依赖常量抠出来独立求值（不依赖页面实例的 render）。
-      // 常量截取：POT_ANCHOR 到 POT_PILL_H 为止的整段（两块常量间夹着 SEAT/RING 系列，
-      // 逐条抠容易漏——上次改动就在这里漏截过）。2026-10-21 起还需带上
-      // FELT_UH_FALLBACK / uhToFelt（ringPositions 的换算依赖，缺一即 ReferenceError）。
-      const consts = (feltSrc.match(/const POT_ANCHOR[\s\S]*?const POT_SAFE_HALF_W = [\d.]+;/) || [''])[0];
-      const feltConv = (feltSrc.match(/const FELT_UH_FALLBACK = [\d.]+;[\s\S]*?function uhToFelt\(uh, feltUh\) \{[\s\S]*?\n\}/) || [''])[0];
-      const fnSrc = (feltSrc.match(/function ringPositions\(seatSet, mySeat, feltUh\) \{[\s\S]*?\n\}/) || [''])[0];
-      ok(consts.length > 0 && feltConv.length > 0 && fnSrc.length > 0,
-        'ringPositions 与几何常量（含 FELT_UH_FALLBACK/uhToFelt）可从源码中独立求值');
-      if (consts && feltConv && fnSrc) {
-        const sandbox = { exports: {} };
-        // eslint-disable-next-line no-new-func
-        new Function('module', 'exports',
-          feltConv + '\n' + consts + '\nconst _ringCache = {};\n' + fnSrc + '\nmodule.exports = ringPositions;')(sandbox, sandbox.exports);
-        const ring = sandbox.exports;
+      /* ringPositions 直接取模块实现（2026-10-21 起不再从源码抠取）。
+       * 「模块确实被页面接上」这一点由 guardWpkLayoutRegression 的 require 断言覆盖，
+       * 这里只负责几何行为本身。 */
+      const ring = G.ringPositions;
+      ok(typeof ring === 'function', 'ringPositions 可从 table-geometry 模块直接取得');
+      if (typeof ring === 'function') {
         let overflow = '';
         /* 三档视口回归（2026-10-21 用户「不能写死数值，要适配不同屏幕」）：
          * feltUh=60（小屏/分屏） / 65.9（主流量产实测口径） / 92（等待态 felt
@@ -3185,10 +3223,11 @@ while (guard++ < 400) {
         ok(/hideCardsBackY && Math\.abs\(\(\+pp\.x\) - POT_ANCHOR\.x\) < \(POT_SAFE_HALF_W \+ ACT_BUBBLE_HALF_W\)/.test(tableSrc) &&
            /hideCardsBackY = \(\+pp\.y\) \+ blockHalfFelt > potTopFelt/.test(tableSrc),
           '★ bubbleCls 判据含纵向越界条件（块底 > 底池上沿，经 uhToFelt 换算，与牌背共享变量）');
-        ok(/const SEAT_META_STACK_UH = 16/.test(tableSrc) &&
-           /const ACT_BUBBLE_DROP_UH = 5\.1/.test(tableSrc) &&
-           /const POT_SAFE_HALF_W = 11/.test(tableSrc) &&
-           /const RING_CEIL_GAP = 0\.3/.test(tableSrc),
+        // 常量值直接读模块导出（比正则查源码字面量更严：改值会红，删导出也会红）
+        ok(G.SEAT_META_STACK_UH === 16 &&
+           G.ACT_BUBBLE_DROP_UH === 5.1 &&
+           G.POT_SAFE_HALF_W === 11 &&
+           G.RING_CEIL_GAP === 0.3,
           '无牌态内容栈高 / 气泡落深 / 底池保守半宽 / 走廊间隙为具名常量（不散落魔数，改样式时可同步）');
         ok(/class="act-bubble \{\{item\.bubbleCls\}\} \{\{item\.actCls\}\}"/.test(wxmlSrc),
           'WXML 行动气泡同时带 bubbleCls（落位）与 actCls（动作配色），两者职责不混');
@@ -3433,7 +3472,7 @@ while (guard++ < 400) {
       /if \(this\.data\.chatOpen\) this\.setData\(\{ chatOpen: false \}\)/.test(dsBody) &&
       dsBody.indexOf('const myTurn') < dsBody.indexOf("if (this.data.soundOn) {"),
       'C6 myTurn 边沿与收 chatOpen 都在 soundOn 分支外（静音模式同样掀浮层）');
-    ok(/const POT_ANCHOR = \{ x: 50, y: 35 \};/.test(tableSrc),
+    ok(GEOMETRY.POT_ANCHOR.x === 50 && GEOMETRY.POT_ANCHOR.y === 35,
       'C5 底池锚点常量 POT_ANCHOR={x:50,y:35}（与 .pot-row top 同源；2026-10-19 从 22 下移让出座位带）');
     ok(/dx: \+\(POT_ANCHOR\.x - from\.x\)\.toFixed\(1\)/.test(tableSrc) &&
       /x: POT_ANCHOR\.x, y: POT_ANCHOR\.y/.test(tableSrc),
@@ -3728,12 +3767,23 @@ while (guard++ < 400) {
     ok(/\.wi-idle[\s\S]*?idlePulse/.test(wxssSrc), 'WXSS 空闲提示有 idlePulse 脉冲动画');
   }
 
-  function guardPerfCache(tableSrc) {
-    ok(/_ringCache/.test(tableSrc), 'ringPositions 有模块级缓存 _ringCache');
-    ok(/cacheKey/.test(tableSrc) && /_ringCache\[cacheKey\] = pos/.test(tableSrc),
+  function guardPerfCache(tableSrc, geometrySrc) {
+    // ringPositions 造 2026-10-21 起在 utils/table-geometry.js，缓存也在那边。
+    ok(/_ringCache/.test(geometrySrc), 'ringPositions 有模块级缓存 _ringCache（位于 table-geometry）');
+    ok(/cacheKey/.test(geometrySrc) && /_ringCache\[cacheKey\] = pos/.test(geometrySrc),
       'ringPositions 命中缓存时写回并返回（纯函数缓存）');
+    // 行为级复验：同参数两次调用必须返回同一个对象（命中缓存），
+    // 不同 feltUh 必须是不同对象（缓存按基准分道，转屏不会串）。
+    {
+      const a = GEOMETRY.ringPositions([0, 1, 2, 3], 0, 65.9);
+      const b = GEOMETRY.ringPositions([0, 1, 2, 3], 0, 65.9);
+      const c = GEOMETRY.ringPositions([0, 1, 2, 3], 0, 92);
+      ok(a === b, 'ringPositions 同输入命中缓存（返回同一对象，省每帧三角计算）');
+      ok(a !== c, 'ringPositions 缓存按 feltUh 分道（不同视口不串坐标）');
+    }
     ok(/_cardCache/.test(tableSrc), 'cardData 有按 card id 缓存 _cardCache');
   }
+
 
   function guardRenderFingerprint(tableSrc) {
     ok(/_lastRenderFp/.test(tableSrc), 'render 有渲染指纹缓存键 _lastRenderFp');
