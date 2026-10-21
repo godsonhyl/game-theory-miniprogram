@@ -1,87 +1,147 @@
-<view class="replay-page">
-  <!-- 房间复盘模式：房间号 + 每局选择 + 返回（进 ended 好友房触发） -->
-  <block wx:if="{{roomMode}}">
-    <view class="room-bar">
-      <view class="rp-back" bindtap="onBack">‹</view>
-      <view class="room-bar-info">
-        <text class="room-bar-no">房间 {{roomNo}} · 共 {{roomHandCount}} 局</text>
-      </view>
+<view class="rp-page">
+  <!-- 顶栏 -->
+  <view class="rp-top">
+    <view class="rp-back" bindtap="onBack">‹</view>
+    <view class="rp-title-wrap">
+      <text class="rp-title">{{sngMode ? 'SNG 结算' : (roomMode ? '房间复盘' : '手牌复盘')}}</text>
+      <text class="rp-sub" wx:if="{{sngMode}}">{{sngDateText}}</text>
+      <text class="rp-sub" wx:elif="{{roomMode}}">房间 {{roomNo}} · 共 {{roomHandCount}} 局</text>
+      <text class="rp-sub" wx:else>第 {{handNo}} 手 · {{mode === 'ai' ? 'AI 对战' : '好友房'}}</text>
     </view>
-    <scroll-view class="hand-chips" scroll-x="true">
+    <view class="rp-net {{myNet > 0 ? 'up' : (myNet < 0 ? 'down' : '')}}" wx:if="{{!sngMode}}">
+      {{myNet > 0 ? '+' + myNet : (myNet < 0 ? myNet : '±0')}}
+    </view>
+  </view>
+
+  <!-- SNG 多场切换 -->
+  <scroll-view class="sng-chips" scroll-x="true" wx:if="{{sngMode && sngList.length > 1}}">
+    <view class="sng-chip {{sngSelIdx === i ? 'cur' : ''}}" wx:for="{{sngList}}" wx:for-item="s" wx:for-index="i" wx:key="id"
+          data-i="{{i}}" bindtap="onSngTap">
+      <text class="sc-date">{{s.dateText}}</text>
+      <text class="sc-place">{{s.myPlaceText}} · {{s.myNetText}}</text>
+    </view>
+  </scroll-view>
+
+  <!-- ================= SNG 结算卡 ================= -->
+  <block wx:if="{{sngShow}}">
+    <view class="sng-card">
+      <view class="sng-hero">
+        <view class="sng-trophy {{sngSummary.myPlace === 1 ? 'champ' : ''}}">🏆</view>
+        <text class="sng-hero-title">{{sngSummary.title}}</text>
+        <text class="sng-hero-sub">{{sngSummary.sub}}</text>
+      </view>
+
+      <view class="sng-stats">
+        <view class="sng-stat">
+          <text class="ss-label">带入</text>
+          <text class="ss-val">{{sngSummary.myBuyIn}}</text>
+        </view>
+        <view class="sng-stat">
+          <text class="ss-label">剩余</text>
+          <text class="ss-val">{{sngSummary.myStack}}</text>
+        </view>
+        <view class="sng-stat">
+          <text class="ss-label">盈亏</text>
+          <text class="ss-val {{sngSummary.myNet > 0 ? 'up' : (sngSummary.myNet < 0 ? 'down' : '')}}">{{sngSummary.myNetText}}</text>
+        </view>
+      </view>
+
+      <view class="sng-list">
+        <view class="sng-row {{item.isMe ? 'me' : ''}} {{item.place === 1 ? 'champ' : ''}}"
+              wx:for="{{sngSummary.rows}}" wx:for-item="item" wx:key="seat">
+          <view class="sng-place {{item.place === 1 ? 'p1' : (item.place === 2 ? 'p2' : (item.place === 3 ? 'p3' : ''))}}">{{item.place}}</view>
+          <view class="sng-name-wrap">
+            <text class="sng-name">{{item.name}}</text>
+            <text class="sng-tag" wx:if="{{item.isMe}}">我</text>
+            <text class="sng-tag left" wx:if="{{item.left}}">离场</text>
+          </view>
+          <view class="sng-nums">
+            <text class="sng-buy">{{item.buyIn}}</text>
+            <text class="sng-arrow">→</text>
+            <text class="sng-stack">{{item.stack}}</text>
+          </view>
+          <text class="sng-net {{item.net > 0 ? 'up' : (item.net < 0 ? 'down' : '')}}">{{item.net > 0 ? '+' + item.net : (item.net < 0 ? item.net : '±0')}}</text>
+        </view>
+      </view>
+
+      <view class="sng-foot">结算单已存档 · 可在「战绩 → 最近 SNG」随时回看</view>
+    </view>
+  </block>
+
+  <!-- ================= 逐手回放 ================= -->
+  <block wx:else>
+    <!-- 房间：每局选择 -->
+    <scroll-view class="hand-chips" scroll-x="true" wx:if="{{roomMode}}">
       <view class="hand-chip {{roomSelIdx === i ? 'cur' : ''}} {{item.net > 0 ? 'up' : (item.net < 0 ? 'down' : '')}}"
             wx:for="{{handList}}" wx:for-item="item" wx:for-index="i" wx:key="key"
             data-i="{{i}}" bindtap="onRoomHandTap">
-        <text class="hc-no">第{{item.handNo}}局</text>
+        <text class="hc-no">{{item.label}}</text>
         <text class="hc-net">{{item.net > 0 ? '+' + item.net : (item.net < 0 ? item.net : '±0')}}</text>
       </view>
       <view class="hand-empty" wx:if="{{!roomLoading && roomHandCount === 0}}">暂无复盘（仅房主可看）</view>
     </scroll-view>
     <view wx:if="{{roomLoading}}" class="room-loading">复盘加载中…</view>
-  </block>
 
-  <!-- 顶栏：手数 / 模式 / 我的盈亏（非房间模式） -->
-  <view class="rp-head" wx:else>
-    <view class="rp-back" bindtap="onBack">‹</view>
-    <view class="rp-meta">
-      <text class="rp-hand">第 {{handNo}} 手 · {{mode === 'ai' ? 'AI 对战' : '好友房'}}</text>
-      <text class="rp-net {{myNet > 0 ? 'up' : (myNet < 0 ? 'down' : '')}}">
-        {{myNet > 0 ? '+' + myNet : (myNet < 0 ? myNet : '±0')}}
-      </text>
-    </view>
-  </view>
-
-  <!-- 街切换条 -->
-  <view class="street-tabs">
-    <view class="street-tab {{streetIdx === i ? 'cur' : ''}}"
-          wx:for="{{streets}}" wx:for-item="s" wx:for-index="i" wx:key="key"
-          data-i="{{i}}" bindtap="onStreetTap">
-      <text>{{s.cn}}</text>
-    </view>
-  </view>
-  <view class="street-nav">
-    <view class="nav-btn {{streetIdx === 0 ? 'disabled' : ''}}" bindtap="onStreetPrev">‹ 上一街</view>
-    <view class="nav-cur">{{streets[streetIdx].cn}}</view>
-    <view class="nav-btn {{streetIdx === 4 ? 'disabled' : ''}}" bindtap="onStreetNext">下一街 ›</view>
-  </view>
-
-  <!-- 公共牌区 -->
-  <view class="board-row">
-    <view class="bc {{c.cls}}" wx:for="{{curBoard}}" wx:for-item="c" wx:key="code">
-      <text class="bc-r">{{c.rank}}</text>
-      <text class="bc-s">{{c.suit}}</text>
-    </view>
-    <view class="bc empty" wx:if="{{curBoard.length === 0}}">—</view>
-  </view>
-
-  <!-- 底池 -->
-  <view class="pot-row">
-    <text class="pot-label">底池</text>
-    <text class="pot-val">{{curPot}}</text>
-  </view>
-
-  <!-- 动作时间轴（当前街） -->
-  <view class="action-list">
-    <view class="action-row {{a.isMe ? 'me' : ''}}" wx:for="{{curActions}}" wx:for-item="a" wx:key="index">
-      <text class="a-name">{{a.isMe ? '我' : a.name}}</text>
-      <text class="a-act {{a.action}}">{{a.cn}}{{a.amount > 0 ? ' ' + a.amount : ''}}</text>
-    </view>
-    <view class="action-empty" wx:if="{{curActions.length === 0}}">本街无动作</view>
-  </view>
-
-  <!-- 摊牌街：玩家成手 + 赢家（上帝视角展开底牌） -->
-  <view class="showdown" wx:if="{{showHandResult}}">
-    <view class="sd-title">摊牌结果
-      <view class="god-toggle {{godView ? 'on' : ''}}" bindtap="onGodToggle">上帝视角</view>
-    </view>
-    <view class="sd-row {{p.isMe ? 'me' : ''}}" wx:for="{{players}}" wx:for-item="p" wx:key="seat">
-      <text class="sd-name">{{p.isMe ? '我' : p.name}}</text>
-      <view class="sd-hole">
-        <view class="hc {{c.cls}}" wx:for="{{p.hole}}" wx:for-item="c" wx:key="code">
-          <text class="hc-r">{{c.rank}}</text>
-          <text class="hc-s">{{c.suit}}</text>
+    <!-- 牌面卡：街切换 + 公共牌 + 底池 + 上一街/下一街 -->
+    <view class="board-card">
+      <view class="street-tabs">
+        <view class="street-tab {{streetIdx === i ? 'cur' : ''}}"
+              wx:for="{{streets}}" wx:for-item="s" wx:for-index="i" wx:key="key"
+              data-i="{{i}}" bindtap="onStreetTap">
+          <text>{{s.cn}}</text>
         </view>
       </view>
-      <text class="sd-hand">{{p.handName}}</text>
+
+      <view class="board-row">
+        <view class="bc {{c.cls}}" wx:for="{{curBoard}}" wx:for-item="c" wx:key="code">
+          <text class="bc-r">{{c.rank}}</text>
+          <text class="bc-s">{{c.suit}}</text>
+        </view>
+        <view class="bc empty" wx:if="{{curBoard.length === 0}}">—</view>
+      </view>
+
+      <view class="pot-chip">
+        <text class="pot-label">底池</text>
+        <text class="pot-val">{{curPot}}</text>
+      </view>
+
+      <view class="street-nav">
+        <view class="nav-btn {{streetIdx === 0 ? 'disabled' : ''}}" bindtap="onStreetPrev">‹ 上一街</view>
+        <text class="nav-cur">{{streets[streetIdx].cn}}</text>
+        <view class="nav-btn {{streetIdx === 4 ? 'disabled' : ''}}" bindtap="onStreetNext">下一街 ›</view>
+      </view>
     </view>
-  </view>
+
+    <!-- 动作时间轴 -->
+    <view class="action-card">
+      <view class="card-title">本街动作</view>
+      <view class="action-list">
+        <view class="action-row {{a.isMe ? 'me' : ''}}" wx:for="{{curActions}}" wx:for-item="a" wx:key="index">
+          <view class="a-avatar">{{a.isMe ? '我' : a.initial}}</view>
+          <text class="a-name">{{a.isMe ? '我' : a.name}}</text>
+          <text class="a-act {{a.action}}">{{a.cn}}{{a.amount > 0 ? ' ' + a.amount : ''}}</text>
+        </view>
+        <view class="action-empty" wx:if="{{curActions.length === 0}}">本街无动作</view>
+      </view>
+    </view>
+
+    <!-- 摊牌：成手 + 上帝视角 -->
+    <view class="showdown" wx:if="{{showHandResult}}">
+      <view class="sd-head">
+        <text class="card-title">摊牌结果</text>
+        <view class="god-toggle {{godView ? 'on' : ''}}" bindtap="onGodToggle">{{godView ? '上帝视角 开' : '上帝视角 关'}}</view>
+      </view>
+      <view class="sd-row {{p.isMe ? 'me' : ''}}" wx:for="{{players}}" wx:for-item="p" wx:key="seat">
+        <text class="sd-name">{{p.isMe ? '我' : p.name}}</text>
+        <view class="sd-hole">
+          <view class="hc {{c.cls}}" wx:for="{{p.hole}}" wx:for-item="c" wx:key="code">
+            <text class="hc-r">{{c.rank}}</text>
+            <text class="hc-s">{{c.suit}}</text>
+          </view>
+          <text class="sd-no-hole" wx:if="{{p.hole.length === 0}}">—</text>
+        </view>
+        <text class="sd-hand">{{p.handName}}</text>
+      </view>
+    </view>
+  </block>
 </view>

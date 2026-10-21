@@ -10,6 +10,7 @@
 const P = require('../../core/poker-core.js');
 const replayStore = require('../../utils/replay-store');
 const highlightStore = require('../../utils/highlight-store');
+const sngStore = require('../../utils/sng-store');
 const { auth } = require('../../utils/auth');
 
 /** 街定义：索引 0..4 对应翻前→摊牌 */
@@ -119,15 +120,23 @@ Page({
     roomNo: '',            // 房间号
     roomLoading: false,    // 拉取复盘列表加载中
     roomHandCount: 0,      // 房间内复盘局数
-    handList: [],          // 每局摘要：{ key, handNo, net, won, createdAt }
-    roomSelIdx: -1         // 当前选中局索引
+    handList: [],          // 每局摘要：{ key, label, handNo, net, isSummary }
+    roomSelIdx: -1,        // 当前选中局索引
+    // —— SNG 结算模式（战绩页「最近 SNG」/ 房间复盘里的结算记录）——
+    sngMode: false,        // 是否 SNG 结算模式
+    sngShow: false,        // 当前渲染结算卡（vs 逐手回放）
+    sngSummary: null,      // 当前结算单
+    sngList: [],           // 本地 SNG 存档（多场可切）
+    sngSelIdx: -1,
+    sngDateText: ''
   },
 
   onLoad(query) {
+    const from = query.from;   // 来源：默认 replay-store 缓存；'highlight' 高光；'sng' SNG 结算
+    if (from === 'sng' || query.sng) { this._enterSngMode(query.id); return; }
     const room = query.room;
     if (room) { this._enterRoomMode(room); return; }
     const date = Number(query.date);
-    const from = query.from;   // 来源：默认 replay-store 缓存；'highlight' = 高光存档
     let rec;
     if (from === 'highlight') {
       rec = highlightStore.findByDate(date);
@@ -159,19 +168,66 @@ Page({
       this.setData({ roomLoading: false, roomHandCount: 0, handList: [] });
       return;
     }
-    // 每局摘要：handNo / 我的净盈亏 / 胜负 / 时间（数组按 hand_no 升序）
+    // 每局摘要：handNo / 我的净盈亏 / 胜负 / 时间（数组按 hand_no 升序）。
+    // SNG 房的「结算」记录（kind=sng-summary，hand_no=N+1）单列出来，点了看结算单。
     const handList = this._roomRows.map(r => {
       const rec = r.payload || {};
+      const isSummary = rec.kind === 'sng-summary';
       return {
         key: r.id,
         handNo: rec.handNo || 0,
-        net: this._handNet(rec),
+        isSummary: isSummary,
+        label: isSummary ? '结算' : '第' + (rec.handNo || 0) + '局',
+        net: isSummary ? (Number(rec.myNet) || 0) : this._handNet(rec),
         won: !!(rec.result && rec.result.winners && rec.result.winners.indexOf(rec.mySeat) !== -1),
         createdAt: r.created_at
       };
     });
     this.setData({ roomLoading: false, roomHandCount: handList.length, handList: handList });
     this._loadRoomHand(handList.length - 1);   // 默认选中最新一手
+  },
+
+  /** 本地 SNG 结算模式：读取 sng-store 存档（多场可切） */
+  _enterSngMode(id) {
+    const list = sngStore.list().map(x => Object.assign({}, x, {
+      dateText: this._fmtDate(x.ts || x.date)
+    }));
+    let idx = id ? list.findIndex(x => String(x.id) === String(id)) : 0;
+    if (idx < 0) idx = 0;
+    this.setData({ sngMode: true, sngList: list, sngSelIdx: idx });
+    if (!list.length) {
+      wx.showToast({ title: '暂无 SNG 结算记录', icon: 'none' });
+      setTimeout(() => wx.navigateBack(), 800);
+      return;
+    }
+    this._renderSngSummary(list[idx]);
+  },
+
+  /** 切上一场/下一场 SNG 存档 */
+  onSngTap(e) {
+    const i = Number(e.currentTarget.dataset.i);
+    const rec = this.data.sngList[i];
+    if (!rec) return;
+    this.setData({ sngSelIdx: i });
+    this._renderSngSummary(rec);
+  },
+
+  /** 渲染 SNG 结算单（本地存档 / 好友房云端「结算」记录通用） */
+  _renderSngSummary(rec) {
+    this._sng = rec;
+    this.setData({
+      sngShow: true,
+      sngSummary: rec,
+      sngDateText: this._fmtDate(rec.ts || rec.date || 0)
+    });
+  },
+
+  _fmtDate(ts) {
+    if (!ts) return '';
+    const d = new Date(Number(ts) || 0);
+    if (isNaN(d.getTime())) return '';
+    const p2 = n => (n < 10 ? '0' + n : '' + n);
+    return (d.getMonth() + 1) + '月' + p2(d.getDate()) + '日 ' + p2(d.getHours()) + ':' + p2(d.getMinutes());
   },
 
   /** 单局净盈亏：获奖 - 我本手投入（投入从 events 反算，含盲注虚拟事件） */
@@ -190,7 +246,8 @@ Page({
     const row = this._roomRows && this._roomRows[idx];
     const rec = row && row.payload;
     if (!rec) return;
-    this._renderRec(rec);
+    if (rec.kind === 'sng-summary') this._renderSngSummary(rec);
+    else this._renderRec(rec);
     this.setData({ roomSelIdx: idx });
   },
 
@@ -204,6 +261,7 @@ Page({
       .reduce((s, a) => s + (a.amount || 0), 0);
     this._rec = rec;
     this.setData({
+      sngShow: false,
       date: rec.date || 0,
       handNo: rec.handNo,
       mode: rec.mode,
@@ -233,6 +291,7 @@ Page({
         return {
           seat: a.seat,
           name: pl.name,
+          initial: (pl.name || '?').slice(0, 1),
           isMe: a.seat === this._rec.mySeat,
           action: a.action,
           amount: a.amount || 0,

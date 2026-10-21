@@ -213,6 +213,25 @@ function checkText(text, tagStack, rel, src, offset) {
   checkExpr(text, offset || 0, tagStack, rel, src);
 }
 
+/* ---------- 4) 复盘页专项守卫 ----------
+ * 2026-10-20：复盘页曾整页使用 var(--uh)/var(--uw)，但该页从未设置这两个变量，
+ * 导致所有 calc() 失效、排版挤成一团（用户反馈「太丑」）。改为 rpx 后这里钉死，
+ * 防止以后又从别处抄回 --uh 写法。 */
+{
+  const cssPath = path.join(ROOT, 'pages/replay/replay.wxss');
+  if (fs.existsSync(cssPath)) {
+    const css = fs.readFileSync(cssPath, 'utf8');
+    ok(!/var\(\s*--u[hw]\s*\)/.test(css),
+      'replay.wxss 不使用 --uh/--uw（该页未设置这两个变量，用了会让尺寸全部失效）');
+  }
+  const rpWxml = path.join(ROOT, 'pages/replay/replay.wxml');
+  if (fs.existsSync(rpWxml)) {
+    const wxml = fs.readFileSync(rpWxml, 'utf8');
+    ok(/onSngTap/.test(wxml) && /sngSummary/.test(wxml),
+      'replay.wxml 含 SNG 结算卡（onSngTap + sngSummary）');
+  }
+}
+
 console.log('\n' + '='.repeat(52));
 if (failures.length === 0) {
   console.log('WXML 静态检查全部通过：' + passes + ' 项断言 ✓（' + files.length + ' 个文件）');

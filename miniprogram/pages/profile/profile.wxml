@@ -102,6 +102,16 @@
         <text class="badge-count" wx:if="{{item.unlocked}}">×{{item.count}}</text>
       </view>
     </view>
+    <!-- 最近 SNG 结算：结算弹窗一闪而过/没看到时，从这里回看带入/剩余/盈亏/名次 -->
+    <view class="sng-latest" wx:if="{{sngLatest}}" bindtap="onReplaySng">
+      <view class="sng-latest-icon">🏆</view>
+      <view class="sng-latest-body">
+        <text class="sng-latest-title">{{sngLatest.title}}</text>
+        <text class="sng-latest-sub">{{sngLatest.sub}} · {{sngLatest.myPlaceText}} · {{sngLatest.myNetText}}</text>
+      </view>
+      <text class="sng-latest-go">查看 ›</text>
+    </view>
+
     <!-- 最值得炫耀的一手：点按跳复盘页重看（from=highlight） -->
     <view class="badge-best" wx:if="{{highlightBest}}">
       <text class="badge-best-icon">★</text>

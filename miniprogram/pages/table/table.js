@@ -16,6 +16,7 @@ const roomSync = require('../../utils/room-sync');
 const sfx = require('../../utils/sfx');   // 合成音效（发牌/下注/加注/全下/获胜…）
 const replayStore = require('../../utils/replay-store');   // 对局复盘缓存（本地，结算时收割）
 const highlightStore = require('../../utils/highlight-store'); // 高光时刻存档（本地，结算时判定收割）
+const sngStore = require('../../utils/sng-store'); // SNG 结算单存档（本地，复盘页可回看）
 const advisor = require('../../utils/advisor');   // AI 教学提示文案（起手牌分类 + 牌理解释，仅练习模式）
 const botProfiles = require('../../utils/bot-profiles'); // AI 角色档案：5 角色 style + 台词 + 马脚（批②）
 const styleAnalyzer = require('../../utils/style-analyzer'); // 风格分析：analyzeOpponent 给对手画像页用（批⑥）
@@ -3020,6 +3021,35 @@ Page({
       const me = rows.filter(r => r.isMe)[0];
       const myPlace = me ? me.place : 1;
       const isChampion = myPlace === 1;
+      // SNG 结算单存档（复盘页可回看）：结算弹窗一闪而过 / 被「再来一局」盖掉时，
+      // 玩家仍能在「战绩 → 最近 SNG」里查到带入/剩余/盈亏/名次。
+      const sngSummary = {
+        id: Date.now(),
+        ts: Date.now(),
+        mode: this.mode,
+        roomNo: this.roomNo || '',
+        handNo: game.handNo,
+        title: isChampion ? 'SNG 结束 · 恭喜夺冠！' : 'SNG 结束 · 淘汰赛结算',
+        sub: '共 ' + game.handNo + ' 手 · 按淘汰顺序排名',
+        rows: rows.map(r => ({
+          seat: r.seat, name: r.name, place: r.place, placeText: r.placeText,
+          buyIn: r.buyIn, stack: r.stack, net: r.net, isMe: !!r.isMe, left: !!r.left
+        })),
+        myPlace: myPlace,
+        myPlaceText: '第 ' + myPlace + ' 名',
+        myNet: me ? me.net : 0,
+        myNetText: me ? ((me.net >= 0 ? '+' : '') + me.net) : '0',
+        myBuyIn: me ? me.buyIn : 0,
+        myStack: me ? me.stack : 0
+      };
+      sngStore.save(sngSummary);
+      // 好友房：同步一份到云端复盘（hand_no 取 N+1 作为「结算」记录，避开唯一键），
+      // 之后进房间复盘也能看到结算单。镜像端不写（权威端是房主）。
+      if (this.syncLive && this.isOwner && !this.remoteMode && this.roomNo) {
+        auth.saveHandReplay(this.roomNo, game.handNo + 1,
+          Object.assign({ kind: 'sng-summary' }, sngSummary))
+          .catch(() => { /* 云端存档失败不阻断结算 */ });
+      }
       this.setData({
         timeUp: true,
         clockPendingEnd: false,

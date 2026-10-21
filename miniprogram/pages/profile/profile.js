@@ -4,6 +4,7 @@ const replayStore = require('../../utils/replay-store');           // 复盘缓�
 const styleAnalyzer = require('../../utils/style-analyzer');       // 个人风格分析（吃复盘缓存存量）
 const chartStats = require('../../utils/chart-stats');             // 战绩深化图表数据（方向 A，纯客户端）
 const highlightStore = require('../../utils/highlight-store');     // 高光时刻存档（本地存量）
+const sngStore = require('../../utils/sng-store');                 // SNG 结算单存档（本地存量）
 
 const PAGE_SIZE = 20;   // 战绩每页条数（游标分页，触底加载下一页）
 const CHART_LIMIT = 100; // 战绩深化图表取样上限（单次拉取、不分页）
@@ -37,10 +38,13 @@ Page({
     chartNetSumText: '0',     // 净盈亏带符号文案
     // 高光时刻徽章墙：4 类成就计数 + 最值得炫耀的一手（高光存档派生，纯本地）
     highlightBadges: [],
-    highlightBest: null
+    highlightBest: null,
+    // 最近一场 SNG 结算（本地存档；结算弹窗没看到时可从这里回看）
+    sngLatest: null
   },
 
   onShow() {
+    this.setData({ sngLatest: sngStore.latest() });
     this.loadFromCloud();
   },
 
@@ -205,6 +209,11 @@ Page({
     const best = this.data.highlightBest;
     if (!best) return;
     wx.navigateTo({ url: '/pages/replay/replay?date=' + best.date + '&from=highlight' });
+  },
+
+  /** 点「最近 SNG 结算」跳复盘页看结算单（带入/剩余/盈亏/名次） */
+  onReplaySng() {
+    wx.navigateTo({ url: '/pages/replay/replay?from=sng' });
   },
 
   /**

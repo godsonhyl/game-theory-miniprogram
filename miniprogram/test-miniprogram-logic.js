@@ -5118,6 +5118,21 @@ while (guard++ < 400) {
     }
   }
 
+  /* ---------- 行为：SNG 结算存档（sng-store，复盘页回看用） ---------- */
+  {
+    const sngStore = require('./utils/sng-store');
+    sngStore.clear();
+    ok(sngStore.save({ id: 101, rows: [{ seat: 0 }], title: 't101' }), 'sngStore.save 写入成功');
+    ok(sngStore.latest() && sngStore.latest().id === 101, 'sngStore.latest 返回最新一场');
+    for (let i = 102; i <= 112; i++) sngStore.save({ id: i, rows: [{ seat: 0 }] });
+    ok(sngStore.list().length === 10,
+      'sngStore 上限 10 场（FIFO，实际 ' + sngStore.list().length + '）');
+    ok(sngStore.list()[0].id === 112,
+      'sngStore 最新一场置顶（实际 ' + (sngStore.list()[0] || {}).id + '）');
+    ok(sngStore.save({ id: 113, rows: [] }) === false, 'sngStore 拒绝空名次表（rows 为空）');
+    sngStore.clear();
+  }
+
   /* ---------- 输出 ---------- */
   console.log('\n' + '='.repeat(52));
   if (failures.length === 0) {
