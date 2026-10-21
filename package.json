@@ -7,14 +7,17 @@
     "pack": "node pack.js",
     "upload": "node upload.js",
     "preview": "node upload.js --preview",
-    "test": "node test-core.js && node miniprogram/test-miniprogram-logic.js && node miniprogram/test-cards.js && node miniprogram/test-cloud-integration.js && node miniprogram/test-index-logic.js && node miniprogram/test-room-sync.js && node test-sdk-load.js && node scripts/check-js-syntax.js && node scripts/check-wxml.js && node scripts/check-pack-rules.js && node scripts/check-cloud-migration.js",
+    "test": "node test-core.js && node miniprogram/test-miniprogram-logic.js && node miniprogram/test-cards.js && node miniprogram/test-cloud-integration.js && node miniprogram/test-index-logic.js && node miniprogram/test-room-sync.js && node test-sdk-load.js && node scripts/check-js-syntax.js && node scripts/check-wxml.js && node scripts/check-pack-rules.js && node scripts/check-cloud-migration.js && node scripts/visual/selftest.js",
     "test:engine": "node test-core.js",
     "test:cards": "node miniprogram/test-cards.js",
     "test:wxml": "node scripts/check-wxml.js",
     "test:pack": "node scripts/check-pack-rules.js",
     "test:mp": "node miniprogram/test-miniprogram-logic.js",
     "test:cloud": "node miniprogram/test-cloud-integration.js",
-    "test:sdk": "node test-sdk-load.js"
+    "test:sdk": "node test-sdk-load.js",
+    "visual": "node scripts/visual/run.js && node scripts/visual/compare.js",
+    "visual:render": "node scripts/visual/run.js",
+    "visual:update": "node scripts/visual/run.js && node scripts/visual/compare.js --update"
   },
   "devDependencies": {
     "miniprogram-ci": "^2.1.0",

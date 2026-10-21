@@ -14,6 +14,10 @@ node_modules/
 dist/
 preview/
 
+# 视觉回归的临时渲染产物（每次 npm run visual 重新生成，5MB+ 不该进库）
+# ⚠️ baseline/ 相反——基线图必须进版本库，否则别人第一次跑没有比对基准
+scripts/visual/out/
+
 # 编辑器
 .vscode/
 .idea/

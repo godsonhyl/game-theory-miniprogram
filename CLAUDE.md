@@ -20,9 +20,11 @@ npm run test:wxml               # WXML 静态检查（标签闭合 + wx:for-item
 npm run pack                    # 打包 dist/*.zip（三层校验：引擎存在/体积<2MB/页面四件套齐全）
 npm run upload                  # miniprogram-ci 命令行上传体验版（需 private.<AppID>.key）
 npm run preview                 # 仅生成预览包，不上传
+npm run visual                  # 视觉回归：渲染 2~9 人桌 × 3 视口截图并与基线比对
+npm run visual:update           # 确认画面变化符合预期后更新基线
 ```
 
-测试全部是自研断言脚本（无 jest/mocha），直接 `node xxx.js` 运行，失败项会打印 label。跑单个测试：`node miniprogram/test-room-sync.js` 或对应 npm script。`npm test` = 11 个脚本全跑，分两类：**行为/格式校验**（引擎 test-core / 牌桌页 test-miniprogram-logic / 牌面 test-cards / 云规范 test-cloud-integration / 首页 test-index-logic / 跨设备同步 test-room-sync / SDK test-sdk-load / JS 语法 check-js-syntax / WXML check-wxml / 打包规则 check-pack-rules）与**云端迁移护栏 check-cloud-migration**（见下）。改动后必须过。断言数是硬口径——改动后新增/删除断言要在 commit message 里说明。
+测试全部是自研断言脚本（无 jest/mocha），直接 `node xxx.js` 运行，失败项会打印 label。跑单个测试：`node miniprogram/test-room-sync.js` 或对应 npm script。`npm test` = 12 个脚本全跑（2292 项断言），分两类：**行为/格式校验**（引擎 test-core / 牌桌页 test-miniprogram-logic / 牌面 test-cards / 云规范 test-cloud-integration / 首页 test-index-logic / 跨设备同步 test-room-sync / SDK test-sdk-load / JS 语法 check-js-syntax / WXML check-wxml / 打包规则 check-pack-rules / 视觉回归工具自检 visual/selftest）与**云端迁移护栏 check-cloud-migration**（见下）。改动后必须过。断言数是硬口径——改动后新增/删除断言要在 commit message 里说明。截图脚本（`visual/run.js`、`visual/compare.js`）依赖本机 Chrome 与基线图，**故意不并入 `npm test`**，跑 `npm run visual` 单独执行；`visual/selftest.js` 是纯 JS，已并入 `npm test`。
 
 ## 双树结构（易踩坑）
 
@@ -92,6 +94,15 @@ npm run preview                 # 仅生成预览包，不上传
 - 测试分两类：**行为级**（mock 运行时后真实调页面方法，断言 setData 落值）与**静态守卫**（读源码字符串正则，断言「某字段/方法/节点存在」或「不再出现某种写法」）。改 UI 但难在测试里复现的场景用静态守卫兜底——例如 `.chat-badge`/`recordsError` 这类 WXML/WXSS 节点靠正则守卫。
 - `test-miniprogram-logic.js` 顶部 mock 的 `wx` 对象是全局共享的，多个 `pageCtx.onLoad()` 复用同一份；若新增 wx API 调用，需在 mock wx 里补桩，否则 `test:cloud` 的「源码 wx.* 调用 vs 隐私声明」清单会对不上。当前声明的 wx.* 调用见 `test-cloud-integration.js` 输出（含 `stopPullDownRefresh` 等）。
 - 测 setData 次数可用「包装 setData 计数器」模式（见 `test-miniprogram-logic.js` 中 `_lastPlayFp`/`_lastRemoteFp`/`_lastRenderFp` 三个验证块：`pageCtx.setData = (d) => { count++; return realSetData(d); }`，用 try/finally 还原）。
+
+### 视觉回归（scripts/visual/，详见该目录 README）
+
+行为级与静态守卫都**证明不了「画面看起来是对的」**——历史上座位遮挡、河牌被裁、8 位桌模板缺项，全是靠人工算坐标才发现，而算坐标只能证明「数学上不重叠」，算错了还会得出相反结论（review 中真实发生过三次）。视觉回归补这一环：
+
+- **链路**：真实页面 JS（mock wx/Page + 假时钟）→ 真实 data 快照 → 挑真实 `table.wxml` 渲染器 + `table.wxss` 单位换算 → Chrome headless 截图 → 与基线逐像素比对。**不另写演示页面**（`index.html` 是自绘样式，没有 `--uh`/`.felt`，测不到真实画面）。
+- **两个决定成败的坑**：① 页面用 `seed: 'mp-' + Date.now()` 做牌种，假时钟必须给**固定 epoch** 而非真实时间，否则每次跑出的牌不同、基线永远不稳（踩过：18 张图 14 张每次都不一样）；② 座位数要同时传 `max` 与 `bots`，只传 `bots` 会被截到默认 6 座、所有桌型渲染成同一张图（踩过，靠比对文件 hash 才发现）。
+- **判定口径**：像素差 > 24 才算变；变化像素 > 0.5% **且最大连通块 > 0.15%** 才判失败——抗锯齿是零散细线，真实布局问题一定成片，这样既不误报也不漏报（实测注入 x=10 交叠 bug：8 位桌 3 张全部命中，其余 15 张零误报）。
+- **进 npm test 的只有 `visual/selftest.js`**（29 项，纯 JS 不依赖浏览器，守渲染器语义 / 场景数据随参数变化 / 渲染确定性 / 单位换算）。截图与比对脚本依赖本机 Chrome 与基线图，`npm run visual` 单独跑。
 
 ## 文档
 
