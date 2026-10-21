@@ -234,6 +234,14 @@ function checkText(text, tagStack, rel, src, offset) {
     ok(/onSngTap/.test(wxml) && /sngSummary/.test(wxml),
       'replay.wxml 含 SNG 结算卡（onSngTap + sngSummary）');
   }
+  // 每日一题：.pc 同样必须显式给基础深色（否则梅花继承浅色文字 → 白卡上看不见，
+  // 2026-10-22 用户反馈；与 replay .bc/.hc 同一类 bug）。
+  const pzCssPath = path.join(ROOT, 'pages/puzzle/puzzle.wxss');
+  if (fs.existsSync(pzCssPath)) {
+    const pzCss = fs.readFileSync(pzCssPath, 'utf8');
+    ok(/\.pc\s*\{[\s\S]{0,400}?color:\s*#/.test(pzCss),
+      'puzzle.wxss 的 .pc 有显式基础深色（否则梅花牌白板）');
+  }
 }
 
 console.log('\n' + '='.repeat(52));

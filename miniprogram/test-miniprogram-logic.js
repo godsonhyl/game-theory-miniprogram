@@ -4472,6 +4472,20 @@ while (guard++ < 400) {
     ok(/_shareTitle\(\)[\s\S]{0,120}?'博弈论 · SNG 淘汰赛'/.test(tableSrc),
       'table.js 分享标题对 sng 显示「博弈论 · SNG 淘汰赛」');
 
+    // 2026-10-22 用户：9 人桌添加 8 个电脑玩家时有重名——名池 ≥9 且取名去重。
+    {
+      const m = tableSrc.match(/const BOT_NAMES = \[([^\]]*)\];/);
+      const names = m
+        ? m[1].split(',').map(s => s.trim().replace(/^['"]|['"]$/g, '')).filter(Boolean)
+        : [];
+      ok(names.length >= 9,
+        'BOT_NAMES 至少 9 个（9 人桌 8 个 bot 不因取模重名，实际 ' + names.length + '）');
+      ok(new Set(names).size === names.length, 'BOT_NAMES 自身无重复');
+      ok(/botNamesFor\(count\)/.test(tableSrc), 'table.js 提供 botNamesFor 去重分配');
+      ok(/const botNames = this\.botNamesFor\(seats\.filter\(s => s\.isBot\)\.length\)/.test(tableSrc),
+        '踢人重命名 bot 走 botNamesFor（不再 idx%N）');
+    }
+
     // ---- 就绪阶段补筹：不许下一手在确认前抢先发出（否则拖到再下一手） ----
     ok(/openRebuy\(\)\s*\{[\s\S]{0,900}?this\.markReady\(this\.mySeat, false\);/.test(tableSrc),
       'openRebuy 打开补筹窗时撤销「已就绪」（下一手不在确认前发出）');

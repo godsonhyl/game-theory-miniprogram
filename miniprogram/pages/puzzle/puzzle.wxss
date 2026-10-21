@@ -42,8 +42,12 @@
   width: 76rpx; height: 104rpx; border-radius: 12rpx; background: #fff;
   display: flex; flex-direction: column; align-items: center; justify-content: center;
   box-shadow: 0 4rpx 12rpx rgba(0,0,0,.3);
+  /* 默认深色：♠/♣ 都必须显式给深色，否则继承页面浅色文字 → 白卡上「梅花看不见」
+     （2026-10-22 用户：每日一题公共牌梅花没渲染）。与复盘页 .bc/.hc 同口径。 */
+  color: #1a1a1a;
 }
-.pc.r { color: #d12b2b; } .pc.d { color: #2b6ed1; } .pc.h { color: #d12b2b; } .pc.s { color: #1a1a1a; }
+.pc.r, .pc.h { color: #d12b2b; }
+.pc.d { color: #2b6ed1; }
 .pc.empty { background: transparent; border: 2rpx dashed #4a6a62; color: #4a6a62; }
 .pc-r { font-size: 36rpx; font-weight: 700; line-height: 1; }
 .pc-s { font-size: 30rpx; line-height: 1.2; }

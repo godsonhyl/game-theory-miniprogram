@@ -86,8 +86,11 @@ function emptySeat(seat, pp, inGame) {
   };
 }
 
-/** 电脑玩家名（AI 桌的预设对手；NAMES[0] 是「我」的占位，组局时按 mySeat 覆盖） */
-const BOT_NAMES = ['林小满', '陈默', '苏晴', '赵岩', '周叙'];
+/** 电脑玩家名（AI 桌的预设对手；NAMES[0] 是「我」的占位，组局时按 mySeat 覆盖）。
+ *  ⚠️ 必须 ≥9 个：9 人桌最多 8 个 bot，旧池只有 5 个时 botLabel 取模会让第
+ *  6~8 个电脑玩家与前面重名（2026-10-22 用户反馈）。取名字段经 botNamesFor
+ *  再做一次去重兜底（池再缩小也不会重名）。 */
+const BOT_NAMES = ['林小满', '陈默', '苏晴', '赵岩', '周叙', '顾清', '沈舟', '陆离', '许安'];
 const NAMES = ['你'].concat(BOT_NAMES);
 
 /** AI 桌等待室提示：按是否已坐下切换（好友房用的是 seatHint，互不干扰） */
@@ -2541,8 +2544,10 @@ Page({
     t.occupied = false;
     t.isBot = false;
     t.name = '';
+    // 重命名现有 bot：必须**去重**（9 人桌 8 个 bot，旧实现 idx%5 会重名）。
+    const botNames = this.botNamesFor(seats.filter(s => s.isBot).length);
     let n = 0;
-    seats.forEach(s => { if (s.isBot) s.name = this.botLabel(n++); });
+    seats.forEach(s => { if (s.isBot) s.name = botNames[n++]; });
     const occupiedCount = seats.filter(s => s.occupied).length;
     this.setData({
       waitSeats: seats,
@@ -2555,6 +2560,24 @@ Page({
   /** 电脑玩家的名字：AI 桌用预设对手名，好友房叫「好友N」 */
   botLabel(idx) {
     return this.mode === 'friend' ? ('好友' + (idx + 1)) : BOT_NAMES[idx % BOT_NAMES.length];
+  },
+
+  /** 给一批 bot 分配**互不重名**的名字（2026-10-22 用户：9 人桌 8 个电脑玩家重名）。
+   *  按序号取池内名字；已用过则追加 2/3… 兜底（即使未来 BOT_NAMES 又被缩到
+   *  比 bot 数少，也不会出现同名）。返回数组，长度 = count。 */
+  botNamesFor(count) {
+    const n = Math.max(0, Number(count) || 0);
+    const used = {};
+    const out = [];
+    for (let i = 0; i < n; i++) {
+      const base = BOT_NAMES[i % BOT_NAMES.length];
+      let name = base;
+      let k = 2;
+      while (used[name]) { name = base + k; k++; }
+      used[name] = true;
+      out.push(name);
+    }
+    return out;
   },
 
   /** 复制房间号 */
@@ -3234,7 +3257,10 @@ Page({
     // AI/SNG 桌：机器人按序号绑定角色 style（取代旧随机），应用所选难度档位。
     // 好友房走 toPlayer 已绑过；这里只兜底「未传 players 的 AI/SNG 桌默认局」。
     const applyLevel = (this.mode === 'ai' || this.mode === 'sng') ? this.level : 'advanced';
-    const ps = players || NAMES.map((name, i) => ({
+    // 兜底建人（调用方通常都传 players）：名字池扩到 9 个后必须按座位数截断，
+    // 否则默认局会被撑到 10 人（超过 maxSeats）。
+    const fallbackNames = NAMES.slice(0, Math.max(2, Math.min(NAMES.length, this.maxSeats || 6)));
+    const ps = players || fallbackNames.map((name, i) => ({
       id: 'u' + i,
       // AI 桌：我的座位用微信昵称，其余沿用预设对手名（NAMES[0] 是「我」的占位）
       name: i === this.mySeat ? auth.myName('你') : name,
