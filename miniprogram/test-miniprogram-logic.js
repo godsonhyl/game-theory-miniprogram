@@ -3058,6 +3058,34 @@ while (guard++ < 400) {
           ok(left.some(p => Math.abs(p.x - 24) <= 1 && Math.abs(p.y - 50) <= 1),
             '9 位桌左侧中部红框位置 (x≈24, y≈50) 有座位');
         }
+        // 8 位桌 EIGHT 模板项数守卫（2026-10-21 review：模板曾只有 6 项，第 7 个
+        // 对手走 placeOnArc 兜底落在 (86.5,26.8)——与 (88,50) 水平几乎重合（余量
+        // 仅 3px）、左侧无对应座位，而旧守卫全数漏过。钉死：7 项全落位 + 每侧
+        // 2 侧位镜像 + 顶部恰 3 座且对称。兜底另有一个 (86.5,26.8) 也过不了
+        // 「顶部恰 3」这条——项数与结构双保险。
+        {
+          const seats8 = [];
+          for (let i = 0; i < 8; i++) seats8.push(i);
+          const pos8 = ring(seats8, 0);
+          const placed8 = [];
+          for (let s = 1; s < 8; s++) if (pos8[s]) placed8.push(pos8[s]);
+          ok(placed8.length === 7,
+            '8 位桌 7 个对手全部落位（模板项数 = total-1，实际 ' + placed8.length + '）');
+          const side8 = placed8.filter(p => p.y >= 35).map(p => p.x).sort((a, b) => a - b);
+          ok(side8.length === 4,
+            '8 位桌每侧 2 个侧位（y≥35 共 ' + side8.length + ' 个）');
+          if (side8.length === 4) {
+            ok(Math.abs(side8[0] + side8[3] - 100) <= 0.5 && Math.abs(side8[1] + side8[2] - 100) <= 0.5,
+              '8 位桌 4 个侧位左右镜像（x=' + side8.join('/') + '）');
+          }
+          const top8 = placed8.filter(p => p.y < 35).map(p => p.x).sort((a, b) => a - b);
+          ok(top8.length === 3,
+            '8 位桌顶部恰 3 座（顶排密度回落，实际 ' + top8.length + '）');
+          if (top8.length === 3) {
+            ok(Math.abs(top8[0] + top8[2] - 100) <= 0.5 && Math.abs(top8[1] - 50) <= 1,
+              '8 位桌顶 3 座左右对称且居中（x=' + top8.join('/') + '）');
+          }
+        }
       }
       /* ---- 底池 vs 公共牌 vs 顶排：三处纵向不遮挡（2026-10-19 评审补边池）----
        * 原断言只算「底池胶囊高」= potY ± pillH/2，**默认边池数为 0**，于是

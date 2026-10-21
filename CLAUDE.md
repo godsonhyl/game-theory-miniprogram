@@ -49,7 +49,7 @@ npm run preview                 # 仅生成预览包，不上传
 - **AI 对战 / 好友房房主端**：引擎跑在本机（权威端）。
 - **好友房好友端（remoteMode）**：不跑引擎，把房主广播的快照镜像成本地 game 对象，按「我 = 本地 0 号位」重映射座位，复用同一套渲染与操作逻辑；动作经 room-sync 上行，房主消化后随下一帧广播。
 - 座位环用统一的 `ringPositions()`（我固定底部中央，其余铺上方半圆），等待室与游戏中共用坐标（开局无跳变）。
-- **座位块/中央盘面的纵向隔离（2026-10-19，用户反馈「顶排筹码被底池遮挡」）**：座位块以锚点为中心四外延伸（pie 环单一排布），块高 ≈26.4%（uh 与牌桌高同尺度）；下注胶囊浮到锚点上方（`.seat-bet` absolute + `bottom:100%`）不占块底。底池 `top:35%`（`POT_ANCHOR.y` 必须同步），顶排锚点天花板 = 底池胶囊上沿 − 半块 − 空隙，由 `ringPositions` 按 `SEAT_H_PX_UH`/`POT_PILL_H`/`RING_GAP_UH` 现算。`test-miniprogram-logic.js` 的 `guardSeatCardNoOverlap` 会抠出 `ringPositions` 真跑 20 种「人数×视口」组合断言不侵入底池带——**改任何一处块尺寸必须同步这些常量与 WXSS 块高预算注释，否则测试会红**。曾试过的 `.seat.down` 窄视口兜底已删除：纵向尺寸全为 uh 相对量，触发条件在数学上不存在（table.js ringPositions 头注释有推导）。
+- **座位块/中央盘面的纵向隔离（2026-10-19 用户反馈「顶排筹码被底池遮挡」→ 2026-10-21 单位混算根因修复）**：座位块以锚点为中心四外延伸（pie 环单一排布），块高 ≈26.4uh；下注胶囊浮到锚点上方（`.seat-bet` absolute）不占块底；底池 `top:35%`（`POT_ANCHOR.y` 必须同步）。⚠️ **uh 与 felt% 是两套单位**：纵向 CSS 尺寸全是 uh（视口高 1%），而座位 x/y、底池 top 是 felt%（相对 `.felt`，flex:1 弹性容器，playing 态实测仅 ≈65.9uh）——两套单位直减是历史病根。修正口径：`measureFelt()` 用 SelectorQuery **运行时实测** .felt 真实像素高 → `this.feltUh`（不写死任何机型数值；失败回退 `FELT_UH_FALLBACK=65`，取「换算放大、天花板收紧」的保守方向；测量固化到下一次 resize，不在 resultbar/readyPhase 压矮 felt 时重算——开局无跳变约束）。所有 uh→felt% 判定经 `uhToFelt()` 换算；**走廊座位锚点天花板按「无牌态内容栈」（`SEAT_META_STACK_UH`，走廊座位牌背被 topRow 判据隐藏、真实盒只有 meta 栈高）现算**：potTop − meta 半栈 − `RING_CEIL_GAP`；按 26.4uh 完整块算会把头像段压出 felt 顶被 page overflow 裁掉（数学上装不下，table.js 头注释有推导）。已知残余（接受）：翻前 SB/BB 座位 pos-tag 行可能探入底池带 ≈2 felt%。桌型分布：4 座以下全顶弧；5~7 座每侧 1 侧位；8 位桌每侧 2 侧位 + 顶部 3 座；9 位桌每侧 2 侧位 + 顶部 4 座。`test-miniprogram-logic.js` 的 `guardSeatCardNoOverlap` 会抠出 `ringPositions` 真跑「三档视口（fb/60/65.9/92）× 人数 [2..9]」组合断言几何，并有「8/9 位桌模板项数 = total−1、侧位镜像」守卫（模板缺项会走 placeOnArc 兜底挤死顶排）——**改任何一处块尺寸必须同步常量（SEAT_H_PX_UH / SEAT_META_STACK_UH / POT_PILL_H / RING_CEIL_GAP 等）与 WXSS 表，否则测试会红**。曾试过的 `.seat.down` 窄视口兜底已删除：纵向尺寸全为 uh 相对量，触发条件在数学上不存在。
 - 音效走 `utils/sfx.js` 的 WebAudio 实时合成（14 个 PRESETS 音色，零资源文件），`drainSfx()` 300ms 事件泵轮询 `game.events`（`sfxSeq` 游标）；提示音（倒计时警告/限时局/被动代弃/收到消息）挂在 startTimer/startClock/autoStandUnready/pushChat，全部 `soundOn` 门控，`unlock()` 必须在用户手势栈内（`onFirstTouch`）调用一次。
 
 ### 渲染脏检查指纹（三处，改动 render/sync 前必读）
@@ -62,7 +62,7 @@ npm run preview                 # 仅生成预览包，不上传
 
 ### 渲染层缓存（纯函数 + 浅克隆隔离）
 
-`ringPositions()` 有模块级 `_ringCache`（键 = 排序后 seatSet + mySeat），`cardData()` 有按 card id 的 `_cardCache`。两者都是纯函数缓存，命中即返回。**`cardData` 命中时必须浅克隆返回**——`markBest` 会原地写 `c.hi`，不克隆会污染缓存令下一帧 `hi` 残留。新增同类缓存遵循：纯输入 → 缓存 → 被下游原地改的返回值要克隆。
+`ringPositions()` 有模块级 `_ringCache`（键 = 排序后 seatSet + mySeat + feltUh，按实测基准分道缓存不同视口），`cardData()` 有按 card id 的 `_cardCache`。两者都是纯函数缓存，命中即返回。**`cardData` 命中时必须浅克隆返回**——`markBest` 会原地写 `c.hi`，不克隆会污染缓存令下一帧 `hi` 残留。新增同类缓存遵循：纯输入 → 缓存 → 被下游原地改的返回值要克隆。
 
 ### 跨设备同步（utils/room-sync.js）
 
@@ -109,5 +109,5 @@ npm run preview                 # 仅生成预览包，不上传
 - `project.private.config.json`、`private.*.key`、`miniprogram/.wbapp_*.privacy.json` 等本地/密钥文件不进版本库（已在 .gitignore）。
 - 「行动建议」类功能（`advise(game, seat, { practiceMode: true })`）仅在练习模式/AI 对战启用（引擎层默认返回 null，`renderAdvice` 再加 `mode !== 'ai'` 门槛），好友房与匹配对战必须关闭（合规硬约束）。
 - 战绩/签到客户端层已收口（乐观锁 + 置标记先行），但 total_hands 仍客户端自报、签到日期仍客户端时钟——完整服务端化（rpc 事务 + 发放流水表 + 收表权限 + 服务端时钟）已写成 `docs/服务端化蓝图.md`，接支付前照单实施。
-- 同步链路禁止裸 `.catch(() => {})` 静默吞错（`test-miniprogram-logic.js` 的 `SILENT_OK_COUNT` 守卫拦截）：上行失败要么 `syncFailToast` 提示用户，要么 `console.error` 记录。离房清理（closeRoom/roomSync.leave）原为静默吞，已全部改 `console.error`，`SILENT_OK_COUNT` 已降为 0。
+- 同步链路禁止裸 `.catch(() => {})` 静默吞错（`test-miniprogram-logic.js` 的 `SILENT_OK_COUNT` 守卫拦截）：上行失败要么 `syncFailToast` 提示用户，要么 `console.error` 记录。离房清理（closeRoom/roomSync.leave）原为静默吞，已全部改 `console.error`。当前 `SILENT_OK_COUNT = EMOTE_OK_COUNT = 3`：氛围功能（emote）的 3 处静默 catch 为命名常量豁免（带注释说明为何安全），其余场景守卫仍全量拦截。
 - 改动 `table.js` 的同步链路（`pollOnce`/`bootstrapSync`/`writePlayState`/`enterRemote`）时注意：`pollOnce` 有 `_polling` 重入守卫（防 1.5s 轮询与上次 await 重叠），`bootstrapSync` catch 先 `stopSync()` 再降级（防定时器泄漏）。新增轮询/定时器要配对清理。
