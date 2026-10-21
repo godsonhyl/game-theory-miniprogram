@@ -810,7 +810,10 @@ Page({
       myReady: false,
       readyLeft: 0,
       readyHint: '',
-      pageTitle: this.mode === 'friend' ? '好友房' : 'AI 对战',
+      // SNG 也是本机引擎，但赛制不同——标题必须区分，不能一律显示「AI 对战」
+      // （2026-10-21 用户：SNG 对局左上角显示的是 AI 对战）。
+      pageTitle: this.mode === 'friend' ? '好友房'
+        : (this.mode === 'sng' ? 'SNG 淘汰赛' : 'AI 对战'),
       fourColor: s.fourColor,
       soundOn: s.sound,
       // 氛围字段重置（页面复用/热重载时清干净上一局的气泡与粒子）
@@ -3406,7 +3409,12 @@ Page({
         path: '/pages/index/index?room=' + this.roomNo
       };
     }
-    return { title: '博弈论 · AI 对战', path: '/pages/index/index' };
+    return { title: this._shareTitle(), path: '/pages/index/index' };
+  },
+
+  /** 分享标题：SNG 与 AI 对战分开（二者都是本机引擎，但赛制不同） */
+  _shareTitle() {
+    return this.mode === 'sng' ? '博弈论 · SNG 淘汰赛' : '博弈论 · AI 对战';
   },
 
   /** 分享到朋友圈：好友房带房间号 */
@@ -3414,7 +3422,7 @@ Page({
     if (this.mode === 'friend') {
       return { title: '来「博弈论」和我打一局，房间号 ' + this.roomNo, query: 'room=' + this.roomNo };
     }
-    return { title: '博弈论 · AI 对战' };
+    return { title: this._shareTitle() };
   },
 
   onUnload() {
