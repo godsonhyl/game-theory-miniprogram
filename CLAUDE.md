@@ -29,7 +29,7 @@ npm run preview                 # 仅生成预览包，不上传
 仓库根 = `project.config.json` 所在工程目录，小程序源码在 `miniprogram/` 子目录（`miniprogramRoot: "miniprogram/"`）。发布指引等文档里的「poker 目录」即指本仓库根目录。
 
 - 根目录：`core/poker-core.js`（引擎源）、`index.html`（浏览器原型，对照参考）、`test-core.js`、`pack.js`/`upload.js`、根 `package.json`（npm scripts）。
-- `miniprogram/`：真正的上传源。**它有自己独立的 `package.json` + `node_modules`**，用于微信开发者工具的「构建 npm」（编译出 `miniprogram_npm/`）。首次使用或改依赖后必须在开发者工具里构建 npm，否则上传报模块找不到。
+- `miniprogram/`：真正的上传源。**禁止在 miniprogram/ 下出现 package.json / node_modules**（历史形态是「npm 依赖 + 开发者工具构建 npm」，30fe664 已彻底移除），SDK 现以内联源码形态放在 `miniprogram/utils/vendor/`，clone 即可上传；`scripts/check-pack-rules.js` 钉死「发布目录无 node_modules + 源码总字节 < 2MB」，违反直接 80051 发布失败。
 - **引擎有两份 identical 拷贝**：`core/poker-core.js` 与 `miniprogram/core/poker-core.js`。改动任何一份必须同步复制到另一份（`cmp` 确认一致），已落库数据依赖其编码格式稳定。
 
 ## 架构

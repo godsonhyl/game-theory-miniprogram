@@ -3240,8 +3240,13 @@ while (guard++ < 400) {
   }
 
   function guardSyncFailToast(tableSrc) {
-    const silentCatches = (tableSrc.match(/\.catch\(\s*\(\s*\)\s*=>\s*\{\s*\}\s*\)/g) || []).length;
-    const SILENT_OK_COUNT = 0;
+    // 两种都算静默吞错：空 body `() => {}`，以及 body 只有注释的 `() => { /* xx */ }`
+    // （后者曾是漏网形态——SNG 结算单云存档失败被无声丢弃，同 ce1516a 事故模式）。
+    const silentCatches = (tableSrc.match(/\.catch\(\s*\(\s*\)\s*=>\s*\{\s*(?:\/\*[\s\S]*?\*\/\s*)?\}\s*\)/g) || []).length;
+    // 豁免口径（ref: eb55cd2 氛围功能）：聊天/表情本地已见反馈（气泡/面板即时进），
+    // 上行失败不扰民是刻意的体验决策——3 处 emote/chat 静默降级带注释说明，放行。
+    const EMOTE_OK_COUNT = 3;
+    const SILENT_OK_COUNT = EMOTE_OK_COUNT;
     ok(silentCatches === SILENT_OK_COUNT,
       '同步链路无静默吞错（裸 catch 已清零），实际 ' + silentCatches);
     ok(/SYNC_FAIL_TOAST_MS = 10000/.test(tableSrc),
@@ -4323,6 +4328,16 @@ while (guard++ < 400) {
     ok(/myPlace/.test(tableSrc), 'table.js endGame SNG 分支算 myPlace');
     ok(/placeText/.test(tableSrc), 'table.js endGame SNG rows 含 placeText');
     ok(/SNG夺冠|SNG第/.test(tableSrc), 'table.js SNG 战绩 handType 文案');
+    // （review 2026-10-21）_sngEnding 幂等位必须在 restartGame 复位，否则第二局
+    // SNG 的 endGame 在入口早退——无弹窗、无 sngStore 存档、无名次上报。
+    ok(/this\._sngEnding\s*=\s*false/.test(tableSrc),
+      'table.js restartGame 复位 _sngEnding（第二局结算不整局蒸发）');
+    // （review 2026-10-21）离场者兜底名次不得引用未声明变量 players（曾 ReferenceError
+    // 打断整个 endGame），且不得只取 game.players.length（会把离场者错排「第 N 名」，
+    // 正确末位 = 在场人数 + 无名次离场人数）。
+    ok(/fallbackPlace/.test(tableSrc) &&
+       !/:\s*players\.length,/.test(tableSrc.split('批⑤重入防护')[1] || ''),
+      'table.js SNG 兜底名次用 fallbackPlace（在场+离场合计），不再引用未声明 players');
 
     // ---- 座位灰显 ----
     ok(/isEliminated/.test(tableSrc), 'table.js 座位渲染算 isEliminated');

@@ -6,7 +6,7 @@
       <text class="rp-title">{{sngMode ? 'SNG 结算' : (roomMode ? '房间复盘' : '手牌复盘')}}</text>
       <text class="rp-sub" wx:if="{{sngMode}}">{{sngDateText}}</text>
       <text class="rp-sub" wx:elif="{{roomMode}}">房间 {{roomNo}} · 共 {{roomHandCount}} 局</text>
-      <text class="rp-sub" wx:else>第 {{handNo}} 手 · {{mode === 'ai' ? 'AI 对战' : '好友房'}}</text>
+      <text class="rp-sub" wx:else>第 {{handNo}} 手 · {{mode === 'ai' ? 'AI 对战' : (mode === 'sng' ? 'SNG' : '好友房')}}</text>
     </view>
     <view class="rp-net {{myNet > 0 ? 'up' : (myNet < 0 ? 'down' : '')}}" wx:if="{{!sngMode}}">
       {{myNet > 0 ? '+' + myNet : (myNet < 0 ? myNet : '±0')}}

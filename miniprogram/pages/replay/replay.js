@@ -179,7 +179,6 @@ Page({
         isSummary: isSummary,
         label: isSummary ? '结算' : '第' + (rec.handNo || 0) + '局',
         net: isSummary ? (Number(rec.myNet) || 0) : this._handNet(rec),
-        won: !!(rec.result && rec.result.winners && rec.result.winners.indexOf(rec.mySeat) !== -1),
         createdAt: r.created_at
       };
     });
@@ -214,7 +213,6 @@ Page({
 
   /** 渲染 SNG 结算单（本地存档 / 好友房云端「结算」记录通用） */
   _renderSngSummary(rec) {
-    this._sng = rec;
     this.setData({
       sngShow: true,
       sngSummary: rec,
@@ -291,7 +289,7 @@ Page({
         return {
           seat: a.seat,
           name: pl.name,
-          initial: (pl.name || '?').slice(0, 1),
+          initial: Array.from(pl.name || '?')[0],   // 按码点取首字符：slice(0,1) 会把 emoji 拦腰截断
           isMe: a.seat === this._rec.mySeat,
           action: a.action,
           amount: a.amount || 0,

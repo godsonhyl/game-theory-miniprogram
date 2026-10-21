@@ -3026,14 +3026,18 @@ Page({
       // 防御性合并 leftPlayers：让位离场者已移出 game.players，不合并则其从
       // SNG 结算单蒸发；且「我」被让位时 me 取不到会误判 isChampion=true。
       // 名次从 sngPlacement 取，未记录者（离场早于淘汰记录）兜底末位。
+      // 末位名次 = 在场人数 + 已离场无名次人数（本手局内总参与者），不能只取
+      // game.players.length——那会把离场者排到「第 N 名」而不是「第 N+k 名」。
+      const fallbackPlace = game.players.length + (this.leftPlayers || [])
+        .filter(p => this.sngPlacement[p.seat] == null).length;
       const rows = (this.leftPlayers || []).map(p => ({
         seat: p.seat,
         name: p.name,
         stack: p.stack,
         buyIn: p.buyIn,
         net: p.stack - p.buyIn,
-        place: this.sngPlacement[p.seat] != null ? this.sngPlacement[p.seat] : players.length,
-        placeText: '第 ' + (this.sngPlacement[p.seat] != null ? this.sngPlacement[p.seat] : players.length) + ' 名',
+        place: this.sngPlacement[p.seat] != null ? this.sngPlacement[p.seat] : fallbackPlace,
+        placeText: '第 ' + (this.sngPlacement[p.seat] != null ? this.sngPlacement[p.seat] : fallbackPlace) + ' 名',
         isMe: !!p.isHuman,
         left: true
       })).concat(game.players.map(p => ({
@@ -3071,13 +3075,9 @@ Page({
         myStack: me ? me.stack : 0
       };
       sngStore.save(sngSummary);
-      // 好友房：同步一份到云端复盘（hand_no 取 N+1 作为「结算」记录，避开唯一键），
-      // 之后进房间复盘也能看到结算单。镜像端不写（权威端是房主）。
-      if (this.syncLive && this.isOwner && !this.remoteMode && this.roomNo) {
-        auth.saveHandReplay(this.roomNo, game.handNo + 1,
-          Object.assign({ kind: 'sng-summary' }, sngSummary))
-          .catch(() => { /* 云端存档失败不阻断结算 */ });
-      }
+      // 注：曾设想「好友房 SNG 同步一份 sng-summary 到云端复盘」，但 mode==='sng'
+      // 蕴含 opts.room 为空（onLoad 里 room 优先分派 'friend'），roomNo 恒为 ''，
+      // 该云同步分支不可达，已删除——SNG 是纯本地赛制，结算单只进本地 sngStore。
       this.setData({
         timeUp: true,
         clockPendingEnd: false,
@@ -3221,6 +3221,7 @@ Page({
     if (this.mode === 'sng') {
       this.sngPlacement = {};
       this.sngEliminationOrder = [];
+      this._sngEnding = false;   // 复位终局幂等位：不复位则第二局的 endGame 在入口早退，整局无结算/无存档
       if (players.length) this.sngNextPlace = players.length;
     }
     this.setData({ summary: null, timeUp: false, clockPendingEnd: false });
