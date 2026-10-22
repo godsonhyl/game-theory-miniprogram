@@ -321,7 +321,7 @@ Page({
     advice: {},
     result: null,
     resultModal: null,    // 单手结算弹窗（每人净盈亏）：亮牌展示后弹出
-    canDisclose: false,   // 非摊牌赢池「亮一手」入口（仅 fold 结算的获胜者·权威端）
+    canDisclose: false,   // 非摊牌赢池「亮一手」入口（fold 结算的获胜者，权威/镜像端均开放）
     resultGodView: false, // 已退役：「看全桌牌」开关（2026-10-17 撤销，防旧快照/缓存引用残留时读到 undefined）
     replayDate: 0,        // 已退役：G3 弃牌行复盘跳转 date（行内入口 2026-10-17 撤销，留 0 防旧缓存引用）
 
@@ -1848,6 +1848,23 @@ Page({
       this.pendingRebuyMap[seat] = add;
       this.pushChat(seat, p.name, '申请补筹 +' + add);
       this.forcePublish();
+      return;
+    }
+    if (a.type === 'disclose') {
+      // 好友赢家自愿亮牌（镜像端「亮一手」，2026-10-22 开放）：reveal 的权威
+      // 在本端（引擎跑在房主机上），镜像写本地会被下一帧快照卷回——由房主代写
+      // showdownReveal。上行只带意图不带牌面（同补筹口径：数值由权威端算，
+      // 传牌面既可伪造、也把快照掩码边界打穿）。校验链：rowSeat 断言防伪冒
+      // （不能替他人亮牌）→ 已进就绪拒收（亮牌窗口已过、publishPlay 也已停）→
+      // handNo 跨手过期判定（P3，同补筹：好友在 H1 结算点、房主已开 H2 时到达，
+      // 不校验会把申请落到 H2 头上）→ fold 结算 + 赢家断言。全过后才代写
+      // （_discloseRevealFor 内还有未亮过/底牌在手兜底）。
+      if (Number(a.seat) !== Number(a.rowSeat)) return;
+      if (this.data.readyPhase) return;
+      if (!game || !game.result || game.result.type !== 'fold') return;
+      if (a.handNo !== undefined && Number(a.handNo) !== Number(game.handNo)) return;
+      if (game.result.winners.indexOf(seat) === -1) return;
+      this._discloseRevealFor(seat);
       return;
     }
     if (a.type === 'emote') {
@@ -3910,7 +3927,14 @@ Page({
         const cardsBack = !topRow && !readyPhase && !isMe && !p.folded && !showdown && p.hole.length === 2;
         // 摊牌亮牌：摊牌座位要整块浮到最上层——否则相邻座位的名牌/筹码堆
         // 会压在刚亮出的两张牌上，等于「亮了还是看不清」。
-        const showCards = !readyPhase && !isMe && showdown && !p.folded && p.hole.length === 2;
+        // ⚠️ 判据必须以 showdownReveal（规程摊牌）为准，不能只看 street——
+        // fold 结算（别人全弃我/某人独赢收池）引擎同样把 street 置成
+        // SHOWDOWN（结算后的统一街次），只看 street 会把赢家的两张牌亮出来，
+        // muck 礼仪失效且公开了不该看的底牌（2026-10-22 用户实测「全弃默认亮牌」）。
+        // 与上方 typeName 的 reveal 同口径。自愿亮牌（onShowMyCards）写进
+        // showdownReveal 后同样经此亮出，行为不变。
+        const showCards = !readyPhase && !isMe && showdown && !p.folded
+          && p.hole.length === 2 && !!(game.showdownReveal && game.showdownReveal[p.seat]);
         const isStanding = this.isStanding(p.seat);
         const isActive = !readyPhase && game.actionSeat === p.seat && !result;
         const isFolded = readyPhase ? false : !!p.folded;
@@ -5542,12 +5566,11 @@ Page({
       this.resultModalTimer = null;
       this.closeResultModal(true);
     }, RESULT_MODAL_MS);
-    // 非摊牌赢池自愿亮牌入口（玩家审视 2026-10-17）：仅 fold 结算的获胜者在
-    // 本机权威端可见——亮牌是社交货币（亮 A 高诈唬），muck 礼仪之外给主动选择权。
-    // 已亮过（showdownReveal 有我）/摊牌局（本就全亮）/镜像端（写本地会被快照
-    // 卷回）都不显示按钮。
+    // 非摊牌赢池自愿亮牌入口（玩家审视 2026-10-17）：fold 结算的获胜者可见。
+    // 权威端直接亮；镜像端 2026-10-22 起开放（上行 disclose 意图，房主代写代播）。
+    // 已亮过（showdownReveal 有我）/摊牌局（本就全亮）不显示按钮。
     const meInResult = game && game.seatOf(this.mySeat);
-    const canDisclose = !!(!this.remoteMode && game && game.result && game.result.type === 'fold' &&
+    const canDisclose = !!(game && game.result && game.result.type === 'fold' &&
       game.result.winners.indexOf(this.mySeat) !== -1 && meInResult && meInResult.hole.length === 2 &&
       !game.showdownReveal[this.mySeat]);
     this.setData({ canDisclose: canDisclose });
@@ -6125,35 +6148,68 @@ Page({
   },
 
   /**
-   * 非摊牌赢池自愿亮牌（玩家审视 2026-10-17）：对手全弃我独赢（result.type==='fold'）
-   * 时，muck 礼仪让我的牌不公开——但「亮一手 A 高诈唬」是德扑的核心社交货币。
-   * 结算弹窗给获胜者一个自愿「亮牌」按钮： disclosures 写进 game.showdownReveal[mySeat]
-   * （同引擎摊牌数据结构），render 的 showCards 条件已要求 showdown 街——fold 结算
-   * 引擎同样置 street=SHOWDOWN，座位亮牌与结算弹窗迷你手牌都会自然复用。
-   * 镜像端（remoteMode）不写：reveal 由权限端随快照广播，镜像写本地 game 会
-   * 与下一帧快照冲突被覆盖（快照 reveal 只在 showAll 时带，fold 结算无 reveal →
-   * 好友端亮牌属后续可做——需把 reveal 透传进 fold 结算快照，涉引擎面暂不动）。
-   * 只允许亮我自己的牌，且仅本手（startHand 清空 showdownReveal）。
+   * 代写自愿亮牌（权威端统一出口，本机赢家与好友赢家共用）：算牌写
+   * showdownReveal[seat] → 穿透渲染指纹 → 房主 forcePublish 广播给镜像端
+   * （写库指纹 _lastPlayFp 不含 reveal，故必须 forcePublish，普通 publish
+   * 会被指纹跳过吞掉这次亮牌）。返回是否真亮了；未亮过/底牌不在手/非本机
+   * 权威端（镜像端引擎无发言权）一律 no-op。
    */
-  onShowMyCards() {
-    if (this.remoteMode) return;              // 镜像端写本地 reveal 会被下一帧快照卷回，不开放
-    if (!game || !game.result || game.result.type !== 'fold') return;
-    if (game.result.winners.indexOf(this.mySeat) === -1) return;   // 只有赢家能亮
-    const me = game.seatOf(this.mySeat);
-    if (!me || me.hole.length !== 2 || game.showdownReveal[this.mySeat]) return;
-    const e = P.evaluate(me.hole.concat(game.board || []));
-    game.showdownReveal[this.mySeat] = {
-      hole: me.hole.map(c => P.cardToCode(c)),
+  _discloseRevealFor(seat) {
+    if (!game || !game.result || game.result.type !== 'fold') return false;
+    if (this.remoteMode) return false;   // 镜像端：reveal 写进本地 game 无效，见 onShowMyCards
+    const p = game.seatOf(seat);
+    if (!p || p.hole.length !== 2 || game.showdownReveal[seat]) return false;
+    const e = P.evaluate(p.hole.concat(game.board || []));
+    game.showdownReveal[seat] = {
+      hole: p.hole.map(c => P.cardToCode(c)),
       hand: e.best.map(c => P.cardToCode(c)),
       handCn: e.best.map(c => P.cardToStr(c)),
       cat: e.cat, name: e.name, ranks: e.ranks.slice()
     };
     // reveal 变化必须穿透渲染指纹，否则跳过分支吞掉亮牌（seats[].hole 由它派生）
     this._lastRenderFp = null;
-    if (!this.remoteMode) this.forcePublish();   // 房主亮牌随下一帧广播给好友
-    this.setData({ resultModal: this.buildResult(game.result), canDisclose: false });
-    this.pushChat(this.mySeat, this.meLabel(false), '亮出底牌 ' +
-      me.hole.map(c => P.cardToStr(c)).join(' ') + '（' + e.name + '）');
+    this.forcePublish();   // reveal 不在写库指纹内：必须穿透，亮牌才随下一帧广播
+    this.pushChat(seat, p.name, '亮出底牌 ' +
+      p.hole.map(c => P.cardToStr(c)).join(' ') + '（' + e.name + '）');
     this.render();
+    return true;
+  },
+
+  /**
+   * 非摊牌赢池自愿亮牌（玩家审视 2026-10-17）：对手全弃我独赢（result.type==='fold'）
+   * 时，muck 礼仪让我的牌不公开——但「亮一手 A 高诈唬」是德扑的核心社交货币。
+   * 结算弹窗给获胜者一个自愿「亮牌」按钮： disclosures 写进 game.showdownReveal[mySeat]
+   * （同引擎摊牌数据结构），render 的 showCards 判据正是以 showdownReveal 为准
+   * （2026-10-22 修正：不再只看 street），写进去座位亮牌与结算弹窗迷你手牌都会自然亮出。
+   * 镜像端（remoteMode）2026-10-22 起同样开放：写不动本地 reveal（会被下一帧快照
+   * 卷回），改为上行 type:'disclose' 意图（只带 seat 新增 2 字节，不带牌面——牌面
+   * 由权威端引擎算，不可伪造），房主 applyFriendAction 校验 rowSeat/handNo/赢家
+   * 身份后由 _discloseRevealFor 代写，随 forcePublish 广播回来——1.5s 轮询周期内
+   * 全桌可见。上行失败走 syncFailToast（不再是「镜像端反正做不了」的静默缺席）。
+   * 若房主已开下一手（readyPhase），亮牌窗口已过：静默丢弃即可
+   * （结算弹窗也早已收起，房主侧 publishPlay 已停）。
+   * 只允许亮我自己的牌，且仅本手（引擎 fold 结算窗口内）。
+   */
+  onShowMyCards() {
+    if (!game || !game.result || game.result.type !== 'fold') return;
+    if (game.result.winners.indexOf(this.mySeat) === -1) return;   // 只有赢家能亮
+    if (game.showdownReveal[this.mySeat]) return;                  // 已亮过
+    if (this.remoteMode) {
+      // 镜像端：本人不在牌桌上（站起/掉线）不可能走赢家判定，这里不会触达，
+      // 防御性兜底。正常镜像赢家带 handNo 上行意图给房主。
+      const meMirror = game.seatOf(this.mySeat);
+      if (!meMirror || meMirror.hole.length !== 2) return;
+      if (this.mode === 'friend' && this.syncLive && this.roomNo) {
+        roomSync.pushAction(this.roomNo, { type: 'disclose', seat: this.roomSeat, handNo: game.handNo })
+          .catch(() => this.syncFailToast('亮牌未同步成功'));
+      }
+      return;
+    }
+    // 权威端：成功才隐藏按钮/刷新弹窗——目前 canDisclose 五条件与 _discloseRevealFor
+    // 前置校验完全重合，失败分支不可达；但用返回值门控可防后续两边条件漂移时
+    // 「点了没反应也无提示」的静默失败，按钮留着还能重试。
+    if (this._discloseRevealFor(this.mySeat)) {
+      this.setData({ resultModal: this.buildResult(game.result), canDisclose: false });
+    }
   }
 });

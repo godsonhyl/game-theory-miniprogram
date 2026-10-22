@@ -247,6 +247,48 @@ ok(endSnap.players.filter(p => !p.folded).every(p => Array.isArray(p.hole) && p.
   eq(foldedP.holeCount, 2, '弃牌者 holeCount 保留（镜像端渲染牌背）');
 }
 
+// 关键回归（2026-10-22「全弃默认亮牌」）：fold 结算（对手全弃我独赢）时
+// street 虽为 SHOWDOWN，但赢家未摊牌——快照不得下发其底牌（muck 礼仪 +
+// 房主广播快照是数据面，UI 收口不够）；自愿亮牌（写 reveal）后才随快照公开。
+{
+  const gm = P.createGame({ players: [mkPlayer(0, 1000), mkPlayer(1, 1000), mkPlayer(2, 1000)], sb: 10, bb: 20, dealerSeat: 0, seed: 'foldwin' });
+  gm.startHand();
+  // 让三家依次弃牌（谁先行动弃谁）直到 result.type === 'fold'
+  let guard = 0;
+  while (!gm.result && guard++ < 6) gm.act(gm.actionSeat, 'fold');
+  eq(gm.result.type, 'fold', '场景确认：全弃收池结算');
+  eq(gm.street, P.STREET.SHOWDOWN, '场景确认：fold 结算 street 同为 SHOWDOWN（渲染/快照口径的坑点）');
+  const muckSnap = gm.snapshot();
+  const winner = gm.result.winners[0];
+  ok(muckSnap.reveal === null || !muckSnap.reveal[winner],
+    'fold 结算：reveal 为空（未摊牌不亮）');
+  const winnerInSnap = muckSnap.players.find(p => p.seat === winner);
+  ok(winnerInSnap.hole === null,
+    'fold 结算：赢家底牌不下发（showAll 旧口径会把 hole 随快照广播给镜像端）');
+  eq(winnerInSnap.holeCount, 2, 'fold 结算：赢家 holeCount 保留（镜像端渲染牌背）');
+  // 自愿亮牌（onShowMyCards 同构写法）后：随快照公开
+  const wp = gm.seatOf(winner);
+  const ev = P.evaluate(wp.hole.concat(gm.board || []));
+  gm.showdownReveal[winner] = {
+    hole: wp.hole.map(c => P.cardToCode(c)),
+    hand: ev.best.map(c => P.cardToCode(c)), cat: ev.cat, name: ev.name, ranks: ev.ranks.slice()
+  };
+  const discSnap = gm.snapshot();
+  ok(discSnap.reveal && discSnap.reveal[winner],
+    '自愿亮牌后：reveal 随快照下发（全桌可见）');
+  ok(Array.isArray(discSnap.players.find(p => p.seat === winner).hole) &&
+    discSnap.players.find(p => p.seat === winner).hole.length === 2,
+    '自愿亮牌后：赢家底牌随快照公开');
+  // 补充口径：进行中（非结算）快照，真人只看得到自己的底牌
+  const gm2 = P.createGame({ players: [mkPlayer(0, 1000, true), mkPlayer(1, 1000, true), mkPlayer(2, 1000)], sb: 10, bb: 20, dealerSeat: 0, seed: 'holeview' });
+  gm2.startHand();
+  const midSnap = gm2.snapshot();
+  ok(midSnap.players.filter(p => p.isHuman).every(p => Array.isArray(p.hole) && p.hole.length === 2),
+    '进行中快照：真人各自可见自己底牌');
+  ok(midSnap.players.filter(p => !p.isHuman).every(p => p.hole === null),
+    '进行中快照：bot 底牌不下发（showAll 未触发）');
+}
+
 // 关键回归（A2，2026-10-17）：平分池奇数零头按「按钮左一优先」派发。
 // 3 人局 dealerSeat=0 → startHand 后按钮在座位 1。座位 0 与 2 平分时：
 // 「按钮左一」= 座位 2 → 零头应归座位 2 而非座位号更小的 0。

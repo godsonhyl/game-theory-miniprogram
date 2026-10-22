@@ -1586,6 +1586,27 @@
     game.snapshot = function (opts) {
       opts = opts || {};
       const showAll = opts.revealAll || game.street === STREET.SHOWDOWN;
+      // 结算态亮牌以 showdownReveal 为准（muck 礼仪，2026-10-22）：fold 结算
+      // street 同为 SHOWDOWN，但赢家未摊牌——旧口径「未弃牌 + showAll → 亮」
+      // 会把赢家底牌随快照广播给镜像端（UI 已收口仍泄露数据）。改为「只有
+      // 写进 reveal 的座位才亮」：
+      //   - 真摊牌：showdown() 已把全部未弃牌者写进 reveal，全亮照旧；
+      //   - fold 结算：reveal 为空 → 赢家不亮；自愿亮牌（onShowMyCards）写进
+      //     reveal 后随快照广播，全桌可见。
+      const endGame = (game.street === STREET.SHOWDOWN || opts.revealAll) &&
+        (game.result && game.result.type);
+      const holeOf = function (p) {
+        if (p.folded) return null;                     // 弃牌者任何情况不下发
+        // ⚠️ 进行中：真人底牌**全量**下发（房主视角无 per-seat 参数，loadSnapshot
+        // 也无二次掩码）——这是已封存的既有边界（快照含真人底牌，防作弊需服务端
+        // 引擎，见 utils/room-sync.js 头注释与 docs/服务端化蓝图.md），**不可读作
+        // 已掩码**。此处只豁免 endGame 判定，掩码语义只覆盖「结算态亮牌」这一层。
+        if (p.isHuman && !endGame) return p.hole.map(cardToCode);
+        if (showAll && endGame && game.showdownReveal[p.seat]) {
+          return p.hole.map(cardToCode);              // 结算态：reveal 在场才亮
+        }
+        return null;                                   // 其余一律牌背（holeCount 兜底）
+      };
       return {
         handNo: game.handNo,
         street: game.street,
@@ -1612,9 +1633,10 @@
           seat: p.seat, id: p.id, name: p.name, isHuman: p.isHuman,
           stack: p.stack, bet: p.bet, committed: p.committed,
           folded: p.folded, allIn: p.allIn, sittingOut: !!p.sittingOut,
-          // 弃牌者的底牌不下发（even showAll）：mucked 牌不向任何玩家披露（2026-10-17 评审）。
-          // 房主本地端不受影响（不经 snapshot）；镜像端弃牌者渲染牌背只需要 holeCount。
-          hole: (!p.folded && (p.isHuman || showAll)) ? p.hole.map(cardToCode) : null,
+          // muck 礼仪（reveal 为准，见上方 holeOf）：弃牌者任何情况不下发；
+          // 结算态只有写进 showdownReveal 的座位才亮（fold 赢家默认牌背，
+          // 自愿亮牌后广播）。镜像端渲染牌背只需要 holeCount。
+          hole: holeOf(p),
           holeCount: p.hole.length
         }))
       };

@@ -1589,6 +1589,7 @@ while (guard++ < 400) {
     guardTimerMaxUnified(tableSrc);
     guardUxBatch1(tableSrc, wxssSrc);
     guardUxBatch2(tableSrc, wxmlSrc);
+    guardMuckShowCards(tableSrc);
   }
 
   /* ---------- #14 批二：动作文案 render 派生（_lastActMap 三端统一）---------- */
@@ -3692,6 +3693,20 @@ while (guard++ < 400) {
       'C4 池比公式 = 补齐后总池 / 跟注额');
   }
 
+  /* muck 礼仪·fold 结算不亮牌（2026-10-22 用户实测「全弃默认亮牌」）：
+   * showCards 判据必须以 showdownReveal（规程摊牌）为准，不能只看 street——
+   * fold 结算引擎同样置 street=SHOWDOWN（结算后统一街次），旧判据「street +
+   * 未弃牌 + 有两张牌」会把赢家未摊的底牌在桌面亮出来。静态守卫锁判据形态
+   * （新判据在场 + 旧判据已删两条都要查）；fold 结算三场景（别人全弃我赢/
+   * 真摊牌/自愿亮牌）行为验证在修复当日以引擎驱动 render 仿真跑过，页面
+   * mock 里复现 fold 结算全链路成本高，故按本仓库惯例用静态守卫兜底。 */
+  function guardMuckShowCards(tableSrc) {
+    ok(/showCards = !readyPhase && !isMe && showdown && !p\.folded[\s\S]{0,120}!!\(game\.showdownReveal && game\.showdownReveal\[p\.seat\]\)/.test(tableSrc),
+      'showCards 判据含 showdownReveal（fold 结算不亮，muck 礼仪不靠 street 单判）');
+    ok(!/showCards = !readyPhase && !isMe && showdown && !p\.folded && p\.hole\.length === 2;/.test(tableSrc),
+      'showCards 旧判据（仅 street+hole）已删除——fold 结算 street 同为 SHOWDOWN 会误亮');
+  }
+
   /* 边池归属 + 非摊牌赢池自愿亮牌（玩家审视 2026-10-17）：
    * 多路全下时边池要显示「谁有资格拿这个池」；fold 赢池的获胜者给「亮一手」
    * 主动选择权（muck 礼仪之外，亮 A 高诈唬是社交货币）。静态守卫兜底——
@@ -3708,17 +3723,37 @@ while (guard++ < 400) {
 
   function guardDisclose(tableSrc, wxmlSrc) {
     ok(/canDisclose: false,/.test(tableSrc), 'data 声明 canDisclose 初始值');
-    ok(/const canDisclose = !!\(!this\.remoteMode && game && game\.result && game\.result\.type === 'fold' &&/.test(tableSrc) &&
-      /game\.result\.winners\.indexOf\(this\.mySeat\) !== -1 && meInResult && meInResult\.hole\.length === 2 &&/.test(tableSrc),
-      'canDisclose 门控四条件：权威端 + fold 结算 + 我是赢家 + 底牌仍在（摊牌局不亮重复）');
-    ok(/onShowMyCards\(\)\s*\{\s*if \(this\.remoteMode\) return;/.test(tableSrc),
-      'onShowMyCards 拒绝镜像端（写本地 reveal 会被下一帧快照卷回）');
-    ok(/game\.showdownReveal\[this\.mySeat\] = \{/.test(tableSrc),
-      '亮牌写进 showdownReveal[mySeat]（复用摊牌亮牌的渲染/同步链路）');
-    ok(/onShowMyCards\(\)\s*\{[\s\S]{0,900}?this\._lastRenderFp = null/.test(tableSrc),
-      'onShowMyCards 穿透渲染指纹（reveal 派生 seats[].hole/结算行，否则跳过分支吞掉亮牌）');
-    ok(/onShowMyCards\(\)\s*\{[\s\S]{0,1000}?forcePublish\(\)/.test(tableSrc),
-      'onShowMyCards 房主端 forcePublish（写库指纹穿透，亮牌随下一帧广播）');
+    // 2026-10-22 镜像端开放：门控去掉 !remoteMode（改为 onShowMyCards 内部分流：
+    // 权威端直接 _discloseRevealFor，镜像端上行 disclose 意图由房主代写）。
+    ok(/const canDisclose = !!\(game && game\.result && game\.result\.type === 'fold' &&/.test(tableSrc) &&
+      /game\.result\.winners\.indexOf\(this\.mySeat\) !== -1 && meInResult && meInResult\.hole\.length === 2 &&/.test(tableSrc) &&
+      /!game\.showdownReveal\[this\.mySeat\]\)\;/.test(tableSrc),
+      'canDisclose 门控四条件：fold 结算 + 我是赢家 + 底牌仍在 + 未亮过（权威/镜像端均开放）');
+    ok(/onShowMyCards\(\)\s*\{\s*if \(!game \|\| !game\.result \|\| game\.result\.type !== 'fold'\) return;/.test(tableSrc),
+      'onShowMyCards 开门先验 fold 结算（镜像/权威同判）');
+    // 镜像端分流：上行 disclose 意图（不带牌面，防伪造），失败 syncFailToast 不静默
+    ok(/roomSync\.pushAction\(this\.roomNo, \{ type: 'disclose', seat: this\.roomSeat, handNo: game\.handNo \}\)/.test(tableSrc),
+      '镜像端亮牌上行 disclose 意图（只带 seat/handNo，不带牌面——牌面由权威端算，不可伪造）');
+    ok(/\.catch\(\(\) => this\.syncFailToast\('亮牌未同步成功'\)\)/.test(tableSrc),
+      '镜像端亮牌上行失败提示（syncFailToast，非静默缺席）');
+    // 房主消化侧：rowSeat 断言 + handNo 跨手过期 + 赢家断言，全过才代写
+    ok(/a\.type === 'disclose'[\s\S]{0,900}?_discloseRevealFor\(seat\)/.test(tableSrc),
+      '房主消化 disclose 动作后统一走 _discloseRevealFor');
+    ok(/a\.type === 'disclose'[\s\S]{0,800}?winners\.indexOf\(seat\) === -1\) return;/.test(tableSrc),
+      'disclose 消化含赢家断言（非赢家亮牌意图一律丢弃）');
+    ok(/a\.type === 'disclose'[\s\S]{0,700}?a\.handNo !== undefined && Number\(a\.handNo\) !== Number\(game\.handNo\)\) return;/.test(tableSrc),
+      'disclose 消化含 handNo 跨手过期判定（P3，同补筹口径——好友亮牌申请不落进下一手）');
+    // 代写出口统一：_discloseRevealFor 是唯一写 reveal 的自愿亮牌路径
+    ok(/game\.showdownReveal\[seat\] = \{/.test(tableSrc),
+      '代写亮牌写进 showdownReveal[seat]（_discloseRevealFor 复用摊牌亮牌的渲染/同步链路）');
+    ok(/_discloseRevealFor\(seat\)\s*\{[\s\S]{0,800}?this\._lastRenderFp = null/.test(tableSrc),
+      '_discloseRevealFor 穿透渲染指纹（reveal 派生 seats[].hole/结算行，否则跳过分支吞掉亮牌）');
+    ok(/_discloseRevealFor\(seat\)\s*\{[\s\S]{0,1200}?this\.forcePublish\(\)/.test(tableSrc),
+      '_discloseRevealFor forcePublish（写库指纹不含 reveal，必须穿透否则亮牌不广播）');
+    // 权威端调用以返回值门控 setData（review 2026-10-22）：防两边条件漂移时
+    // 「点亮牌没反应也无提示」的静默失败——按钮未隐藏还能重试。
+    ok(/if \(this\._discloseRevealFor\(this\.mySeat\)\) \{[\s\S]{0,200}?canDisclose: false \}/.test(tableSrc),
+      '权威端亮牌成功才隐藏按钮/刷新弹窗（返回值门控，失败可重试）');
     ok(/if \(this\.data\.canDisclose\) this\.setData\(\{ resultModal: null, canDisclose: false \}\);/.test(tableSrc),
       'closeResultModal 关弹窗时复位 canDisclose（防下一手残显亮牌按钮；replayDate 已随 G3 行内入口退役不再清理）');
     ok(/bindtap="onShowMyCards" wx:if="\{\{canDisclose\}\}"/.test(wxmlSrc) ||
