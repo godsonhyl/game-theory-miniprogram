@@ -4999,13 +4999,22 @@ Page({
         const win = res.winners.indexOf(p.seat) !== -1;
         const gain = res.awards.filter(a => a.seat === p.seat).reduce((s, a) => s + a.amount, 0);
         const net = gain - p.committed;
-        // muck 礼仪（A4，2026-10-17）：弃牌者不亮牌——未摊牌且已弃牌时 holeTxt 置空，
-        // 手牌列与胶囊短文都落「弃牌」文案。快照侧已同步掩码（弃牌者 hole=null），
-        // 此处是 UI 侧兜底：房主本地 game.players 里弃牌者底牌仍在内存，若不遮，
-        // 结算弹窗会把 mucked 牌明文打出来，与引擎快照的掩码语义不一致。
+        // muck 礼仪（A4，2026-10-17）：弃牌者不亮牌。快照侧已同步掩码（弃牌者
+        // hole=null），此处是 UI 侧兜底：房主本地 game.players 里弃牌者底牌
+        // 仍在内存，若不遮，结算弹窗会把 mucked 牌明文打出来。
+        // ⚠️ 2026-10-22 用户实测结算单泄露：fold 结算的**赢家**没有弃牌，
+        // 旧兜底 `p.folded ? '' : p.hole.map(...)` 在权威端会把赢家未摊的
+        // 底牌打进 hand/short 文本列（cards 迷你牌列已 rv 门控，泄露只在
+        // 文本）。镜像端倒是碰巧安全：快照已把 fold 结算未摊牌者 hole 掩码
+        // 为 null，loadSnapshot 转成空数组、map 产出空串落「未摊牌」——但
+        // 这不是设计，是掩码把泄露源掐了而已，双端口径必须显式统一。改为
+        // rv-only：亮过（showdownReveal / 自愿亮牌）才有牌面文本，未亮者
+        // 一律空串落「弃牌/未摊牌」状态文案——与 cards 列、render 的
+        // showCards 判据（均以 showdownReveal 为准）三处口径统一。
+        // 真摊牌不受影响：引擎摊牌时所有未弃牌者都写进 showdownReveal。
         const holeTxt = rv
           ? rv.hole.map(code => this.codeToStr(code)).join(' ')
-          : (p.folded ? '' : p.hole.map(c => P.cardToStr(c)).join(' '));
+          : '';
         // 摊牌结算弹窗里的「手牌牌面」：默认只亮真正摊牌（rv 存在）的座位，
         // 弃牌者的牌不公开（muck 不亮牌，扑克通行礼仪），此时 cards 为空数组、
         // 由 .sr-cards 的固定宽度占位保持各行「牌型 / 盈亏」两列仍对齐。
@@ -5029,12 +5038,12 @@ Page({
           seat: p.seat,
           name: p.name,
           icon: win ? '🏆 ' : '',
-          // 手牌列：弃牌者 holeTxt 已置空 → 落「弃牌」占位（保持列不空、语义清晰）
-          hand: rv ? holeTxt + ' → ' + rv.name : (holeTxt || (p.folded ? '弃牌' : '未摊牌')),
+          // 手牌列：亮过牌才有文本（rv）+ 成手名；未亮者给状态文案（弃牌/未摊牌）
+          hand: rv ? holeTxt + ' → ' + rv.name : (p.folded ? '弃牌' : '未摊牌'),
           cards,                    // 结算弹窗的迷你手牌（默认：弃牌为空）
           bestIds,                  // 该玩家参与最佳成手的牌 id 集——G2 公共牌行按行高亮
           // 结算条胶囊用的短文本：摊牌显示牌型名；弃牌/未摊牌给状态文案
-          short: rv ? rv.name : (p.folded ? '弃牌' : (holeTxt || '未摊牌')),
+          short: rv ? rv.name : (p.folded ? '弃牌' : '未摊牌'),
           committed: p.committed,   // 本手总投入（飞筹动画的筹码量）
           isMe: p.seat === this.mySeat,   // 结算弹窗高亮我的行
           win,

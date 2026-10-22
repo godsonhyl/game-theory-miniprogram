@@ -24,7 +24,7 @@ npm run visual                  # 视觉回归：渲染 2~9 人桌 × 3 视口�
 npm run visual:update           # 确认画面变化符合预期后更新基线
 ```
 
-测试全部是自研断言脚本（无 jest/mocha），直接 `node xxx.js` 运行，失败项会打印 label。跑单个测试：`node miniprogram/test-room-sync.js` 或对应 npm script。`npm test` = 12 个脚本全跑（2339 项断言），分两类：**行为/格式校验**（引擎 test-core / 牌桌页 test-miniprogram-logic / 牌面 test-cards / 云规范 test-cloud-integration / 首页 test-index-logic / 跨设备同步 test-room-sync / SDK test-sdk-load / JS 语法 check-js-syntax / WXML check-wxml / 打包规则 check-pack-rules / 视觉回归工具自检 visual/selftest）与**云端迁移护栏 check-cloud-migration**（见下）。改动后必须过。断言数是硬口径——改动后新增/删除断言要在 commit message 里说明。截图脚本（`visual/run.js`、`visual/compare.js`）依赖本机 Chrome 与基线图，**故意不并入 `npm test`**，跑 `npm run visual` 单独执行；`visual/selftest.js` 是纯 JS，已并入 `npm test`。
+测试全部是自研断言脚本（无 jest/mocha），直接 `node xxx.js` 运行，失败项会打印 label。跑单个测试：`node miniprogram/test-room-sync.js` 或对应 npm script。`npm test` = 12 个脚本全跑（2343 项断言），分两类：**行为/格式校验**（引擎 test-core / 牌桌页 test-miniprogram-logic / 牌面 test-cards / 云规范 test-cloud-integration / 首页 test-index-logic / 跨设备同步 test-room-sync / SDK test-sdk-load / JS 语法 check-js-syntax / WXML check-wxml / 打包规则 check-pack-rules / 视觉回归工具自检 visual/selftest）与**云端迁移护栏 check-cloud-migration**（见下）。改动后必须过。断言数是硬口径——改动后新增/删除断言要在 commit message 里说明。截图脚本（`visual/run.js`、`visual/compare.js`）依赖本机 Chrome 与基线图，**故意不并入 `npm test`**，跑 `npm run visual` 单独执行；`visual/selftest.js` 是纯 JS，已并入 `npm test`。
 
 ## 双树结构（易踩坑）
 

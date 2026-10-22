@@ -3739,6 +3739,19 @@ while (guard++ < 400) {
       'showCards 判据含 showdownReveal（fold 结算不亮，muck 礼仪不靠 street 单判）');
     ok(!/showCards = !readyPhase && !isMe && showdown && !p\.folded && p\.hole\.length === 2;/.test(tableSrc),
       'showCards 旧判据（仅 street+hole）已删除——fold 结算 street 同为 SHOWDOWN 会误亮');
+    // 结算单（buildResult）同口径（2026-10-22 用户实测遗漏）：fold 结算的赢家
+    // 没有弃牌，旧 holeTxt 兜底 `p.folded ? '' : p.hole.map(...)` 会把赢家未摊
+    // 的底牌打进 hand/short 文本列（cards 迷你牌列已 rv 门控，泄露只在文本）。
+    // 镜像端碰巧安全：快照掩码把未摊牌者 hole 置 null，loadSnapshot 转空数组、
+    // map 产出空串——但双端口径必须显式统一为 rv-only，不靠掩码碰巧兜住。
+    ok(/const holeTxt = rv\s*\?\s*rv\.hole\.map\(code => this\.codeToStr\(code\)\)\.join\(' '\)\s*: ''/.test(tableSrc),
+      'buildResult 的 holeTxt 仅在 rv（showdownReveal）时给牌面文本');
+    ok(!/p\.folded \? '' : p\.hole\.map\(c =>/.test(tableSrc),
+      'holeTxt 旧兜底（p.folded ? "" : p.hole.map）已删除——fold 赢家的牌不再进结算单');
+    ok(/hand: rv \? holeTxt \+ ' → ' \+ rv\.name : \(p\.folded \? '弃牌' : '未摊牌'\)/.test(tableSrc),
+      '结算单 hand 列：未亮者只落状态文案（弃牌/未摊牌），不吃 holeTxt 兜底');
+    ok(/short: rv \? rv\.name : \(p\.folded \? '弃牌' : '未摊牌'\)/.test(tableSrc),
+      '结算条短文本同口径：未亮者不吃 holeTxt 兜底');
   }
 
   /* 边池归属 + 非摊牌赢池自愿亮牌（玩家审视 2026-10-17）：
