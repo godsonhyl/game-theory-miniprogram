@@ -373,7 +373,10 @@ Page({
     }
   },
 
-  /** 转发内容：从创建成功弹窗点「邀请好友」时，分享卡片带房间号，好友点开自动填入并加入 */
+  /** 转发内容：从创建成功弹窗点「邀请好友」时，分享卡片带房间号，好友点开自动填入并加入。
+   *  max/dur 不放在分享 path 上（2026-10-22）：冷启动入口是 index？room=…，
+   *  tryJoin 会查云端房间行并把 max_players/duration_min 带进 table——房间行
+   *  才是权威（分享者本机页面里的值可能过期），path 带参数只是一次不可靠的缓存。 */
   onShareAppMessage() {
     const no = this.data.createdRoomNo;
     if (no) {
@@ -385,11 +388,15 @@ Page({
     return { title: '博弈论 · 好友房德州扑克', path: '/pages/index/index' };
   },
 
-  /** 分享到朋友圈：与 onShareAppMessage 同路径（有房间号时带 query） */
+  /** 分享到朋友圈：与 onShareAppMessage 同路径（有房间号时带 query；max/dur 同样
+   *  由 tryJoin 查房间行补齐，不塞 query） */
   onShareTimeline() {
     const no = this.data.createdRoomNo;
     if (no) {
-      return { title: '来「博弈论」和我打一局，房间号 ' + no, query: 'room=' + no };
+      return {
+        title: '来「博弈论」和我打一局，房间号 ' + no,
+        query: 'room=' + no
+      };
     }
     return { title: '博弈论 · 好友房德州扑克' };
   },
@@ -553,7 +560,15 @@ Page({
         return;
       }
       this.setData({ joinShow: false, joinNo: '' });
-      wx.navigateTo({ url: '/pages/table/table?room=' + roomNo });
+      // 带上云端房间记录里的 max/dur（2026-10-22 用户反馈「9 人房好友进来变 6 人」）：
+      // 好友从分享卡片/房号进来 URL 只有 room，table.onLoad 里 maxSeats 会默认 6，
+      // 首帧画 6 座；正确值此前要等房主广播（pollOnce/enterRemote）才纠偏——findRoom
+      // 拿到的房间行本就带 max_players/duration_min，直接带上可让首帧就画对桌型。
+      // 与 onEnterRoom 的「我的房间」入口同口径。
+      wx.navigateTo({
+        url: '/pages/table/table?room=' + roomNo +
+          '&max=' + (room.max_players || 6) + '&dur=' + (room.duration_min || 0)
+      });
     } catch (err) {
       wx.hideLoading();
       wx.showToast({ title: err.message || '查询房间失败', icon: 'none' });

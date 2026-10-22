@@ -2608,7 +2608,11 @@ Page({
   /**
    * 顶栏返回：
    *  - 牌局进行中 → 二次确认（按钮文案 ≤4 字，真机限制），确认后存快照离开，房间保留；
-   *  - 等待室      → 房主空等放弃则关闭房间，访客离开不影响房间。
+   *  - 等待室房主**独自空等** → 弹「解散/保留」确认（2026-10-22 用户反馈三连 bug：
+   *    建房→坐下→发链接后按返回想去看「我的房间」，旧实现无条件 closeRoom——
+   *    云端 status='closed' 后：好友点链接立刻「房间不存在」、房主自己首页列表
+   *    也看不到刚建的房。误触返回悄悄解散房间必须变成显式选择）；
+   *  - 其余情况（访客离开 / 房主离开但屋里还有别人）→ 直接离开，房间不受影响。
    */
   onBack() {
     if (this.mode === 'friend' && this.data.phase === 'playing') {
@@ -2622,16 +2626,39 @@ Page({
       });
       return;
     }
+    // 等待室房主独自空等：离开=解散，须显式确认。roomClosed=true（超时销毁路径）
+    // 时直接走 leaveRoom，不弹窗——那条路已经决定解散了。
+    if (this.mode === 'friend' && this.data.phase === 'waiting' && this.isOwner &&
+        !this.roomClosed && this.roomNo) {
+      const cnt = this.data.waitSeats.filter(s => s.occupied).length;
+      if (cnt <= 1) {
+        wx.showModal({
+          title: '解散房间？',
+          content: '等待室还没有好友加入。选「保留」可稍后从首页「我的房间」进入继续邀请；解散将立即关闭房间，好友的链接也会失效',
+          confirmText: '解散',
+          cancelText: '保留',
+          // 两个选项都离开页面，区别只在是否关房：confirm=解散，cancel=保留。
+          // 弹窗异常兜底走「保留」（不可逆的销毁动作绝不放在静默兜底里）。
+          success: res => this.leaveRoom(res.confirm),
+          fail: () => this.leaveRoom(false)
+        });
+        return;
+      }
+    }
     this.leaveRoom();
   },
 
-  /** 真正离开页面：正常导航栈直接返回；分享卡片冷启动进桌时栈为空，兜底回首页 */
-  leaveRoom() {
+  /**
+   * 真正离开页面：正常导航栈直接返回；分享卡片冷启动进桌时栈为空，兜底回首页。
+   * dissolve=false 表示「保留房间离开」（等待室解散确认的「保留」分支）——
+   * 其余调用点不传参，维持各自原有语义（等待室房主空等默认解散）。
+   */
+  leaveRoom(dissolve) {
     if (this.mode === 'friend') {
       if (this.data.phase === 'waiting') {
         // 房主空等（无人加入）离开 → 视为放弃房间，关闭云端房间清理残留
         const cnt = this.data.waitSeats.filter(s => s.occupied).length;
-        if (this.isOwner && !this.roomClosed && cnt <= 1 && this.roomNo) {
+        if (dissolve !== false && this.isOwner && !this.roomClosed && cnt <= 1 && this.roomNo) {
           this.roomClosed = true;
           auth.closeRoom(this.roomNo).catch(e => console.error('[table] 离房清理失败',
             JSON.stringify({ stage: 'leaveRoom-wait', room: this.roomNo, err: e && e.message })));
@@ -3243,10 +3270,13 @@ Page({
     return this.mode === 'sng' ? '博弈论 · SNG 淘汰赛' : '博弈论 · AI 对战';
   },
 
-  /** 分享到朋友圈：好友房带房间号 */
+  /** 分享到朋友圈：好友房带房间号（max/dur 由 tryJoin 查房间行补齐，不塞 query） */
   onShareTimeline() {
     if (this.mode === 'friend') {
-      return { title: '来「博弈论」和我打一局，房间号 ' + this.roomNo, query: 'room=' + this.roomNo };
+      return {
+        title: '来「博弈论」和我打一局，房间号 ' + this.roomNo,
+        query: 'room=' + this.roomNo
+      };
     }
     return { title: this._shareTitle() };
   },

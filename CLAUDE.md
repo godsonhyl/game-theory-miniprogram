@@ -24,7 +24,7 @@ npm run visual                  # 视觉回归：渲染 2~9 人桌 × 3 视口�
 npm run visual:update           # 确认画面变化符合预期后更新基线
 ```
 
-测试全部是自研断言脚本（无 jest/mocha），直接 `node xxx.js` 运行，失败项会打印 label。跑单个测试：`node miniprogram/test-room-sync.js` 或对应 npm script。`npm test` = 12 个脚本全跑（2297 项断言），分两类：**行为/格式校验**（引擎 test-core / 牌桌页 test-miniprogram-logic / 牌面 test-cards / 云规范 test-cloud-integration / 首页 test-index-logic / 跨设备同步 test-room-sync / SDK test-sdk-load / JS 语法 check-js-syntax / WXML check-wxml / 打包规则 check-pack-rules / 视觉回归工具自检 visual/selftest）与**云端迁移护栏 check-cloud-migration**（见下）。改动后必须过。断言数是硬口径——改动后新增/删除断言要在 commit message 里说明。截图脚本（`visual/run.js`、`visual/compare.js`）依赖本机 Chrome 与基线图，**故意不并入 `npm test`**，跑 `npm run visual` 单独执行；`visual/selftest.js` 是纯 JS，已并入 `npm test`。
+测试全部是自研断言脚本（无 jest/mocha），直接 `node xxx.js` 运行，失败项会打印 label。跑单个测试：`node miniprogram/test-room-sync.js` 或对应 npm script。`npm test` = 12 个脚本全跑（2339 项断言），分两类：**行为/格式校验**（引擎 test-core / 牌桌页 test-miniprogram-logic / 牌面 test-cards / 云规范 test-cloud-integration / 首页 test-index-logic / 跨设备同步 test-room-sync / SDK test-sdk-load / JS 语法 check-js-syntax / WXML check-wxml / 打包规则 check-pack-rules / 视觉回归工具自检 visual/selftest）与**云端迁移护栏 check-cloud-migration**（见下）。改动后必须过。断言数是硬口径——改动后新增/删除断言要在 commit message 里说明。截图脚本（`visual/run.js`、`visual/compare.js`）依赖本机 Chrome 与基线图，**故意不并入 `npm test`**，跑 `npm run visual` 单独执行；`visual/selftest.js` 是纯 JS，已并入 `npm test`。
 
 ## 双树结构（易踩坑）
 
@@ -75,6 +75,7 @@ npm run visual:update           # 确认画面变化符合预期后更新基线
 - **座位伪冒断言**：`applyFriendAction` 一律以行内 `rowSeat` 为准，payload `seat` 与行座位不符即整条丢弃——好友不能替他人行动。
 - **房主心跳僵死检测**：房主行存在但心跳超 `OFFLINE_MS` 起计，超 `HOST_STALE_EXIT_MS`（30s 宽限）仍未恢复 → 好友端判房间僵死自动退出。
 - 已知边界：快照含真人底牌，防作弊需服务端引擎（已议定封存，见 room-sync.js 头注释与 `docs/服务端化蓝图.md`）；room-sync 无 chat 字段，镜像端收不到好友间聊天。
+- **房间生命周期**（2026-10-22 三连 bug 的根因口径，改退出/关房逻辑前必读）：`auth.findRoom` 只查 `status='active'`；`closeRoom`（rpc `poker_close_room`）有对战→'ended' 保留 7 天、无对战→'closed' 立即消失（好友点链接「房间不存在」+ 首页「我的房间」消失都是 'closed' 的直接后果）。**「房主离开 ≠ 解散房间」**：等待室房主独自空等按返回会弹「解散/保留」显式确认（旧实现无条件 closeRoom，建房→发链接→按返回这一高频动作会静默炸房；弹窗异常兜底走「保留」——不可逆销毁不进静默兜底；有他人入座不弹，房主不能单方面解散已在局的房间）；`leaveRoom(dissolve)` 的 `dissolve !== false` 判据保证既有调用点零影响。**分享链接 path 只带 room 不带 max/dur**：桌型权威在云端房间行（分享者本机值可能过期），由 `index.js` 的 `tryJoin` 查 `findRoom` 后拼进 table URL（`max_players`/`duration_min`），好友端首帧即画对桌型，不等房主广播纠偏。
 
 ### 云服务（utils/cloud.js + WorkBuddy SDK）
 

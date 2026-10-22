@@ -374,13 +374,47 @@ pageCtx.startGame();
 ok(toasts.indexOf('等待房主开始') >= 0, '访客点开始被拦截并提示等待房主');
 ok(dataStore.phase === 'waiting', '访客点开始不会进入牌桌');
 
-// 房主空等放弃离开 → 关闭房间并清理快照（避免残留出现在「我的房间」）
+// 房主空等离开：2026-10-22 起改为显式「解散/保留」确认（用户反馈：建房→发链接→
+// 按返回想去看我的房间，旧实现悄悄 closeRoom → 好友点链接「房间不存在」+ 首页列表
+// 消失）。确认「解散」→ 关房并清快照；选「保留」/弹窗异常 → 房间与快照都不动。
 pageCtx.onLoad({ room: '112233', own: '1' });
 global.__storage['poker_room_snap_112233'] = {
   ts: Date.now(), handNo: 3, seats: [{ seat: 0, name: '你', stack: 900, isMe: true }]
 };
+global.__modalMode = 'fail';   // 弹窗异常兜底：走「保留」（不可逆销毁不进静默兜底）
+global.__navBack = false; global.__reLaunched = false;
 pageCtx.onBack();
-ok(!global.__storage['poker_room_snap_112233'], '房主空等离开会清理该房间的快照');
+ok(global.__navBack || global.__reLaunched, '等待室房主返回：弹窗异常兜底仍离开页面');
+ok(!!global.__storage['poker_room_snap_112233'], '弹窗异常兜底保留房间（不关房不清快照）');
+ok(pageCtx.roomClosed === false, '弹窗异常兜底未标记关房');
+global.__modalMode = 'cancel';   // 选「保留」
+global.__navBack = false; global.__reLaunched = false;
+pageCtx.onBack();
+ok(global.__navBack || global.__reLaunched, '选「保留」后离开页面');
+ok(!!global.__storage['poker_room_snap_112233'], '选「保留」：房间不动、快照保留');
+ok(pageCtx.roomClosed === false, '选「保留」不标记关房');
+ok(!!global.__lastModal && global.__lastModal.title === '解散房间？',
+  '等待室房主独自空等返回弹「解散房间？」确认: ' + (global.__lastModal && global.__lastModal.title));
+ok(!!global.__lastModal && global.__lastModal.confirmText === '解散' && global.__lastModal.cancelText === '保留',
+  '解散确认按钮：解散 / 保留（真机限制 ≤4 字）');
+global.__modalMode = 'confirm';   // 选「解散」
+global.__navBack = false; global.__reLaunched = false;
+pageCtx.onBack();
+ok(global.__navBack || global.__reLaunched, '确认「解散」后离开页面');
+ok(!global.__storage['poker_room_snap_112233'], '确认解散：清掉该房间的快照');
+ok(pageCtx.roomClosed === true, '确认解散：标记关房（closeRoom 已触发）');
+
+// 等待室里有别人在座时（好友/机器人已加入），房主返回**不弹窗**直接离开——
+// 房间语义不能由房主单方面解散，此路径维持旧行为。
+pageCtx.onLoad({ room: '112234', own: '1' });
+pageCtx.addBot();
+global.__lastModal = null;
+global.__modalMode = 'none';
+global.__navBack = false; global.__reLaunched = false;
+pageCtx.onBack();
+ok(global.__navBack || global.__reLaunched, '有他人入座时房主返回直接离开（不弹窗）');
+ok(!global.__lastModal, '有他人入座时房主返回不弹解散确认');
+ok(pageCtx.roomClosed === false, '有他人入座时房主返回不关房');
 
 /* ---------- 房间参数：限定人数（2~9）与游戏时长倒计时 ---------- */
 pageCtx.onLoad({ room: '300001', own: '1', max: '2', dur: '30' });

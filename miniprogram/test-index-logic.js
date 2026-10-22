@@ -453,6 +453,32 @@ const pageCtx = Object.assign({}, cfg, {
   ok(global.__nav === null, 'joining 期间连点不重复触发加入');
   pageCtx.joining = false;
 
+  /* ---------- tryJoin 携带云端房间的 max/dur（2026-10-22 用户反馈「9 人房好友进来变 6 人」） ----------
+   * 行为：findRoom 查到的房间行带 max_players/duration_min，进桌 URL 必须带上
+   *   ——否则 table.onLoad 默认 maxSeats=6，好友首帧画 6 座（此前要等房主广播纠偏）。
+   *   房间行是权威（分享卡 path 上不塞 max/dur 缓存，以此处为准）。
+   * 迁移不动的老 URL（只有 room）也能进，只是首帧先画 6 座、随房主广播纠偏。 */
+  {
+    const realFind = authMod.auth.findRoom;
+    // 9 人桌 · 60 分钟：findRoom 返回什么就带什么
+    authMod.auth.findRoom = roomNo => Promise.resolve(
+      roomNo === '778899'
+        ? { room_no: '778899', max_players: 9, duration_min: 60, status: 'active' }
+        : null);
+    global.__nav = null;
+    await pageCtx.tryJoin('778899');
+    ok(global.__nav && global.__nav.indexOf('room=778899') > 0, 'tryJoin 进桌跳转带房间号: ' + global.__nav);
+    ok(global.__nav && global.__nav.indexOf('max=9') > 0, 'tryJoin 进桌 URL 带云端房间人数 max=9: ' + global.__nav);
+    ok(global.__nav && global.__nav.indexOf('dur=60') > 0, 'tryJoin 进桌 URL 带云端房间时长 dur=60: ' + global.__nav);
+    // 房间不存在分支维持原文案
+    toasts.length = 0;
+    global.__nav = null;
+    await pageCtx.tryJoin('000000');
+    ok(toasts.indexOf('房间不存在或已结束') >= 0, '房间落空仍提示「房间不存在或已结束」');
+    ok(global.__nav === null, '房间落空不跳转');
+    authMod.auth.findRoom = realFind;
+  }
+
   /* ---------- 房间保留 7 天 + 复盘入口（新需求 2026-10-18） ----------
    * 行为：listMyRooms 返回 ended 房（expires_at 在未来）→ 列表标记为 ended、
    *   剩余天数 > 0、进入文案「复盘」、liveText「复盘 · 剩 X 天」；点卡片进房带 ended=1。 */
